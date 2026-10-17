@@ -71,3 +71,31 @@ func TestBackupAndRestoreVerificationCommands(t *testing.T) {
 		t.Fatalf("verify exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
+
+func TestAdminCommandRequiresConfirmationAndKeepsSecretOffOutput(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, "bord.db")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"migrate", "--database", database}, &stdout, &stderr); code != ExitOK {
+		t.Fatal(stderr.String())
+	}
+	credential := filepath.Join(root, "admin.credential")
+	stdout.Reset()
+	stderr.Reset()
+	args := []string{"admin", "create", "--offline", "--database", database, "--id", "ops", "--role", "administrator", "--ttl", "1h", "--credential-output", credential}
+	if code := Run(context.Background(), args, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	secret, err := os.ReadFile(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), strings.TrimSpace(string(secret))) || strings.Contains(stderr.String(), strings.TrimSpace(string(secret))) {
+		t.Fatal("credential leaked to command output")
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), []string{"admin", "revoke", "--offline", "--database", database, "--id", "ops", "--reason", "done"}, &stdout, &stderr); code != ExitUsage {
+		t.Fatalf("missing confirmation exit=%d", code)
+	}
+}

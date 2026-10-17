@@ -32,8 +32,11 @@ type Privacy struct {
 	StoreRawIP bool `yaml:"store_raw_ip"`
 }
 type Secrets struct {
-	IPLookupKey     []byte
-	IPEncryptionKey []byte
+	IPLookupKey               []byte
+	IPEncryptionKey           []byte
+	IPEncryptionKeyID         string
+	IPPreviousEncryptionKey   []byte
+	IPPreviousEncryptionKeyID string
 }
 
 func Defaults() Config {
@@ -96,6 +99,21 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	}
 	if c.Privacy.StoreRawIP && len(c.Secrets.IPEncryptionKey) != 32 {
 		return Config{}, errors.New("IP encryption key is required and must contain exactly 32 bytes when raw IP retention is enabled")
+	}
+	c.Secrets.IPEncryptionKeyID = getenv("BORD_IP_ENCRYPTION_KEY_ID")
+	if c.Secrets.IPEncryptionKeyID == "" {
+		c.Secrets.IPEncryptionKeyID = "primary"
+	}
+	c.Secrets.IPPreviousEncryptionKeyID = getenv("BORD_IP_PREVIOUS_ENCRYPTION_KEY_ID")
+	c.Secrets.IPPreviousEncryptionKey, err = secret(getenv, "BORD_IP_PREVIOUS_ENCRYPTION_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	if (c.Secrets.IPPreviousEncryptionKeyID == "") != (len(c.Secrets.IPPreviousEncryptionKey) == 0) || len(c.Secrets.IPPreviousEncryptionKey) != 0 && len(c.Secrets.IPPreviousEncryptionKey) != 32 {
+		return Config{}, errors.New("previous IP encryption key id and 32-byte key must be configured together")
+	}
+	if c.Secrets.IPPreviousEncryptionKeyID == c.Secrets.IPEncryptionKeyID && c.Secrets.IPPreviousEncryptionKeyID != "" {
+		return Config{}, errors.New("current and previous IP encryption key ids must differ")
 	}
 	if c.HTTP.MaxBodyBytes <= 0 {
 		return Config{}, errors.New("HTTP body limit must be positive")

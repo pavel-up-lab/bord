@@ -28,6 +28,7 @@ sudo install -m 0640 -o root -g bord deploy/systemd/config.yaml.example /etc/bor
 ```sh
 sudo -u bord /usr/bin/bord-server migrate --database /var/lib/bord/bord.db
 sudo -u bord /usr/bin/bord-server status --database /var/lib/bord/bord.db
+sudo -u bord /usr/bin/bord-server admin create --offline --database /var/lib/bord/bord.db --id root --role administrator --ttl 720h --credential-output /var/lib/bord/admin-root.credential
 sudo systemd-analyze verify /etc/systemd/system/bord.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now bord.service
@@ -49,7 +50,15 @@ curl --fail --silent https://board.example.org/readyz
 
 ## Локальная проверка чистого staging
 
-Скрипт создает только временные каталоги, поднимает настоящий Caddy с локальным
+`scripts/operator-staging-smoke.sh` в чистом временном каталоге проверяет все
+offline-команды оператора, подтверждения, credential lifecycle, backup/restore,
+retention и resumable re-encryption без печати секретов. Запустите его первым:
+
+```sh
+./scripts/operator-staging-smoke.sh
+```
+
+Основной скрипт создает только временные каталоги, поднимает настоящий Caddy с локальным
 TLS, устанавливает две версии `bord-server`, проверяет SSE, upgrade, backup,
 разрушение данных, restore и совместимый rollback. Caddy можно положить вне
 репозитория и передать явно:

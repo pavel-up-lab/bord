@@ -21,8 +21,8 @@
 
 ## Внешние и продуктовые blockers
 
-- [ ] Admin bootstrap/revoke, ручной retention и re-encryption key rotation не
-  подключены к production `bord-server`; task 7.5 остается открытой.
+- [x] Admin create/rotate/revoke, legal hold, ручной retention и resumable
+  re-encryption подключены к production `bord-server` и проверены clean staging.
 - [ ] OpenSpec tasks 8.4–8.6 и 8.8 принадлежат другим проверкам и еще открыты.
 - [ ] Hosted GitHub Actions, GitHub Release assets, публичный DNS/ACME и нативное
   исполнение macOS/Windows нельзя честно подтвердить в локальном Linux staging.

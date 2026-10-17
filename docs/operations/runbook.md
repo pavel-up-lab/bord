@@ -39,11 +39,10 @@ Restore отклоняет измененные, лишние, отсутств�
 
 ## Ротация ключей
 
-Никогда не заменяйте lookup-ключ без плана переиндексации: существующие HMAC не
-будут находиться. Ключ шифрования ротируется добавлением нового `key_id`,
-сохранением предыдущего ключа для чтения до завершения re-encryption и только
-затем удалением старого ключа. Каждую ротацию предваряет проверенный backup;
-значения ключей не записываются в ticket, audit или логи.
+Никогда не заменяйте lookup-ключ: существующие HMAC и блокировки перестанут
+совпадать. Проверяемая процедура ключа шифрования описана в
+[key-rotation.md](key-rotation.md). Команда делает проверенный backup, меняет
+данные ограниченными транзакциями и безопасно продолжается после прерывания.
 
 ## Retention и privacy
 
@@ -56,17 +55,52 @@ privacy policy со сроком хранения, назначением anti-a
 
 ## Администраторы и блокировки
 
-Первого администратора создавайте локальной bootstrap-командой после запуска;
-последующие online-команды должны идти через management listener и оставлять
-audit. Credential передавайте через защищенный файл/stdin поддерживаемого CLI,
-не как аргумент. Блокировка всегда имеет scope, операции, причину и срок; после
-создания проверьте нейтральный публичный отказ и audit request ID. Точные admin
-команды пока не подключены к `bord-server`: это блокирует публичный запуск и
-закрытие task 7.5. Не обходите ограничение прямым редактированием SQLite.
+Локальные lifecycle-команды требуют остановленного сервиса. Credential создается
+с режимом `0600` и никогда не выводится в stdout/stderr:
 
-Retention выполняется при старте и далее каждые 24 часа. Отдельной команды для
-ручного запуска и безопасной команды re-encryption при ротации ключа пока нет;
-до их появления ротацию нельзя считать проверенной операторской процедурой.
+```sh
+sudo systemctl stop bord
+sudo -u bord bord-server admin create --offline --database /var/lib/bord/bord.db --id root --role administrator --ttl 720h --credential-output /var/lib/bord/admin-root.credential
+sudo -u bord bord-server admin rotate --offline --database /var/lib/bord/bord.db --id root --role administrator --ttl 720h --credential-output /var/lib/bord/admin-root.next --confirm ROTATE
+sudo -u bord bord-server admin revoke --offline --database /var/lib/bord/bord.db --id old-operator --reason "смена дежурной группы" --confirm REVOKE
+sudo systemctl start bord
+```
+
+Файл назначения должен отсутствовать. После rotate атомарно обновите ссылку
+secret manager и удалите прежнюю копию. Роли: `reports`, `moderator`,
+`administrator`. Создание/revoke блокировок и hide/restore/close выполняются
+через management API с bearer из защищенного файла; raw IP допустим только в
+поле `subject` ban-запроса, но не в причине или журнале. Блокировка всегда имеет
+операции, причину и срок; после создания проверьте нейтральный публичный отказ и
+audit request ID. Не редактируйте SQLite вручную.
+
+CLI вызывает management API, читает bearer только из файла `0600` и не печатает
+его. Пример блокировки lookup для создания ответов и последующего отзыва:
+
+```sh
+bord-server admin ban --management-url http://127.0.0.1:8081 --credential-file /var/lib/bord/admin-root.credential --subject-type lookup --subject 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef --operations create_post --ttl 2h --reason "автоматизированный flood"
+bord-server admin unban --management-url http://127.0.0.1:8081 --credential-file /var/lib/bord/admin-root.credential --ban-id 00000001 --reason "апелляция принята" --confirm REVOKE-BAN
+```
+
+Management listener оставляйте на loopback/private management network. Для
+raw-IP используйте `--subject-type ip`; адрес не попадает в audit reason.
+
+Retention выполняется при старте и далее каждые 24 часа. До удаления получите
+отчет. Ручное удаление требует остановки, нового проверяемого backup и точного
+подтверждения; legal hold и активные блокировки не удаляются:
+
+```sh
+sudo -u bord bord-server retention report --database /var/lib/bord/bord.db
+sudo systemctl stop bord
+sudo -u bord bord-server retention hold --offline --database /var/lib/bord/bord.db --subject-id 42 --confirm HOLD
+sudo -u bord bord-server retention release --offline --database /var/lib/bord/bord.db --subject-id 42 --confirm RELEASE
+sudo -u bord bord-server retention run --offline --database /var/lib/bord/bord.db --blobs /var/lib/bord/blobs --backup /var/lib/bord/backups/pre-retention-20261017 --confirm DELETE
+sudo systemctl start bord
+```
+
+Освобождение hold выполняйте только по закрытому расследованию. JSON-отчет
+содержит лишь агрегаты `EligibleIP`, `LegalHoldIP`, `ActiveBanIP`,
+`Idempotency`, `Challenges`.
 
 ## Инцидент и recovery
 

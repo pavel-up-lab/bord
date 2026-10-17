@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -38,16 +39,20 @@ type Runtime struct {
 	Admin       *Admin
 	Outbox      *Outbox
 	UploadSlots chan struct{}
+	IPKeyring   security.IPKeyring
 }
 
 type Config struct {
-	DB                *sql.DB
-	Blobs             string
-	LookupKey         []byte
-	EncryptionKey     []byte
-	StoreRawIP        bool
-	Clock             Clock
-	UploadConcurrency int
+	DB                      *sql.DB
+	Blobs                   string
+	LookupKey               []byte
+	EncryptionKey           []byte
+	EncryptionKeyID         string
+	PreviousEncryptionKey   []byte
+	PreviousEncryptionKeyID string
+	StoreRawIP              bool
+	Clock                   Clock
+	UploadConcurrency       int
 }
 
 func New(config Config) (*Runtime, error) {
@@ -78,7 +83,17 @@ func New(config Config) (*Runtime, error) {
 			_ = blobs.Close()
 			return nil, errors.New("integration: IP encryption key must be 32 bytes")
 		}
-		keyring = security.IPKeyring{Primary: "primary", Keys: map[string][]byte{"primary": append([]byte(nil), config.EncryptionKey...)}}
+		if config.EncryptionKeyID == "" {
+			config.EncryptionKeyID = "primary"
+		}
+		keyring = security.IPKeyring{Primary: config.EncryptionKeyID, Keys: map[string][]byte{config.EncryptionKeyID: append([]byte(nil), config.EncryptionKey...)}}
+		if config.PreviousEncryptionKeyID != "" {
+			if len(config.PreviousEncryptionKey) != 32 || config.PreviousEncryptionKeyID == config.EncryptionKeyID {
+				_ = blobs.Close()
+				return nil, errors.New("integration: invalid previous IP encryption key")
+			}
+			keyring.Keys[config.PreviousEncryptionKeyID] = append([]byte(nil), config.PreviousEncryptionKey...)
+		}
 	}
 	limiter, err := security.NewLimiter(config.Clock, map[string]security.Rate{
 		"read":   {Capacity: 60, RefillEvery: time.Second},
@@ -99,14 +114,33 @@ func New(config Config) (*Runtime, error) {
 		_ = blobs.Close()
 		return nil, err
 	}
-	r := &Runtime{DB: config.DB, Repo: repo, Board: board, Attachments: attachments, Media: blobs, Admin: admin, Outbox: &Outbox{db: config.DB}}
+	r := &Runtime{DB: config.DB, Repo: repo, Board: board, Attachments: attachments, Media: blobs, Admin: admin, Outbox: &Outbox{db: config.DB}, IPKeyring: keyring}
 	r.UploadSlots = make(chan struct{}, config.UploadConcurrency)
 	r.Abuse = &Abuse{db: config.DB, clock: config.Clock, lookupKey: append([]byte(nil), config.LookupKey...), keyring: keyring, storeRawIP: config.StoreRawIP, limiter: limiter, pow: pow, pending: make(map[string]int64)}
 	return r, nil
 }
 
-func (r *Runtime) Close() error                    { return errors.Join(r.Media.Close(), r.DB.Close()) }
-func (r *Runtime) Ready(ctx context.Context) error { return storage.Ready(ctx, r.DB) }
+func (r *Runtime) Close() error { return errors.Join(r.Media.Close(), r.DB.Close()) }
+func (r *Runtime) Ready(ctx context.Context) error {
+	if err := storage.Ready(ctx, r.DB); err != nil {
+		return err
+	}
+	rows, err := r.DB.QueryContext(ctx, `SELECT DISTINCT key_id FROM request_subjects WHERE encrypted_ip IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		if len(r.IPKeyring.Keys[id]) != 32 {
+			return fmt.Errorf("encrypted IP data references unavailable key id %q", id)
+		}
+	}
+	return rows.Err()
+}
 
 // Maintain applies privacy retention and reconciles old unreferenced blobs.
 // Callers run it before readiness and periodically for automatic cleanup.
