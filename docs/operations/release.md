@@ -8,12 +8,13 @@ build date встраиваются через ldflags; `SOURCE_DATE_EPOCH` ра
 `SHA256SUMS`, CycloneDX JSON SBOM исходников и распакованных release-бинарников,
 отчеты `govulncheck`/Grype, license inventory и все архивы публикуются как CI
 artifacts и assets GitHub Release. `govulncheck` блокирует выпуск при вызываемой
-уязвимости; Grype сохраняет дополнительный module-level inventory распакованных
-stripped-бинарников, но не считается reachability gate. Отдельный `security.yml`
+уязвимости; Grype независимо блокирует любой High/Critical module-level finding
+в распакованных stripped-бинарниках, даже если call graph его не достигает. Отдельный `security.yml`
 запускает `govulncheck`, запрещает forbidden/restricted licenses, создает
 CycloneDX SBOM и сохраняет отчет лицензий. Любая вызываемая уязвимость или
-запрещенная лицензия блокирует release; исключение требует
-отдельного review и не добавляется молча в workflow.
+запрещенная лицензия или High/Critical artifact finding блокирует release;
+исключение требует отдельного review, документированной применимости и явного
+policy-файла — сейчас таких исключений нет.
 
 `modernc.org/mathutil v1.7.1` проверен вручную как BSD-3-Clause, поскольку
 upstream module archive не содержит распознаваемого license-файла. Workflow
@@ -31,7 +32,7 @@ SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" ./scripts/test-release.sh v
 состав и встроенную версию всех четырех архивов и исполняет оба Linux-бинарника.
 Чужие форматы проверяются без исполнения; официальный workflow дополнительно
 выполняет нативный client smoke на трех runner ОС. До публикации tag проверьте
-SBOM, license report и отсутствие critical finding.
+SBOM, license report и отсутствие High/Critical findings.
 
 Локальные supply-chain команды (версии зафиксированы в workflow):
 

@@ -64,16 +64,27 @@ def main() -> None:
         if release.get("bomFormat") != "CycloneDX" or not release.get("components"):
             raise SystemExit("release SBOM is not a populated CycloneDX document")
         scan = json.loads((directory / "grype.json").read_text())
-        critical = [
+        blocking = [
             match
             for match in scan.get("matches", [])
             if match.get("vulnerability", {}).get("severity", "").lower()
-            == "critical"
+            in {"critical", "high"}
         ]
+        if blocking:
+            advisories = sorted(
+                {
+                    match.get("vulnerability", {}).get("id", "unknown")
+                    for match in blocking
+                }
+            )
+            raise SystemExit(
+                "High/Critical release artifact vulnerabilities: "
+                + ", ".join(advisories)
+            )
         message.extend(
             [
                 f"release components={len(release['components'])}",
-                f"critical module-level release findings={len(critical)}",
+                f"High/Critical release artifact findings={len(blocking)}",
             ]
         )
     print("validated supply-chain evidence: " + ", ".join(message))
