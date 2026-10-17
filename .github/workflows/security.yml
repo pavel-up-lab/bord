@@ -21,7 +21,7 @@ jobs:
       - name: Known vulnerability scan
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-          govulncheck ./...
+          govulncheck -json ./... > govulncheck.json
       - name: License policy
         run: |
           go install github.com/google/go-licenses@v1.6.0
@@ -34,11 +34,15 @@ jobs:
       - name: Generate source SBOM
         run: |
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
-          cyclonedx-gomod mod -json -output source-bom.json
+          cyclonedx-gomod mod -json -output source-bom.cdx.json
+          python3 scripts/validate-supply-chain.py --directory .
+          sha256sum dependency-licenses.csv govulncheck.json source-bom.cdx.json > EVIDENCE_SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: security-evidence
           path: |
             dependency-licenses.csv
-            source-bom.json
+            EVIDENCE_SHA256SUMS
+            govulncheck.json
+            source-bom.cdx.json
           if-no-files-found: error

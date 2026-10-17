@@ -63,20 +63,27 @@ jobs:
       - name: Gate known vulnerabilities
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-          govulncheck ./...
+          mkdir supply-chain-evidence
+          govulncheck -json ./... > supply-chain-evidence/govulncheck.json
       - name: Gate dependency licenses
         run: |
           go install github.com/google/go-licenses@v1.6.0
           test "$(go list -m -f '{{.Version}}' modernc.org/mathutil)" = v1.7.1
           go-licenses check ./... --disallowed_types=forbidden,restricted --ignore modernc.org/mathutil
+          go-licenses report ./... --ignore bord,modernc.org/mathutil > supply-chain-evidence/dependency-licenses.csv
+          cat .github/license-policy/manual-review.csv >> supply-chain-evidence/dependency-licenses.csv
+      - name: Generate source SBOM
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
+          cyclonedx-gomod mod -json -output supply-chain-evidence/source-bom.cdx.json
       - name: Build deterministic archives
         run: python3 scripts/release.py --version "${{ steps.metadata.outputs.version }}"
       - name: Verify checksums and Linux installs
         shell: bash
         run: |
           (cd dist && sha256sum --check SHA256SUMS)
-          mkdir smoke
-          python3 scripts/validate-release.py --directory dist --version "${{ steps.metadata.outputs.version }}"
+          mkdir smoke release-contents
+          python3 scripts/validate-release.py --directory dist --version "${{ steps.metadata.outputs.version }}" --extract release-contents
           tar -xzf "dist/bord_${{ steps.metadata.outputs.version }}_linux_amd64.tar.gz" -C smoke
           tar -xzf "dist/bord-server_${{ steps.metadata.outputs.version }}_linux_amd64.tar.gz" -C smoke
           "smoke/bord_${{ steps.metadata.outputs.version }}_linux_amd64/bord" --version | grep -F "${{ steps.metadata.outputs.version }}"
@@ -84,15 +91,29 @@ jobs:
       - name: Generate release SBOM
         uses: anchore/sbom-action@v0
         with:
-          path: dist
-          format: spdx-json
-          output-file: dist/bord.spdx.json
+          path: release-contents
+          format: cyclonedx-json
+          output-file: supply-chain-evidence/release-bom.cdx.json
+          syft-version: v1.54.1
+          upload-artifact: false
+          upload-release-assets: false
       - name: Scan release artifacts
         uses: anchore/scan-action@v6
         with:
-          path: dist
-          fail-build: true
+          sbom: supply-chain-evidence/release-bom.cdx.json
+          # Grype cannot recover Go call graphs from stripped cross-platform
+          # binaries. Preserve its module-level inventory, while govulncheck is
+          # the blocking reachability gate above.
+          fail-build: false
           severity-cutoff: critical
+          output-format: json
+          output-file: supply-chain-evidence/grype.json
+          grype-version: v0.120.1
+      - name: Validate and stage supply-chain evidence
+        run: |
+          python3 scripts/validate-supply-chain.py --directory supply-chain-evidence --release
+          (cd supply-chain-evidence && sha256sum dependency-licenses.csv govulncheck.json grype.json release-bom.cdx.json source-bom.cdx.json > EVIDENCE_SHA256SUMS)
+          cp supply-chain-evidence/* dist/
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ steps.metadata.outputs.version }}
