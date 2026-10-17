@@ -19,6 +19,7 @@ const MaxSchemaVersion = 2
 
 const (
 	defaultBusyTimeout = 5_000
+	normalSynchronous  = 1
 	// A single database/sql connection serializes SQLite writes predictably. WAL
 	// still lets external readers proceed, and PostgreSQL is the scale-out path.
 	defaultMaxOpenConns = 1
@@ -56,6 +57,17 @@ func Ready(ctx context.Context, db *sql.DB) error {
 	var mode string
 	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil || !strings.EqualFold(mode, "wal") {
 		return fmt.Errorf("journal mode is %q: %v", mode, err)
+	}
+	var busyTimeout int
+	if err := db.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil || busyTimeout != defaultBusyTimeout {
+		return fmt.Errorf("busy timeout is %d: %v", busyTimeout, err)
+	}
+	var synchronous int
+	if err := db.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&synchronous); err != nil || synchronous != normalSynchronous {
+		return fmt.Errorf("synchronous mode is %d: %v", synchronous, err)
+	}
+	if maxOpen := db.Stats().MaxOpenConnections; maxOpen != defaultMaxOpenConns {
+		return fmt.Errorf("maximum open connections is %d, want %d", maxOpen, defaultMaxOpenConns)
 	}
 	var version int
 	if err := db.QueryRowContext(ctx, `SELECT version FROM schema_migrations LIMIT 1`).Scan(&version); err != nil {
