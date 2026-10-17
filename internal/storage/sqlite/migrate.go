@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const MaxSchemaVersion = 2
+const MaxSchemaVersion = 3
 
 const (
 	defaultBusyTimeout = 5_000

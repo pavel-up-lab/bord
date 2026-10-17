@@ -214,7 +214,7 @@ func (q *Queries) ListBoards(ctx context.Context) ([]Board, error) {
 }
 
 const listPosts = `-- name: ListPosts :many
-SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at
+SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at, hidden_body, hidden_attachment_id
 FROM posts
 WHERE thread_id = ?1 AND id > ?2
 ORDER BY id ASC
@@ -246,6 +246,8 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 			&i.Status,
 			&i.CreatedAt,
 			&i.DeletedAt,
+			&i.HiddenBody,
+			&i.HiddenAttachmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -352,7 +354,7 @@ func (q *Queries) NextID(ctx context.Context, kind string) (int64, error) {
 }
 
 const postByID = `-- name: PostByID :one
-SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at
+SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at, hidden_body, hidden_attachment_id
 FROM posts
 WHERE id = ?1
 `
@@ -370,6 +372,8 @@ func (q *Queries) PostByID(ctx context.Context, id int64) (Post, error) {
 		&i.Status,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.HiddenBody,
+		&i.HiddenAttachmentID,
 	)
 	return i, err
 }

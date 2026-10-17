@@ -21,6 +21,10 @@ type Repository struct {
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 
+// DB exposes the adapter handle to sibling production adapters. Application
+// packages continue to depend only on their narrow ports.
+func (r *Repository) DB() *sql.DB { return r.db }
+
 func (r *Repository) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
 	if _, nested := ctx.Value(txContextKey{}).(*sql.Tx); nested {
 		return fn(ctx)
@@ -217,6 +221,15 @@ func (r *Repository) InsertPost(ctx context.Context, post domain.Post, verifier 
 	if err := q.InsertPost(ctx, params); err != nil {
 		return err
 	}
+	if post.AttachmentID.Valid() {
+		result, err := qtx(ctx, r.db).ExecContext(ctx, `UPDATE attachments SET state = 'attached', attached_at = ? WHERE id = ? AND state = 'prepared'`, encodeTime(post.CreatedAt), string(post.AttachmentID))
+		if err != nil {
+			return err
+		}
+		if rows, _ := result.RowsAffected(); rows != 1 {
+			return domain.NewError(domain.CodeConflict, "attachment_id", nil)
+		}
+	}
 	return q.InsertDeleteVerifier(ctx, dbgen.InsertDeleteVerifierParams{PostID: id, Verifier: verifier, CreatedAt: encodeTime(post.CreatedAt)})
 }
 
@@ -241,11 +254,23 @@ func (r *Repository) TombstonePost(ctx context.Context, post domain.Post) error 
 	if post.DeletedAt != nil {
 		deletedAt = sql.NullString{String: encodeTime(*post.DeletedAt), Valid: true}
 	}
+	if _, err := qtx(ctx, r.db).ExecContext(ctx, `UPDATE attachments SET state = 'deleted', deleted_at = ? WHERE id = (SELECT attachment_id FROM posts WHERE id = ?)`, deletedAt.String, id); err != nil {
+		return err
+	}
 	rows, err := r.queries(ctx).TombstonePost(ctx, dbgen.TombstonePostParams{ID: id, DeletedAt: deletedAt})
 	if err == nil && rows != 1 {
 		return domain.NewError(domain.CodeConflict, "post", nil)
 	}
 	return err
+}
+
+func qtx(ctx context.Context, db *sql.DB) interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+} {
+	if tx, ok := ctx.Value(txContextKey{}).(*sql.Tx); ok {
+		return tx
+	}
+	return db
 }
 
 func (r *Repository) DeleteVerifier(ctx context.Context, postID domain.PostID) ([]byte, error) {

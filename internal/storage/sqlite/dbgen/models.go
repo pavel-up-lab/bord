@@ -104,15 +104,17 @@ type ModerationAction struct {
 }
 
 type Post struct {
-	ID           int64          `json:"id"`
-	ThreadID     int64          `json:"thread_id"`
-	ReplyToID    sql.NullInt64  `json:"reply_to_id"`
-	AuthorID     string         `json:"author_id"`
-	Body         string         `json:"body"`
-	AttachmentID sql.NullString `json:"attachment_id"`
-	Status       string         `json:"status"`
-	CreatedAt    string         `json:"created_at"`
-	DeletedAt    sql.NullString `json:"deleted_at"`
+	ID                 int64          `json:"id"`
+	ThreadID           int64          `json:"thread_id"`
+	ReplyToID          sql.NullInt64  `json:"reply_to_id"`
+	AuthorID           string         `json:"author_id"`
+	Body               string         `json:"body"`
+	AttachmentID       sql.NullString `json:"attachment_id"`
+	Status             string         `json:"status"`
+	CreatedAt          string         `json:"created_at"`
+	DeletedAt          sql.NullString `json:"deleted_at"`
+	HiddenBody         sql.NullString `json:"hidden_body"`
+	HiddenAttachmentID sql.NullString `json:"hidden_attachment_id"`
 }
 
 type PostDeleteToken struct {
@@ -140,6 +142,7 @@ type RequestSubject struct {
 	CreatedAt   string         `json:"created_at"`
 	ExpiresAt   string         `json:"expires_at"`
 	LegalHold   int64          `json:"legal_hold"`
+	PostID      sql.NullInt64  `json:"post_id"`
 }
 
 type SchemaMigration struct {
@@ -152,4 +155,9 @@ type Thread struct {
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 	BumpedAt  string `json:"bumped_at"`
+}
+
+type UsedChallenge struct {
+	ID        string `json:"id"`
+	ExpiresAt string `json:"expires_at"`
 }

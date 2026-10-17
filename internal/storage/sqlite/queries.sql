@@ -44,12 +44,12 @@ VALUES (sqlc.arg(id), sqlc.arg(board_id), sqlc.arg(status), sqlc.arg(created_at)
 UPDATE threads SET bumped_at = sqlc.arg(bumped_at) WHERE id = sqlc.arg(id);
 
 -- name: PostByID :one
-SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at
+SELECT *
 FROM posts
 WHERE id = sqlc.arg(id);
 
 -- name: ListPosts :many
-SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at
+SELECT *
 FROM posts
 WHERE thread_id = sqlc.arg(thread_id) AND id > sqlc.arg(after_id)
 ORDER BY id ASC
