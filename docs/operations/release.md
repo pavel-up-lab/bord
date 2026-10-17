@@ -27,3 +27,12 @@ SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" ./scripts/test-release.sh v
 Повторите команду дважды на одном commit и сравните SHA-256 архивов. Для
 официального выпуска проверьте install/smoke jobs всех трех runner ОС, SBOM,
 license report и отсутствие critical finding до публикации tag.
+
+## Capacity gate
+
+Перед выпуском выполните `./scripts/load-profile.sh /tmp/bord-load-profile.json`
+на production-class staging host и приложите компактный JSON к release evidence.
+Минимальный профиль и блокирующие пороги описаны в
+[`docs/performance/README.md`](../performance/README.md). Любая ошибка, SQLite
+busy, пропущенная SSE delivery или превышение p95/memory/goroutine threshold
+блокирует выпуск; понижать пороги вместо расследования нельзя.
