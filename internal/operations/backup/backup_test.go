@@ -145,6 +145,30 @@ func TestVerifyRejectsNonPortableManifestPath(t *testing.T) {
 	}
 }
 
+func TestVerifyBoundsManifestAndRejectsSymlinkEntries(t *testing.T) {
+	backupRoot := createFixtureBackup(t)
+	manifestPath := filepath.Join(backupRoot, ManifestName)
+	if err := os.WriteFile(manifestPath, make([]byte, maxManifestBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(backupRoot); err == nil {
+		t.Fatal("oversized manifest accepted")
+	}
+
+	backupRoot = createFixtureBackup(t)
+	database := filepath.Join(backupRoot, "database.sqlite3")
+	outside := filepath.Join(t.TempDir(), "outside.sqlite3")
+	if err := os.Rename(database, outside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, database); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := Verify(backupRoot); err == nil {
+		t.Fatal("symlinked backup entry accepted")
+	}
+}
+
 func createFixtureBackup(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

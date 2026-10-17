@@ -45,6 +45,23 @@ func TestHubReplayResetAndSlowSubscriber(t *testing.T) {
 	}
 }
 
+func TestHubRejectsSubscribersAtResourceLimit(t *testing.T) {
+	hub := NewHub(2, 1)
+	hub.maxClients = 2
+	_, _, first := hub.Subscribe("board", "", 0)
+	_, _, second := hub.Subscribe("board", "", 0)
+	if first == nil || second == nil {
+		t.Fatal("subscriber admitted below limit was rejected")
+	}
+	if _, _, overflow := hub.Subscribe("board", "", 0); overflow != nil {
+		t.Fatal("subscriber admitted above resource limit")
+	}
+	first.Close()
+	if _, _, replacement := hub.Subscribe("board", "", 0); replacement == nil {
+		t.Fatal("released subscriber capacity was not reusable")
+	}
+}
+
 type outboxFake struct {
 	events   []api.Event
 	marked   []domain.EventID

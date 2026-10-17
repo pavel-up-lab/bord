@@ -268,7 +268,7 @@ func decodeVerifier(value *string) ([]byte, error) {
 		return nil, domain.NewError(domain.CodeValidation, "delete_verifier", nil)
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(*value)
-	if err != nil {
+	if err != nil || !security.ValidateVerifierParameters(string(raw), security.DefaultArgon2Params) {
 		return nil, domain.NewError(domain.CodeValidation, "delete_verifier", err)
 	}
 	return raw, nil
@@ -322,6 +322,9 @@ func value(v *string) string {
 	return *v
 }
 func (p Public) DeletePost(ctx context.Context, id, token string) error {
+	// Abuse.Check records request-scoped subject state before this call. Delete
+	// has no post/report binding step, so always release that state here.
+	defer p.Runtime.Abuse.discard(ctx)
 	return p.Runtime.Board.DeleteOwnPost(ctx, domain.PostID(id), []byte(token))
 }
 func (p Public) ReportPost(ctx context.Context, id string, request api.ReportRequest) error {

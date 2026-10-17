@@ -63,4 +63,7 @@ func TestDefaultReadDeadlineBoundsBodiesWithoutBoundingSSEWrites(t *testing.T) {
 	if service.public.WriteTimeout != 0 {
 		t.Fatalf("write timeout %s would terminate SSE", service.public.WriteTimeout)
 	}
+	if service.public.MaxHeaderBytes != maxHeaderBytes {
+		t.Fatalf("header limit=%d want=%d", service.public.MaxHeaderBytes, maxHeaderBytes)
+	}
 }

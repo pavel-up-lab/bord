@@ -12,10 +12,13 @@ type Hub struct {
 	mu          sync.Mutex
 	historySize int
 	queueSize   int
+	maxClients  int
 	history     []api.Event
 	subscribers map[*subscriber]struct{}
 	closed      bool
 }
+
+const defaultMaxClients = 1024
 
 type subscriber struct {
 	hub    *Hub
@@ -32,7 +35,7 @@ func NewHub(historySize, queueSize int) *Hub {
 	if queueSize < 1 {
 		queueSize = 16
 	}
-	return &Hub{historySize: historySize, queueSize: queueSize, subscribers: make(map[*subscriber]struct{})}
+	return &Hub{historySize: historySize, queueSize: queueSize, maxClients: defaultMaxClients, subscribers: make(map[*subscriber]struct{})}
 }
 
 // Publish keeps a bounded replay window. A slow subscriber is disconnected instead
@@ -74,11 +77,15 @@ func (h *Hub) Publish(event api.Event) bool {
 func (h *Hub) Subscribe(board, thread string, after domain.EventID) ([]api.Event, bool, api.Subscription) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := &subscriber{hub: h, board: board, thread: thread, events: make(chan api.Event, h.queueSize)}
 	if h.closed {
+		s := &subscriber{hub: h, events: make(chan api.Event)}
 		close(s.events)
 		return nil, true, s
 	}
+	if len(h.subscribers) >= h.maxClients {
+		return nil, false, nil
+	}
+	s := &subscriber{hub: h, board: board, thread: thread, events: make(chan api.Event, h.queueSize)}
 	h.subscribers[s] = struct{}{}
 	if after == 0 {
 		return nil, false, s

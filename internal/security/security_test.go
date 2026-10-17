@@ -3,6 +3,7 @@ package security
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -70,6 +71,20 @@ func TestSecretVectorsAndVerifierNegatives(t *testing.T) {
 	}
 	if _, err := GenerateSecret(bytes.NewReader(nil)); err == nil {
 		t.Fatal("short entropy accepted")
+	}
+}
+
+func TestValidateVerifierParametersRejectsClientSelectedCost(t *testing.T) {
+	b64 := base64.RawStdEncoding
+	salt := b64.EncodeToString(bytes.Repeat([]byte("s"), int(DefaultArgon2Params.SaltLength)))
+	digest := b64.EncodeToString(bytes.Repeat([]byte("d"), int(DefaultArgon2Params.KeyLength)))
+	approved := fmt.Sprintf("$bord-argon2id$v=1$m=%d,t=%d,p=%d$%s$%s", DefaultArgon2Params.Memory, DefaultArgon2Params.Iterations, DefaultArgon2Params.Parallelism, salt, digest)
+	if !ValidateVerifierParameters(approved, DefaultArgon2Params) {
+		t.Fatal("approved verifier parameters rejected")
+	}
+	attackerSelected := fmt.Sprintf("$bord-argon2id$v=1$m=%d,t=10,p=16$%s$%s", 256*1024, salt, digest)
+	if ValidateVerifierParameters(attackerSelected, DefaultArgon2Params) {
+		t.Fatal("attacker-selected Argon2 resource cost accepted")
 	}
 }
 
