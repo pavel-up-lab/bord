@@ -28,6 +28,7 @@
   исполнение macOS/Windows нельзя честно подтвердить в локальном Linux staging.
 - [ ] Поэтому task 7.7 остается открытой до проверки загруженных CI artifacts,
   хотя локальные vulnerability/license/SBOM gates прошли; точные hashes, версии
-  и hosted blocker записаны в `evidence/supply-chain-a00cb00.md`.
+  и hosted blocker записаны в `evidence/supply-chain-eb856dd.md` (исходный
+  проблемный прогон сохранен в `evidence/supply-chain-a00cb00.md`).
 - [ ] Поэтому общий task 8.9 остается открытым до зеленых OpenSpec, CI и hosted
   staging gates; workflow хранит SBOM/license artifacts для закрытия этих gates.
