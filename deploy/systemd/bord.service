@@ -1,0 +1,54 @@
+[Unit]
+Description=Bord public board service
+Documentation=file:///usr/share/doc/bord/operations.md
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/bord
+
+[Service]
+Type=notify
+User=bord
+Group=bord
+UMask=0077
+EnvironmentFile=/etc/bord/bord.env
+LoadCredential=ip_lookup_key:/etc/bord/secrets/ip_lookup_key
+LoadCredential=ip_encryption_key:/etc/bord/secrets/ip_encryption_key
+Environment=BORD_IP_LOOKUP_KEY_FILE=%d/ip_lookup_key
+Environment=BORD_IP_ENCRYPTION_KEY_FILE=%d/ip_encryption_key
+StateDirectory=bord
+StateDirectoryMode=0700
+RuntimeDirectory=bord
+RuntimeDirectoryMode=0750
+WorkingDirectory=/var/lib/bord
+ExecStartPre=/usr/bin/bord-server status --database /var/lib/bord/bord.db
+ExecStart=/usr/bin/bord-server serve --config /etc/bord/config.yaml
+KillSignal=SIGTERM
+TimeoutStopSec=45s
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/bord
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

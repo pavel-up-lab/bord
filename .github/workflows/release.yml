@@ -1,0 +1,96 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version beginning with v
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  native-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: ""
+          - os: macos-latest
+            suffix: ""
+          - os: windows-latest
+            suffix: .exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and install client
+        shell: bash
+        run: |
+          go build -trimpath -o "${RUNNER_TEMP}/bord${{ matrix.suffix }}" ./cmd/bord
+          "${RUNNER_TEMP}/bord${{ matrix.suffix }}" --version
+
+  package:
+    needs: native-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ]; then version="${INPUT_VERSION}"; fi
+          case "${version}" in v*) ;; *) echo "version must start with v" >&2; exit 2;; esac
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+      - name: Build deterministic archives
+        run: python3 scripts/release.py --version "${{ steps.metadata.outputs.version }}"
+      - name: Verify checksums and Linux installs
+        shell: bash
+        run: |
+          (cd dist && sha256sum --check SHA256SUMS)
+          mkdir smoke
+          tar -xzf "dist/bord_${{ steps.metadata.outputs.version }}_linux_amd64.tar.gz" -C smoke
+          tar -xzf "dist/bord-server_${{ steps.metadata.outputs.version }}_linux_amd64.tar.gz" -C smoke
+          "smoke/bord_${{ steps.metadata.outputs.version }}_linux_amd64/bord" --version | grep -F "${{ steps.metadata.outputs.version }}"
+          "smoke/bord-server_${{ steps.metadata.outputs.version }}_linux_amd64/bord-server" version | grep -F "${{ steps.metadata.outputs.version }}"
+      - name: Generate release SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/bord.spdx.json
+      - name: Scan release artifacts
+        uses: anchore/scan-action@v6
+        with:
+          path: dist
+          fail-build: true
+          severity-cutoff: critical
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.metadata.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
