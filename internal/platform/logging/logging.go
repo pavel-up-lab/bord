@@ -11,6 +11,8 @@ import (
 var sensitive = map[string]struct{}{
 	"ip": {}, "raw_ip": {}, "remote_ip": {}, "post_body": {}, "body": {},
 	"authorization": {}, "bearer": {}, "credential": {}, "delete_token": {}, "secret": {},
+	"access_token": {}, "api_key": {}, "auth_header": {}, "client_ip": {}, "ip_address": {},
+	"session_secret": {}, "token": {},
 }
 
 func JSON(w io.Writer, level slog.Leveler) *slog.Logger {

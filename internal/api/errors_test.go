@@ -18,6 +18,7 @@ func TestErrorMappingContract(t *testing.T) {
 		{domain.CodeThreadClosed, http.StatusConflict},
 		{domain.CodeRateLimited, http.StatusTooManyRequests},
 		{domain.CodePayloadTooLarge, http.StatusRequestEntityTooLarge},
+		{domain.CodeServiceUnavailable, http.StatusServiceUnavailable},
 	}
 	for _, tt := range tests {
 		status, body := MapError(domain.NewError(tt.code, "", nil), "request-123")

@@ -21,6 +21,7 @@ const (
 	CodeIdempotencyConflict Code = "idempotency_conflict"
 	CodePayloadTooLarge     Code = "payload_too_large"
 	CodeConflict            Code = "conflict"
+	CodeServiceUnavailable  Code = "service_unavailable"
 )
 
 type Error struct {

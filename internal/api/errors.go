@@ -34,6 +34,8 @@ func MapError(err error, requestID string) (int, ErrorResponse) {
 		status, message = http.StatusForbidden, "proof of work required or invalid"
 	case domain.CodePayloadTooLarge:
 		status, message = http.StatusRequestEntityTooLarge, "request body is too large"
+	case domain.CodeServiceUnavailable:
+		status, message = http.StatusServiceUnavailable, "service is unavailable"
 	}
 	return status, ErrorResponse{Code: code, Message: message, RequestID: requestID}
 }

@@ -18,7 +18,7 @@ generate:
 	go generate ./...
 
 contract: generate
-	git diff --exit-code -- api/generated/client.gen.go
+	git diff --exit-code -- api/generated/client.gen.go internal/storage/sqlite/dbgen
 	go test ./api/contract
 
 build:

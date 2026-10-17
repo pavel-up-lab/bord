@@ -15,6 +15,7 @@ func TestStableErrorCodes(t *testing.T) {
 		{"not found", NewError(CodeBoardNotFound, "", nil), "board_not_found"},
 		{"closed", NewError(CodeThreadClosed, "", nil), "thread_closed"},
 		{"idempotency", NewError(CodeIdempotencyConflict, "", nil), "idempotency_conflict"},
+		{"unavailable", NewError(CodeServiceUnavailable, "", nil), "service_unavailable"},
 		{"unknown", errors.New("database details"), "internal_error"},
 	}
 	for _, tt := range tests {
