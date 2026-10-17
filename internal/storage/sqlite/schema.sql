@@ -61,6 +61,8 @@ CREATE TABLE posts (
     status TEXT NOT NULL CHECK (status IN ('visible', 'deleted', 'hidden')),
     created_at TEXT NOT NULL,
     deleted_at TEXT,
+	 hidden_body TEXT,
+	 hidden_attachment_id TEXT REFERENCES attachments(id) ON DELETE RESTRICT,
     CHECK ((status = 'visible' AND (length(trim(body)) > 0 OR attachment_id IS NOT NULL)) OR status <> 'visible'),
     CHECK (status = 'visible' OR (body = '' AND attachment_id IS NULL))
 );
@@ -109,11 +111,20 @@ CREATE TABLE request_subjects (
     key_id TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    legal_hold INTEGER NOT NULL DEFAULT 0 CHECK (legal_hold IN (0, 1))
+    legal_hold INTEGER NOT NULL DEFAULT 0 CHECK (legal_hold IN (0, 1)),
+    post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL
 );
 
 CREATE INDEX request_subjects_lookup_idx ON request_subjects(ip_lookup, created_at);
 CREATE INDEX request_subjects_expiry_idx ON request_subjects(expires_at);
+CREATE INDEX request_subjects_post_idx ON request_subjects(post_id);
+
+CREATE TABLE used_challenges (
+    id TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL
+);
+
+CREATE INDEX used_challenges_expiry_idx ON used_challenges(expires_at);
 
 CREATE TABLE reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

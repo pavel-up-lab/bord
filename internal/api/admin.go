@@ -13,12 +13,19 @@ func (h *Handler) admin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Fields(r.Header.Get("Authorization"))
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			if err := h.config.Admin.Authenticate(r.Context(), "", RequestID(r.Context())); err != nil {
+				writeError(w, r, err)
+				return
+			}
 			writeError(w, r, domain.NewError(domain.CodeUnauthorized, "", errors.New("missing credential")))
 			return
 		}
 		if err := h.config.Admin.Authenticate(r.Context(), parts[1], RequestID(r.Context())); err != nil {
 			writeError(w, r, err)
 			return
+		}
+		if finisher, ok := h.config.Admin.(interface{ Finish(string) }); ok {
+			defer finisher.Finish(RequestID(r.Context()))
 		}
 		next.ServeHTTP(w, r)
 	})
