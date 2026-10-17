@@ -72,7 +72,7 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_ = db.Close()
 		return err
 	}
-	runtime, err := integration.New(integration.Config{DB: db, Blobs: cfg.Storage.Blobs, LookupKey: cfg.Secrets.IPLookupKey, EncryptionKey: cfg.Secrets.IPEncryptionKey, StoreRawIP: cfg.Privacy.StoreRawIP})
+	runtime, err := integration.New(integration.Config{DB: db, Blobs: cfg.Storage.Blobs, LookupKey: cfg.Secrets.IPLookupKey, EncryptionKey: cfg.Secrets.IPEncryptionKey, EncryptionKeyID: cfg.Secrets.IPEncryptionKeyID, PreviousEncryptionKey: cfg.Secrets.IPPreviousEncryptionKey, PreviousEncryptionKeyID: cfg.Secrets.IPPreviousEncryptionKeyID, StoreRawIP: cfg.Privacy.StoreRawIP})
 	if err != nil {
 		_ = db.Close()
 		return err
