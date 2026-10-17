@@ -21,8 +21,8 @@ heap/system memory and goroutines.
 
 ## Minimum honest MVP capacity
 
-The single-node MVP claim is deliberately limited to the default simultaneous
-profile on hardware no weaker than the recorded baseline:
+The single-node MVP claim is deliberately limited to the default bounded
+three-phase profile on hardware no weaker than the recorded baseline:
 
 - 100 public reads/s with p95 at or below 100 ms;
 - 10 creates/s with p95 at or below 500 ms;
