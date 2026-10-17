@@ -68,16 +68,16 @@
 
 ## 5. HTTP API and realtime — `bord-http-realtime`
 
-- [ ] 5.1 Собрать HTTP router и middleware order: recovery, request ID, trusted proxy, body limit, structured access log, security headers и timeout policy; проверить middleware integration tests и отсутствие secret fields в логах.
-- [ ] 5.2 Реализовать strict JSON decoding, OpenAPI DTO mapping, uniform errors, signed cursors и `Idempotency-Key`; проверить contract tests всех error envelopes и поврежденных курсоров.
-- [ ] 5.3 Реализовать public handlers boards/catalog/thread/create/reply/delete через app ports; проверить OpenAPI conformance и table-driven HTTP tests на success/not-found/closed/validation cases.
-- [ ] 5.4 Реализовать attachment upload/download handlers с ранним body limit, `nosniff`, безопасным disposition и недоступностью удаленного blob; проверить HTTP media integration fixtures.
-- [ ] 5.5 Реализовать report и PoW challenge endpoints и включить anti-abuse pipeline перед write handlers; проверить HTTP 429/retry, challenge-required и accepted solution flows.
-- [ ] 5.6 Реализовать outbox dispatcher и bounded subscriber hub с медленным-клиентом policy; проверить порядок event IDs, отсутствие утечки goroutine и delivery после commit.
-- [ ] 5.7 Реализовать SSE endpoint, heartbeat, `Last-Event-ID`, retention replay и `stream.reset`; проверить reconnect tests через реальный `httptest.Server`.
-- [ ] 5.8 Реализовать `/admin/v1` handlers и отдельную management listener policy поверх moderation ports; проверить bearer roles, audit correlation и отсутствие admin routes на public listener при раздельной конфигурации.
-- [ ] 5.9 Реализовать `/healthz`, `/readyz`, graceful shutdown и композицию `cmd/bord-server`; проверить снятие readiness до остановки, завершение SSE и отказ readiness при storage/blob failure.
-- [ ] 5.10 Запустить полный generated-client contract suite против собранного сервера на fake ports и исправить только adapter-level расхождения без изменения frozen OpenAPI; проверить `make contract`.
+- [x] 5.1 Собрать HTTP router и middleware order: recovery, request ID, trusted proxy, body limit, structured access log, security headers и timeout policy; проверить middleware integration tests и отсутствие secret fields в логах.
+- [x] 5.2 Реализовать strict JSON decoding, OpenAPI DTO mapping, uniform errors, signed cursors и `Idempotency-Key`; проверить contract tests всех error envelopes и поврежденных курсоров.
+- [x] 5.3 Реализовать public handlers boards/catalog/thread/create/reply/delete через app ports; проверить OpenAPI conformance и table-driven HTTP tests на success/not-found/closed/validation cases.
+- [x] 5.4 Реализовать attachment upload/download handlers с ранним body limit, `nosniff`, безопасным disposition и недоступностью удаленного blob; проверить HTTP media integration fixtures.
+- [x] 5.5 Реализовать report и PoW challenge endpoints и включить anti-abuse pipeline перед write handlers; проверить HTTP 429/retry, challenge-required и accepted solution flows.
+- [x] 5.6 Реализовать outbox dispatcher и bounded subscriber hub с медленным-клиентом policy; проверить порядок event IDs, отсутствие утечки goroutine и delivery после commit.
+- [x] 5.7 Реализовать SSE endpoint, heartbeat, `Last-Event-ID`, retention replay и `stream.reset`; проверить reconnect tests через реальный `httptest.Server`.
+- [x] 5.8 Реализовать `/admin/v1` handlers и отдельную management listener policy поверх moderation ports; проверить bearer roles, audit correlation и отсутствие admin routes на public listener при раздельной конфигурации.
+- [x] 5.9 Реализовать `/healthz`, `/readyz`, graceful shutdown и композицию `cmd/bord-server`; проверить снятие readiness до остановки, завершение SSE и отказ readiness при storage/blob failure.
+- [x] 5.10 Запустить полный generated-client contract suite против собранного сервера на fake ports и исправить только adapter-level расхождения без изменения frozen OpenAPI; проверить `make contract`.
 
 ## 6. Terminal client — `bord-tui-client`
 

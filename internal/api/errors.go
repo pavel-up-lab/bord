@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"bord/internal/domain"
@@ -37,5 +38,14 @@ func MapError(err error, requestID string) (int, ErrorResponse) {
 	case domain.CodeServiceUnavailable:
 		status, message = http.StatusServiceUnavailable, "service is unavailable"
 	}
-	return status, ErrorResponse{Code: code, Message: message, RequestID: requestID}
+	response := ErrorResponse{Code: code, Message: message, RequestID: requestID}
+	var domainErr *domain.Error
+	if errors.As(err, &domainErr) && domainErr.Field != "" {
+		response.Fields = map[string]string{domainErr.Field: "invalid value"}
+	}
+	return status, response
+}
+
+func domainErrorPayloadTooLarge(err error) error {
+	return domain.NewError(domain.CodePayloadTooLarge, "", err)
 }
