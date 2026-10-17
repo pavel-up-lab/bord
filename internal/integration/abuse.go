@@ -91,12 +91,29 @@ func (a *Abuse) check(ctx context.Context, operation, solution, sessionProof str
 			return domain.NewError(domain.CodeInvalidChallenge, "pow_solution", nil)
 		}
 	}
+	requestID := api.RequestID(ctx)
+	a.mu.Lock()
+	if requestID == "" {
+		a.mu.Unlock()
+		return domain.NewError(domain.CodeInternal, "", errors.New("missing request ID"))
+	}
+	if _, collision := a.pending[requestID]; collision {
+		a.mu.Unlock()
+		return domain.NewError(domain.CodeForbidden, "", errors.New("duplicate active request ID"))
+	}
+	// Reserve before persistence so concurrent requests carrying the same
+	// trusted-edge correlation ID cannot overwrite each other's subject state.
+	a.pending[requestID] = 0
+	a.mu.Unlock()
 	sid, err := a.storeSubject(ctx, ip, lookup, prefix)
 	if err != nil {
+		a.mu.Lock()
+		delete(a.pending, requestID)
+		a.mu.Unlock()
 		return err
 	}
 	a.mu.Lock()
-	a.pending[api.RequestID(ctx)] = sid
+	a.pending[requestID] = sid
 	a.mu.Unlock()
 	return nil
 }

@@ -45,8 +45,8 @@
 
 - [x] Admin create/rotate/revoke, legal hold, ручной retention и resumable
   re-encryption подключены к production `bord-server` и проверены clean staging.
-- [ ] OpenSpec task 8.8 принадлежит финальной проверке и еще открыта; 8.4–8.6
-  закрыты локальными quality/load/terminal gates.
+- [x] OpenSpec task 8.8 закрыта с 0 открытых Critical/High; no-secret отчет и
+  команды сохранены в `evidence/security-review-8.8.md`.
 - [ ] Hosted GitHub Actions, GitHub Release assets, публичный DNS/ACME и нативное
   исполнение macOS/Windows нельзя честно подтвердить в локальном Linux staging.
 - [ ] Поэтому task 7.7 остается открытой до проверки загруженных CI artifacts,

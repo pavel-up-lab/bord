@@ -95,6 +95,15 @@ func VerifySecret(secret []byte, encoded string) bool {
 	return subtle.ConstantTimeCompare(actual, expected) == 1
 }
 
+// ValidateVerifierParameters reports whether an encoded verifier uses exactly
+// the server-approved Argon2id cost and output parameters. Public clients
+// supply delete verifiers, so accepting arbitrary valid parameters would let a
+// client persist a verifier that forces excessive CPU or memory use later.
+func ValidateVerifierParameters(encoded string, approved Argon2Params) bool {
+	p, _, _, err := parseVerifier(encoded)
+	return err == nil && approved.validate() == nil && p == approved
+}
+
 func parseVerifier(encoded string) (Argon2Params, []byte, []byte, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "bord-argon2id" || !strings.HasPrefix(parts[2], "v=") {

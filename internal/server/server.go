@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const maxHeaderBytes = 64 << 10
+
 type Lifecycle struct{ ready atomic.Bool }
 
 func (l *Lifecycle) SetReady() { l.ready.Store(true) }
@@ -65,9 +67,9 @@ func New(config Config, lifecycle *Lifecycle) (*Server, error) {
 		lifecycle = &Lifecycle{}
 	}
 	s := &Server{config: config, lifecycle: lifecycle}
-	s.public = &http.Server{Addr: config.PublicAddress, Handler: config.PublicHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout, IdleTimeout: config.IdleTimeout}
+	s.public = &http.Server{Addr: config.PublicAddress, Handler: config.PublicHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout, IdleTimeout: config.IdleTimeout, MaxHeaderBytes: maxHeaderBytes}
 	if config.ManagementAddress != "" && config.ManagementHandler != nil {
-		s.management = &http.Server{Addr: config.ManagementAddress, Handler: config.ManagementHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout, IdleTimeout: config.IdleTimeout}
+		s.management = &http.Server{Addr: config.ManagementAddress, Handler: config.ManagementHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout, IdleTimeout: config.IdleTimeout, MaxHeaderBytes: maxHeaderBytes}
 	}
 	return s, nil
 }

@@ -94,7 +94,8 @@ func TestProductionRuntimeE2E(t *testing.T) {
 		t.Fatalf("transactional prepared attachment delete: %v", err)
 	}
 	deleteToken := strings.Repeat("d", 32)
-	verifier, err := security.HashSecret([]byte(deleteToken), security.Argon2Params{Version: 1, Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 8, KeyLength: 16}, bytes.NewReader([]byte("12345678")))
+	verifierEntropy := bytes.NewReader(bytes.Repeat([]byte("v"), int(security.DefaultArgon2Params.SaltLength)))
+	verifier, err := security.HashSecret([]byte(deleteToken), security.DefaultArgon2Params, verifierEntropy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +237,12 @@ func TestProductionRuntimeE2E(t *testing.T) {
 		t.Fatalf("delete=%d %s", response.StatusCode, read(response))
 	}
 	_ = response.Body.Close()
+	runtime.Abuse.mu.Lock()
+	pendingSubjects := len(runtime.Abuse.pending)
+	runtime.Abuse.mu.Unlock()
+	if pendingSubjects != 0 {
+		t.Fatalf("owner delete leaked %d request-scoped abuse subjects", pendingSubjects)
+	}
 	response = request(t, server, http.MethodGet, "/api/v1/threads/"+created.ThreadID+"/posts", "", nil, nil)
 	var posts struct {
 		Posts []api.Post `json:"posts"`

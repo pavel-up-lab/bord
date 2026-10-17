@@ -1,25 +1,47 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+const maxManifestBytes = 8 << 20
+
 func Verify(root string) (Manifest, error) {
-	data, err := os.ReadFile(filepath.Join(root, ManifestName))
+	manifestPath := filepath.Join(root, ManifestName)
+	info, err := os.Lstat(manifestPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return Manifest{}, errors.New("manifest is not a regular file")
+	}
+	manifestFile, err := os.Open(manifestPath)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read manifest: %w", err)
 	}
+	data, err := io.ReadAll(io.LimitReader(manifestFile, maxManifestBytes+1))
+	closeErr := manifestFile.Close()
+	if err != nil || closeErr != nil {
+		return Manifest{}, fmt.Errorf("read manifest: %w", errors.Join(err, closeErr))
+	}
+	if len(data) > maxManifestBytes {
+		return Manifest{}, errors.New("manifest exceeds size limit")
+	}
 	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
 		return Manifest{}, fmt.Errorf("parse manifest: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return Manifest{}, errors.New("manifest must contain one JSON object")
 	}
 	if manifest.Format != ManifestVersion {
 		return Manifest{}, fmt.Errorf("unsupported manifest format %d", manifest.Format)
@@ -41,7 +63,12 @@ func Verify(root string) (Manifest, error) {
 			return Manifest{}, fmt.Errorf("duplicate manifest path %q", file.Path)
 		}
 		expected[file.Path] = file
-		actual, err := describe(root, filepath.Join(root, filepath.FromSlash(file.Path)))
+		path := filepath.Join(root, filepath.FromSlash(file.Path))
+		info, err = os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return Manifest{}, fmt.Errorf("verify %s: backup entry is not a regular file", file.Path)
+		}
+		actual, err := describe(root, path)
 		if err != nil {
 			return Manifest{}, fmt.Errorf("verify %s: %w", file.Path, err)
 		}
