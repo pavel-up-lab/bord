@@ -228,6 +228,35 @@ func TestLayoutGolden(t *testing.T) {
 	assertGolden(t, "wide-ansi256.golden", m.View())
 }
 
+func TestUntrustedTerminalControlsAreNeutralized(t *testing.T) {
+	setColorProfile(3)
+	malicious := "x\x1b[31m\x1b]52;c;YXR0YWNr\a\x00\u009bred"
+	body := malicious + "\nsecond line"
+	reply := malicious
+	m := NewModel(context.Background(), &fakeService{})
+	m.loading, m.width, m.height = false, 100, 20
+	m.boards = []generated.Board{{Slug: malicious, Title: malicious}}
+	m.activeThread, m.screen, m.focus = malicious, ThreadScreen, FocusContent
+	m.posts = []generated.Post{{Id: malicious, AuthorId: malicious, ReplyToId: &reply, Body: &body, State: generated.Visible}}
+	view := m.View()
+	for _, forbidden := range []string{"\x1b", "\a", "\x00", "\u009b"} {
+		if strings.Contains(view, forbidden) {
+			t.Fatalf("unsafe control %q survived in view %q", forbidden, view)
+		}
+	}
+	if !strings.Contains(view, "second line") || !strings.Contains(view, "[31m") || !strings.Contains(view, "]52;c;YXR0YWNr") {
+		t.Fatalf("sanitizer unexpectedly discarded safe text: %q", view)
+	}
+}
+
+func TestSanitizeTerminalTextCSIOSC52C0C1(t *testing.T) {
+	input := "ok\x1b[2J\x1b]52;c;c2VjcmV0\a\x00\u0085\u009b31m\nline"
+	got := SanitizeTerminalText(input)
+	if strings.ContainsFunc(got, unsafeTerminalRune) || !strings.Contains(got, "line") {
+		t.Fatalf("unsafe sanitized output %q", got)
+	}
+}
+
 func setColorProfile(profile int64) {
 	fn := reflect.ValueOf(lipgloss.SetColorProfile)
 	value := reflect.New(fn.Type().In(0)).Elem()

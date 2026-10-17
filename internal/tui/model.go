@@ -593,13 +593,13 @@ func (m Model) boardsView() string {
 		if i == m.boardIndex {
 			marker = "> "
 		}
-		fmt.Fprintf(&b, "%s/%s/ %s\n", marker, board.Slug, board.Title)
+		fmt.Fprintf(&b, "%s/%s/ %s\n", marker, SanitizeTerminalText(board.Slug), SanitizeTerminalText(board.Title))
 	}
 	return b.String()
 }
 func (m Model) contentTitle() string {
 	if m.screen == ThreadScreen {
-		return "Тред " + m.activeThread
+		return "Тред " + SanitizeTerminalText(m.activeThread)
 	}
 	if m.screen == AttachmentScreen {
 		return "Вложение"
@@ -629,7 +629,7 @@ func (m Model) contentView() string {
 			if i == m.contentIndex {
 				marker = "> "
 			}
-			fmt.Fprintf(&b, "%s%s  %s\n", marker, t.Id, t.UpdatedAt.Format("2006-01-02 15:04"))
+			fmt.Fprintf(&b, "%s%s  %s\n", marker, SanitizeTerminalText(t.Id), t.UpdatedAt.Format("2006-01-02 15:04"))
 		}
 	}
 	return b.String()
@@ -640,7 +640,7 @@ func (m Model) composerView() string {
 	}
 	attachment := "нет"
 	if m.draft.AttachmentID != "" {
-		attachment = m.draft.AttachmentID
+		attachment = SanitizeTerminalText(m.draft.AttachmentID)
 	}
 	return frame("Редактор", m.editor.View()+"\n\nCtrl+S отправить • Ctrl+O вложение • Esc отменить\n10000 символов • вложение: "+attachment, true, max(30, m.width)) + m.status()
 }
@@ -658,7 +658,7 @@ func (m Model) status() string {
 	if m.err != nil {
 		var apiErr *client.APIError
 		if errorsAs(m.err, &apiErr) {
-			return "\n Ошибка: " + string(apiErr.Code)
+			return "\n Ошибка: " + SanitizeTerminalText(string(apiErr.Code))
 		}
 		return "\n Ошибка сети"
 	}
@@ -674,15 +674,15 @@ func frame(title, content string, active bool, width int) string {
 }
 func formatPost(p generated.Post) string {
 	if p.State != generated.Visible {
-		return fmt.Sprintf(">>%s [%s]", p.Id, p.State)
+		return fmt.Sprintf(">>%s [%s]", SanitizeTerminalText(p.Id), SanitizeTerminalText(string(p.State)))
 	}
-	prefix := fmt.Sprintf(">>%s (%s)", p.Id, p.AuthorId)
+	prefix := fmt.Sprintf(">>%s (%s)", SanitizeTerminalText(p.Id), SanitizeTerminalText(p.AuthorId))
 	if p.ReplyToId != nil {
-		prefix += " → >>" + *p.ReplyToId
+		prefix += " → >>" + SanitizeTerminalText(*p.ReplyToId)
 	}
 	body := ""
 	if p.Body != nil {
-		body = *p.Body
+		body = sanitizeMultilineTerminalText(*p.Body)
 	}
 	return prefix + "\n" + body
 }

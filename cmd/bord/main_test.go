@@ -24,3 +24,16 @@ func TestRejectsUnknownInlineModeBeforeStartingTUI(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestFlagErrorsAreTerminalSafe(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"--bad\x1b]52;c;c2VjcmV0\a\u009b"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected flag error")
+	}
+	for _, control := range []string{"\x1b", "\a", "\u009b"} {
+		if strings.Contains(stderr.String(), control) {
+			t.Fatalf("control %q survived in stderr %q", control, stderr.String())
+		}
+	}
+}

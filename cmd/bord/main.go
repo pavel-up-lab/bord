@@ -24,19 +24,19 @@ var (
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "bord:", err)
+		fmt.Fprintln(os.Stderr, "bord:", tui.SanitizeTerminalText(err.Error()))
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 1 && args[0] == "version" {
-		fmt.Fprintf(stdout, "bord %s commit=%s built=%s\n", version, commit, buildDate)
+		fmt.Fprintf(stdout, "bord %s commit=%s built=%s\n", safeText(version), safeText(commit), safeText(buildDate))
 		return nil
 	}
 
 	flags := flag.NewFlagSet("bord", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(safeTerminalWriter{stderr})
 	server := flags.String("server", "", "адрес сервера")
 	statePath := flags.String("config", "", "путь к локальному состоянию")
 	inline := flags.String("inline", "", "inline-графика: auto, kitty или off")
@@ -47,9 +47,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *showVersion {
 		if commit == "unknown" && buildDate == "unknown" {
-			fmt.Fprintln(stdout, version)
+			fmt.Fprintln(stdout, safeText(version))
 		} else {
-			fmt.Fprintf(stdout, "bord %s commit=%s built=%s\n", version, commit, buildDate)
+			fmt.Fprintf(stdout, "bord %s commit=%s built=%s\n", safeText(version), safeText(commit), safeText(buildDate))
 		}
 		return nil
 	}
@@ -111,4 +111,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+type safeTerminalWriter struct{ io.Writer }
+
+func safeText(value string) string { return tui.SanitizeTerminalText(value) }
+
+func (w safeTerminalWriter) Write(p []byte) (int, error) {
+	output := tui.SanitizeTerminalText(string(p))
+	n, err := io.WriteString(w.Writer, output)
+	if err != nil {
+		return 0, err
+	}
+	if n != len(output) {
+		return 0, io.ErrShortWrite
+	}
+	return len(p), nil
 }
