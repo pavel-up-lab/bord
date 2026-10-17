@@ -33,15 +33,15 @@
 
 ## 2. Storage and board domain — `bord-storage-domain`
 
-- [ ] 2.1 Реализовать domain entities и инварианты boards, threads, posts, tombstones и thread-local author IDs; проверить unit tests создания, закрытого треда, cross-thread reply и tombstone.
-- [ ] 2.2 Создать начальные SQLite migrations для boards, threads, posts, sessions, delete verifiers, idempotency, attachments, outbox, reports, bans, audit и request subjects; проверить upgrade пустой БД и foreign-key integrity.
-- [ ] 2.3 Реализовать sqlc queries и repositories для списка досок, курсорного каталога и последовательного чтения треда; проверить repository tests на стабильный порядок, границы страниц и неизвестные ресурсы.
-- [ ] 2.4 Реализовать транзакционные use cases создания треда и ответа с валидацией `reply_to_id`; проверить integration tests атомарности и отказа пустой публикации.
-- [ ] 2.5 Реализовать idempotency repository и семантику повторов create-операций; проверить, что идентичный повтор возвращает исходный ресурс, а измененный payload дает conflict.
-- [ ] 2.6 Реализовать хранение verifier токена удаления и use case owner delete с tombstone; проверить успешное удаление, неверный token и отсутствие исходного содержимого в read model.
-- [ ] 2.7 Добавить запись versioned outbox event в той же транзакции, что content mutation; проверить rollback обоих изменений при injected failure.
-- [ ] 2.8 Реализовать SQLite runtime settings WAL, foreign keys, busy timeout, pool limits и readiness probe; проверить конкурентным тестом bounded writes без `database is locked` при целевой нагрузке теста.
-- [ ] 2.9 Документировать repository contracts и пороговые метрики перехода на PostgreSQL рядом с storage package; проверить, что package examples и все storage tests проходят.
+- [x] 2.1 Реализовать domain entities и инварианты boards, threads, posts, tombstones и thread-local author IDs; проверить unit tests создания, закрытого треда, cross-thread reply и tombstone.
+- [x] 2.2 Создать начальные SQLite migrations для boards, threads, posts, sessions, delete verifiers, idempotency, attachments, outbox, reports, bans, audit и request subjects; проверить upgrade пустой БД и foreign-key integrity.
+- [x] 2.3 Реализовать sqlc queries и repositories для списка досок, курсорного каталога и последовательного чтения треда; проверить repository tests на стабильный порядок, границы страниц и неизвестные ресурсы.
+- [x] 2.4 Реализовать транзакционные use cases создания треда и ответа с валидацией `reply_to_id`; проверить integration tests атомарности и отказа пустой публикации.
+- [x] 2.5 Реализовать idempotency repository и семантику повторов create-операций; проверить, что идентичный повтор возвращает исходный ресурс, а измененный payload дает conflict.
+- [x] 2.6 Реализовать хранение verifier токена удаления и use case owner delete с tombstone; проверить успешное удаление, неверный token и отсутствие исходного содержимого в read model.
+- [x] 2.7 Добавить запись versioned outbox event в той же транзакции, что content mutation; проверить rollback обоих изменений при injected failure.
+- [x] 2.8 Реализовать SQLite runtime settings WAL, foreign keys, busy timeout, pool limits и readiness probe; проверить конкурентным тестом bounded writes без `database is locked` при целевой нагрузке теста.
+- [x] 2.9 Документировать repository contracts и пороговые метрики перехода на PostgreSQL рядом с storage package; проверить, что package examples и все storage tests проходят.
 
 ## 3. Security, abuse controls and moderation — `bord-security-moderation`
 

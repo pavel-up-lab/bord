@@ -4,11 +4,152 @@
 
 package dbgen
 
+import (
+	"database/sql"
+)
+
+type AdminIdentity struct {
+	ID                 string         `json:"id"`
+	Role               string         `json:"role"`
+	CredentialVerifier []byte         `json:"credential_verifier"`
+	ParamsVersion      int64          `json:"params_version"`
+	CreatedAt          string         `json:"created_at"`
+	ExpiresAt          sql.NullString `json:"expires_at"`
+	RevokedAt          sql.NullString `json:"revoked_at"`
+}
+
+type AnonymousSession struct {
+	ID          string `json:"id"`
+	Fingerprint []byte `json:"fingerprint"`
+	CreatedAt   string `json:"created_at"`
+	LastSeenAt  string `json:"last_seen_at"`
+}
+
+type Attachment struct {
+	ID           string         `json:"id"`
+	State        string         `json:"state"`
+	MediaType    string         `json:"media_type"`
+	SizeBytes    int64          `json:"size_bytes"`
+	Sha256       []byte         `json:"sha256"`
+	Width        int64          `json:"width"`
+	Height       int64          `json:"height"`
+	SafeFilename string         `json:"safe_filename"`
+	CreatedAt    string         `json:"created_at"`
+	AttachedAt   sql.NullString `json:"attached_at"`
+	DeletedAt    sql.NullString `json:"deleted_at"`
+}
+
+type Ban struct {
+	ID           int64          `json:"id"`
+	SubjectKind  string         `json:"subject_kind"`
+	SubjectValue []byte         `json:"subject_value"`
+	BoardID      sql.NullInt64  `json:"board_id"`
+	Operation    sql.NullString `json:"operation"`
+	Reason       string         `json:"reason"`
+	CreatedAt    string         `json:"created_at"`
+	ExpiresAt    string         `json:"expires_at"`
+	RevokedAt    sql.NullString `json:"revoked_at"`
+}
+
+type Board struct {
+	ID        int64  `json:"id"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	Enabled   int64  `json:"enabled"`
+	CreatedAt string `json:"created_at"`
+}
+
+type EventOutbox struct {
+	ID            int64          `json:"id"`
+	SchemaVersion int64          `json:"schema_version"`
+	EventType     string         `json:"event_type"`
+	BoardID       sql.NullInt64  `json:"board_id"`
+	ThreadID      sql.NullInt64  `json:"thread_id"`
+	PostID        sql.NullInt64  `json:"post_id"`
+	Payload       []byte         `json:"payload"`
+	CreatedAt     string         `json:"created_at"`
+	PublishedAt   sql.NullString `json:"published_at"`
+}
+
 type FoundationCheck struct {
 	ID        int64  `json:"id"`
 	CreatedAt string `json:"created_at"`
 }
 
+type IDSequence struct {
+	Kind  string `json:"kind"`
+	Value int64  `json:"value"`
+}
+
+type IdempotencyKey struct {
+	Operation   string         `json:"operation"`
+	Key         string         `json:"key"`
+	RequestHash []byte         `json:"request_hash"`
+	Response    []byte         `json:"response"`
+	CreatedAt   string         `json:"created_at"`
+	ExpiresAt   sql.NullString `json:"expires_at"`
+}
+
+type ModerationAction struct {
+	ID         int64          `json:"id"`
+	AdminID    sql.NullString `json:"admin_id"`
+	Action     string         `json:"action"`
+	TargetType sql.NullString `json:"target_type"`
+	TargetID   sql.NullString `json:"target_id"`
+	Reason     sql.NullString `json:"reason"`
+	Outcome    string         `json:"outcome"`
+	RequestID  string         `json:"request_id"`
+	Payload    []byte         `json:"payload"`
+	CreatedAt  string         `json:"created_at"`
+}
+
+type Post struct {
+	ID           int64          `json:"id"`
+	ThreadID     int64          `json:"thread_id"`
+	ReplyToID    sql.NullInt64  `json:"reply_to_id"`
+	AuthorID     string         `json:"author_id"`
+	Body         string         `json:"body"`
+	AttachmentID sql.NullString `json:"attachment_id"`
+	Status       string         `json:"status"`
+	CreatedAt    string         `json:"created_at"`
+	DeletedAt    sql.NullString `json:"deleted_at"`
+}
+
+type PostDeleteToken struct {
+	PostID        int64  `json:"post_id"`
+	Verifier      []byte `json:"verifier"`
+	ParamsVersion int64  `json:"params_version"`
+	CreatedAt     string `json:"created_at"`
+}
+
+type Report struct {
+	ID        int64         `json:"id"`
+	PostID    int64         `json:"post_id"`
+	SubjectID sql.NullInt64 `json:"subject_id"`
+	Reason    string        `json:"reason"`
+	CreatedAt string        `json:"created_at"`
+}
+
+type RequestSubject struct {
+	ID          int64          `json:"id"`
+	IpLookup    []byte         `json:"ip_lookup"`
+	IpPrefix    []byte         `json:"ip_prefix"`
+	EncryptedIp []byte         `json:"encrypted_ip"`
+	Nonce       []byte         `json:"nonce"`
+	KeyID       sql.NullString `json:"key_id"`
+	CreatedAt   string         `json:"created_at"`
+	ExpiresAt   string         `json:"expires_at"`
+	LegalHold   int64          `json:"legal_hold"`
+}
+
 type SchemaMigration struct {
 	Version int64 `json:"version"`
+}
+
+type Thread struct {
+	ID        int64  `json:"id"`
+	BoardID   int64  `json:"board_id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	BumpedAt  string `json:"bumped_at"`
 }
