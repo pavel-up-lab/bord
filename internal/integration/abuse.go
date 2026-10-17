@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -43,6 +44,16 @@ func (a *Abuse) subject(ctx context.Context) (netip.Addr, []byte, string, error)
 	return ip, lookup[:], prefix.String(), nil
 }
 func (a *Abuse) Check(ctx context.Context, operation, solution string) error {
+	return a.check(ctx, operation, solution, "")
+}
+
+// CheckSession adds a pseudonymous session bucket when the frozen HTTP request
+// carries a session proof. Only a domain-separated digest enters limiter state.
+func (a *Abuse) CheckSession(ctx context.Context, operation, solution, sessionProof string) error {
+	return a.check(ctx, operation, solution, sessionProof)
+}
+
+func (a *Abuse) check(ctx context.Context, operation, solution, sessionProof string) error {
 	ip, lookup, prefix, err := a.subject(ctx)
 	if err != nil {
 		return domain.NewError(domain.CodeValidation, "source", err)
@@ -58,7 +69,15 @@ func (a *Abuse) Check(ctx context.Context, operation, solution string) error {
 	if operation == "report" {
 		class = "report"
 	}
-	allowed, retry := a.limiter.Allow(security.BucketKey{Dimension: "ip", Subject: hex.EncodeToString(lookup), Operation: operation, Class: class}, security.BucketKey{Dimension: "prefix", Subject: prefix, Operation: operation, Class: class})
+	keys := []security.BucketKey{
+		{Dimension: "ip", Subject: hex.EncodeToString(lookup), Operation: operation, Class: class},
+		{Dimension: "prefix", Subject: prefix, Operation: operation, Class: class},
+	}
+	if sessionProof != "" {
+		digest := sha256.Sum256([]byte("bord/rate-limit-session/v1\x00" + sessionProof))
+		keys = append(keys, security.BucketKey{Dimension: "session", Subject: hex.EncodeToString(digest[:]), Operation: operation, Class: class})
+	}
+	allowed, retry := a.limiter.Allow(keys...)
 	if !allowed {
 		if solution == "" {
 			return &api.RetryError{Err: domain.NewError(domain.CodeChallengeRequired, "", nil), After: retry}
@@ -79,6 +98,23 @@ func (a *Abuse) Check(ctx context.Context, operation, solution string) error {
 	a.mu.Lock()
 	a.pending[api.RequestID(ctx)] = sid
 	a.mu.Unlock()
+	return nil
+}
+
+// CheckRead enforces production read limits without extending the frozen
+// AbuseService port. Reads do not persist request subjects or require PoW.
+func (a *Abuse) CheckRead(ctx context.Context, operation string) error {
+	_, lookup, prefix, err := a.subject(ctx)
+	if err != nil {
+		return domain.NewError(domain.CodeValidation, "source", err)
+	}
+	allowed, retry := a.limiter.Allow(
+		security.BucketKey{Dimension: "ip", Subject: hex.EncodeToString(lookup), Operation: operation, Class: "read"},
+		security.BucketKey{Dimension: "prefix", Subject: prefix, Operation: operation, Class: "read"},
+	)
+	if !allowed {
+		return &api.RetryError{Err: domain.NewError(domain.CodeRateLimited, "", nil), After: retry}
+	}
 	return nil
 }
 func (a *Abuse) Challenge(ctx context.Context, purpose string) (api.Challenge, error) {

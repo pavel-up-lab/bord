@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"sync"
@@ -191,6 +192,41 @@ func TestLimiterConcurrentConsumptionDoesNotExceedCapacity(t *testing.T) {
 	group.Wait()
 	if got := accepted.Load(); got != 5 {
 		t.Fatalf("accepted = %d, want 5", got)
+	}
+}
+
+func TestLimiterStateIsBoundedAndExpires(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(100, 0)}
+	limiter, err := NewLimiter(clock, map[string]Rate{"write": {Capacity: 1, RefillEvery: time.Second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxLimiterBuckets; i++ {
+		key := BucketKey{Dimension: "ip", Subject: fmt.Sprint(i), Operation: "reply", Class: "write"}
+		if ok, _ := limiter.Allow(key); !ok {
+			t.Fatalf("bucket %d rejected before bound", i)
+		}
+	}
+	if ok, _ := limiter.Allow(BucketKey{Dimension: "ip", Subject: "overflow", Operation: "reply", Class: "write"}); ok {
+		t.Fatal("limiter state grew beyond bound")
+	}
+	clock.now = clock.now.Add(time.Second)
+	if ok, _ := limiter.Allow(BucketKey{Dimension: "ip", Subject: "replacement", Operation: "reply", Class: "write"}); !ok {
+		t.Fatal("expired limiter keys were not reclaimed")
+	}
+	if len(limiter.buckets) != 1 {
+		t.Fatalf("expired bucket count=%d", len(limiter.buckets))
+	}
+}
+
+func TestContainsRawIPInAuditText(t *testing.T) {
+	for _, value := range []string{"source=192.0.2.1", "[2001:db8::1]:443", "198.51.100.0/24", "fe80::1%eth0"} {
+		if !ContainsRawIP(value) {
+			t.Fatalf("missed raw IP in %q", value)
+		}
+	}
+	if ContainsRawIP("policy case 12345") {
+		t.Fatal("ordinary reason classified as IP")
 	}
 }
 

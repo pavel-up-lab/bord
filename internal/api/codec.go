@@ -97,7 +97,11 @@ func NewCursorCodec(key []byte, now func() time.Time) (*CursorCodec, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &CursorCodec{key: append([]byte(nil), key...), now: now}, nil
+	// Derive a purpose-specific key so the deployment root secret cannot be
+	// reused to forge cursors through another HMAC feature.
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("bord/cursor-signing/v1\x00"))
+	return &CursorCodec{key: mac.Sum(nil), now: now}, nil
 }
 
 func (c *CursorCodec) Encode(collection, position string, expires time.Time) (string, error) {

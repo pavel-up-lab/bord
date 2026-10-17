@@ -41,17 +41,24 @@ type Runtime struct {
 }
 
 type Config struct {
-	DB            *sql.DB
-	Blobs         string
-	LookupKey     []byte
-	EncryptionKey []byte
-	StoreRawIP    bool
-	Clock         Clock
+	DB                *sql.DB
+	Blobs             string
+	LookupKey         []byte
+	EncryptionKey     []byte
+	StoreRawIP        bool
+	Clock             Clock
+	UploadConcurrency int
 }
 
 func New(config Config) (*Runtime, error) {
 	if config.DB == nil || config.Blobs == "" || len(config.LookupKey) < 32 {
 		return nil, errors.New("integration: invalid runtime configuration")
+	}
+	if config.UploadConcurrency < 0 || config.UploadConcurrency > 16 {
+		return nil, errors.New("integration: upload concurrency exceeds safety limit")
+	}
+	if config.UploadConcurrency == 0 {
+		config.UploadConcurrency = 2
 	}
 	if config.Clock == nil {
 		config.Clock = realClock{}
@@ -74,6 +81,7 @@ func New(config Config) (*Runtime, error) {
 		keyring = security.IPKeyring{Primary: "primary", Keys: map[string][]byte{"primary": append([]byte(nil), config.EncryptionKey...)}}
 	}
 	limiter, err := security.NewLimiter(config.Clock, map[string]security.Rate{
+		"read":   {Capacity: 60, RefillEvery: time.Second},
 		"write":  {Capacity: 3, RefillEvery: 30 * time.Second},
 		"report": {Capacity: 2, RefillEvery: time.Minute},
 	})
@@ -92,7 +100,7 @@ func New(config Config) (*Runtime, error) {
 		return nil, err
 	}
 	r := &Runtime{DB: config.DB, Repo: repo, Board: board, Attachments: attachments, Media: blobs, Admin: admin, Outbox: &Outbox{db: config.DB}}
-	r.UploadSlots = make(chan struct{}, 2)
+	r.UploadSlots = make(chan struct{}, config.UploadConcurrency)
 	r.Abuse = &Abuse{db: config.DB, clock: config.Clock, lookupKey: append([]byte(nil), config.LookupKey...), keyring: keyring, storeRawIP: config.StoreRawIP, limiter: limiter, pow: pow, pending: make(map[string]int64)}
 	return r, nil
 }

@@ -51,3 +51,16 @@ func TestGracefulShutdownDropsReadinessAndClosesStreams(t *testing.T) {
 		t.Fatal("stream closer was not called")
 	}
 }
+
+func TestDefaultReadDeadlineBoundsBodiesWithoutBoundingSSEWrites(t *testing.T) {
+	service, err := New(Config{PublicAddress: "127.0.0.1:0", PublicHandler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.public.ReadTimeout <= 0 {
+		t.Fatal("request body read timeout is not configured")
+	}
+	if service.public.WriteTimeout != 0 {
+		t.Fatalf("write timeout %s would terminate SSE", service.public.WriteTimeout)
+	}
+}

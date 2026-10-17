@@ -3,6 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -54,6 +57,23 @@ func (*mediaFake) Upload(context.Context, string, io.Reader) (Attachment, error)
 
 type adminFake struct{ credential, requestID string }
 
+type extendedAbuseFake struct {
+	readOperation, writeOperation, session string
+}
+
+func (*extendedAbuseFake) Check(context.Context, string, string) error { return nil }
+func (*extendedAbuseFake) Challenge(context.Context, string) (Challenge, error) {
+	return Challenge{}, nil
+}
+func (a *extendedAbuseFake) CheckRead(_ context.Context, operation string) error {
+	a.readOperation = operation
+	return nil
+}
+func (a *extendedAbuseFake) CheckSession(_ context.Context, operation, _, session string) error {
+	a.writeOperation, a.session = operation, session
+	return nil
+}
+
 func (a *adminFake) Authenticate(_ context.Context, credential, requestID string) error {
 	a.credential, a.requestID = credential, requestID
 	return nil
@@ -103,6 +123,26 @@ func TestStrictJSONAndIdempotencyValidation(t *testing.T) {
 	}
 	if fake.createCalls != 0 {
 		t.Fatalf("invalid requests reached service %d times", fake.createCalls)
+	}
+}
+
+func TestFrozenAbusePortOptionalReadAndSessionDimensions(t *testing.T) {
+	public := &publicFake{}
+	abuse := &extendedAbuseFake{}
+	router := NewRouter(Config{Public: public, Abuse: abuse})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/boards", nil))
+	if w.Code != http.StatusOK || abuse.readOperation != "list_boards" {
+		t.Fatalf("read adapter operation=%q status=%d", abuse.readOperation, w.Code)
+	}
+	proof := strings.Repeat("p", 32)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/boards/test/threads", strings.NewReader(`{"body":"hello","session_proof":"`+proof+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", strings.Repeat("a", 16))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated || abuse.writeOperation != "create_thread" || abuse.session != proof {
+		t.Fatalf("session adapter operation=%q session=%q status=%d", abuse.writeOperation, abuse.session, w.Code)
 	}
 }
 
@@ -185,6 +225,16 @@ func TestCursorIsSignedBoundAndExpiring(t *testing.T) {
 	if _, err := codec.Decode(token+"x", "threads:test"); err == nil {
 		t.Fatal("tampered cursor accepted")
 	}
+	// A signature made directly with the deployment root key must not verify;
+	// cursor signing uses a derived, purpose-specific key.
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"collection":"threads:test","position":"position","expires":160}`))
+	rootMAC := hmac.New(sha256.New, bytes.Repeat([]byte("s"), 32))
+	decodedPayload, _ := base64.RawURLEncoding.DecodeString(payload)
+	_, _ = rootMAC.Write(decodedPayload)
+	forged := payload + "." + base64.RawURLEncoding.EncodeToString(rootMAC.Sum(nil))
+	if _, err := codec.Decode(forged, "threads:test"); err == nil {
+		t.Fatal("cursor signed with undifferentiated root key accepted")
+	}
 	now = now.Add(2 * time.Minute)
 	if _, err := codec.Decode(token, "threads:test"); err == nil {
 		t.Fatal("expired cursor accepted")
@@ -234,7 +284,8 @@ func TestRecoveryHasRequestIDAndDoesNotLeakPanic(t *testing.T) {
 func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 	admin := &adminFake{}
 	codec, _ := NewCursorCodec(bytes.Repeat([]byte("k"), 32), time.Now)
-	config := Config{Admin: admin, CursorCodec: codec}
+	_, trusted, _ := net.ParseCIDR("192.0.2.0/24")
+	config := Config{Admin: admin, CursorCodec: codec, TrustedProxies: []*net.IPNet{trusted}}
 	public := NewPublicRouter(config)
 	w := httptest.NewRecorder()
 	public.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/v1/reports", nil))
@@ -254,6 +305,45 @@ func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 	management.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || admin.credential != "credential-value" || admin.requestID != "request-123" {
 		t.Fatalf("admin request not correlated: %d %#v", w.Code, admin)
+	}
+}
+
+func TestRequestIDAcceptedOnlyFromTrustedEdge(t *testing.T) {
+	_, trusted, _ := net.ParseCIDR("10.0.0.0/8")
+	handler := requestIDMiddleware([]*net.IPNet{trusted}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, RequestID(r.Context()))
+	}))
+	for _, test := range []struct {
+		remote, want string
+		trusted      bool
+	}{
+		{remote: "192.0.2.1:1234", want: "attacker-request", trusted: false},
+		{remote: "10.0.0.1:1234", want: "edge-request-123", trusted: true},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = test.remote
+		req.Header.Set("X-Request-ID", test.want)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if test.trusted && w.Body.String() != test.want {
+			t.Fatalf("trusted edge ID=%q", w.Body.String())
+		}
+		if !test.trusted && w.Body.String() == test.want {
+			t.Fatal("untrusted request ID accepted")
+		}
+	}
+}
+
+func TestAdminReasonRejectsRawIPRepresentations(t *testing.T) {
+	for _, reason := range []string{
+		"source=192.0.2.1", "endpoint [2001:db8::1]:443", "network 198.51.100.0/24", "zone fe80::1%eth0",
+	} {
+		if validReason(reason) {
+			t.Fatalf("unsafe reason accepted: %q", reason)
+		}
+	}
+	if !validReason("repeated harassment from correlated source") {
+		t.Fatal("safe reason rejected")
 	}
 }
 

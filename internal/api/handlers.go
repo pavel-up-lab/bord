@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +30,9 @@ func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listBoards(w http.ResponseWriter, r *http.Request) {
+	if !h.checkRead(w, r, "list_boards") {
+		return
+	}
 	if h.config.Public == nil {
 		writeError(w, r, unavailable())
 		return
@@ -51,6 +55,9 @@ func (h *Handler) listThreads(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.config.Public == nil {
 		writeError(w, r, unavailable())
+		return
+	}
+	if !h.checkRead(w, r, "list_threads") {
 		return
 	}
 	limit, cursor, ok := h.pagination(w, r, "threads:"+r.PathValue("slug"))
@@ -78,6 +85,9 @@ func (h *Handler) getThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, unavailable())
 		return
 	}
+	if !h.checkRead(w, r, "get_thread") {
+		return
+	}
 	thread, err := h.config.Public.GetThread(r.Context(), id)
 	if err != nil {
 		writeError(w, r, err)
@@ -94,6 +104,9 @@ func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.config.Public == nil {
 		writeError(w, r, unavailable())
+		return
+	}
+	if !h.checkRead(w, r, "list_posts") {
 		return
 	}
 	limit, cursor, ok := h.pagination(w, r, "posts:"+id)
@@ -180,7 +193,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, operation strin
 		if content.PoWSolution != nil {
 			solution = *content.PoWSolution
 		}
-		if err := h.config.Abuse.Check(r.Context(), operation, solution); err != nil {
+		var err error
+		if extended, ok := h.config.Abuse.(interface {
+			CheckSession(context.Context, string, string, string) error
+		}); ok {
+			err = extended.CheckSession(r.Context(), operation, solution, valueOrEmpty(content.SessionProof))
+		} else {
+			err = h.config.Abuse.Check(r.Context(), operation, solution)
+		}
+		if err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -298,6 +319,9 @@ func (h *Handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, unavailable())
 		return
 	}
+	if !h.checkRead(w, r, "get_attachment") {
+		return
+	}
 	reader, info, err := h.config.Media.Open(r.Context(), id)
 	if err != nil {
 		writeError(w, r, err)
@@ -310,6 +334,30 @@ func (h *Handler) getAttachment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, reader)
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+// checkRead is a frozen-port-safe extension: existing AbuseService adapters
+// retain their behavior, while production can add bounded read dimensions
+// without changing the public service interface or OpenAPI contract.
+func (h *Handler) checkRead(w http.ResponseWriter, r *http.Request, operation string) bool {
+	limiter, ok := h.config.Abuse.(interface {
+		CheckRead(context.Context, string) error
+	})
+	if !ok {
+		return true
+	}
+	if err := limiter.CheckRead(r.Context(), operation); err != nil {
+		writeError(w, r, err)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) createChallenge(w http.ResponseWriter, r *http.Request) {

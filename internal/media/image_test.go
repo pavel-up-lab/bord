@@ -96,6 +96,30 @@ func TestNormalizeCompressedBoundIsStreaming(t *testing.T) {
 	}
 }
 
+func TestNormalizeStopsReadingAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &cancellingReader{cancel: cancel}
+	_, err := processor().Normalize(ctx, r, "cancel.png")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error=%v", err)
+	}
+	if r.read != 1 {
+		t.Fatalf("reader called %d times after cancellation", r.read)
+	}
+}
+
+type cancellingReader struct {
+	cancel context.CancelFunc
+	read   int
+}
+
+func (r *cancellingReader) Read(p []byte) (int, error) {
+	r.read++
+	p[0] = 0x89
+	r.cancel()
+	return 1, nil
+}
+
 func TestNormalizeResourceBoundCorpus(t *testing.T) {
 	names := []string{"valid.png", "valid.jpg", "invalid.png", "dimension-bomb.png", "polyglot.png"}
 	corpus := make(map[string][]byte, len(names))

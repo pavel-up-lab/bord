@@ -282,6 +282,12 @@ type auditExecutor interface {
 }
 
 func (a *Admin) auditWith(ctx context.Context, executor auditExecutor, actor, action, target, reason, requestID string, actionErr error) error {
+	// API validation normally denies raw addresses. Keep the persistence adapter
+	// safe for direct/internal callers too: audit availability must not become a
+	// privacy leak, nor should an unsafe reason erase the attempted action.
+	if security.ContainsRawIP(reason) {
+		reason = "[redacted: raw IP address]"
+	}
 	entry := moderation.AuditEntry{ActorID: actor, Action: action, TargetID: target, Reason: reason, RequestID: requestID, Success: actionErr == nil, CreatedAt: a.clock.Now()}
 	if actionErr != nil {
 		entry.ErrorCode = string(domain.ErrorCode(actionErr))

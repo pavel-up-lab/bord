@@ -30,6 +30,7 @@ type Config struct {
 	ManagementHandler http.Handler
 	ShutdownTimeout   time.Duration
 	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
 	IdleTimeout       time.Duration
 	StreamClosers     []io.Closer
 	Closers           []io.Closer
@@ -54,6 +55,9 @@ func New(config Config, lifecycle *Lifecycle) (*Server, error) {
 	if config.ReadHeaderTimeout <= 0 {
 		config.ReadHeaderTimeout = 5 * time.Second
 	}
+	if config.ReadTimeout <= 0 {
+		config.ReadTimeout = 15 * time.Second
+	}
 	if config.IdleTimeout <= 0 {
 		config.IdleTimeout = 60 * time.Second
 	}
@@ -61,9 +65,9 @@ func New(config Config, lifecycle *Lifecycle) (*Server, error) {
 		lifecycle = &Lifecycle{}
 	}
 	s := &Server{config: config, lifecycle: lifecycle}
-	s.public = &http.Server{Addr: config.PublicAddress, Handler: config.PublicHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, IdleTimeout: config.IdleTimeout}
+	s.public = &http.Server{Addr: config.PublicAddress, Handler: config.PublicHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout, IdleTimeout: config.IdleTimeout}
 	if config.ManagementAddress != "" && config.ManagementHandler != nil {
-		s.management = &http.Server{Addr: config.ManagementAddress, Handler: config.ManagementHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, IdleTimeout: config.IdleTimeout}
+		s.management = &http.Server{Addr: config.ManagementAddress, Handler: config.ManagementHandler, ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout, IdleTimeout: config.IdleTimeout}
 	}
 	return s, nil
 }

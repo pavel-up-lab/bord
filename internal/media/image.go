@@ -41,7 +41,7 @@ type Limits struct {
 }
 
 func DefaultLimits() Limits {
-	return Limits{MaxBytes: 10 << 20, MaxWidth: 10_000, MaxHeight: 10_000, MaxPixels: 40_000_000, JPEGQuality: 90}
+	return Limits{MaxBytes: 5 << 20, MaxWidth: 6000, MaxHeight: 6000, MaxPixels: 16_000_000, JPEGQuality: 90}
 }
 
 type Image struct {
@@ -66,7 +66,7 @@ func (p Processor) Normalize(ctx context.Context, r io.Reader, filename string) 
 	if err := ctx.Err(); err != nil {
 		return Image{}, err
 	}
-	raw, err := io.ReadAll(io.LimitReader(r, p.Limits.MaxBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: r}, p.Limits.MaxBytes+1))
 	if err != nil {
 		return Image{}, fmt.Errorf("read image: %w", err)
 	}
@@ -117,6 +117,18 @@ func (p Processor) Normalize(ctx context.Context, r io.Reader, filename string) 
 		Data: data, MediaType: mediaType, Filename: SafeFilename(filename, mediaType),
 		Width: cfg.Width, Height: cfg.Height, SHA256: sha256.Sum256(data),
 	}, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func (l Limits) validate() error {
