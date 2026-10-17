@@ -85,7 +85,7 @@ func NewRouter(config Config) http.Handler {
 	result = accessLogMiddleware(config.Logger, result)
 	result = bodyLimitMiddleware(config.MaxBodyBytes, result)
 	result = trustedProxyMiddleware(config.TrustedProxies, result)
-	result = requestIDMiddleware(result)
+	result = requestIDMiddleware(config.TrustedProxies, result)
 	result = recoverMiddleware(config.Logger, result)
 	return result
 }

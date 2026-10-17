@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"bord/internal/domain"
+	"bord/internal/security"
 )
 
 func (h *Handler) admin(next http.Handler) http.Handler {
@@ -157,6 +158,8 @@ func (h *Handler) adminReason(w http.ResponseWriter, r *http.Request) (string, b
 	return body.Reason, true
 }
 
-func validReason(reason string) bool { return len(reason) >= 3 && len(reason) <= 500 }
+func validReason(reason string) bool {
+	return len(reason) >= 3 && len(reason) <= 500 && !security.ContainsRawIP(reason)
+}
 
 var timeNow = func() time.Time { return time.Now() }

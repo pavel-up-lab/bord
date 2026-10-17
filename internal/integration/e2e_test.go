@@ -250,12 +250,18 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	}
 	_ = response.Body.Close()
 
+	if err = runtime.Admin.audit(ctx, "root", "test.redaction", "", "source=192.0.2.44", "redaction-request", nil); err != nil {
+		t.Fatalf("audit redaction failed: %v", err)
+	}
 	var auditText string
 	if err := runtime.DB.QueryRow(`SELECT group_concat(coalesce(reason,'')||payload,' ') FROM moderation_actions`).Scan(&auditText); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(auditText, "127.0.0.1") || strings.Contains(auditText, "198.51.100.77") {
+	if strings.Contains(auditText, "127.0.0.1") || strings.Contains(auditText, "198.51.100.77") || strings.Contains(auditText, "192.0.2.44") {
 		t.Fatalf("raw IP leaked to audit: %q", auditText)
+	}
+	if !strings.Contains(auditText, "[redacted: raw IP address]") {
+		t.Fatalf("unsafe audit reason was not explicitly redacted: %q", auditText)
 	}
 	response = requestJSON(t, server, http.MethodPost, "/admin/v1/bans", map[string]any{"subject_type": "ip", "subject": "127.0.0.1", "operations": []string{"create_thread"}, "expires_at": time.Now().Add(time.Hour).UTC(), "reason": "flood source"}, adminHeaders)
 	if response.StatusCode != http.StatusCreated {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPrecedenceAndSecretFile(t *testing.T) {
@@ -19,7 +20,7 @@ func TestPrecedenceAndSecretFile(t *testing.T) {
 	if err := os.WriteFile(secretPath, []byte(encoded+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"BORD_HTTP_ADDRESS": "env:9001", "BORD_IP_LOOKUP_KEY_FILE": secretPath}
+	env := map[string]string{"BORD_HTTP_ADDRESS": "env:9001", "BORD_HTTP_BODY_READ_TIMEOUT": "7s", "BORD_IP_LOOKUP_KEY_FILE": secretPath}
 	c, err := Load(configPath, func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
@@ -29,6 +30,9 @@ func TestPrecedenceAndSecretFile(t *testing.T) {
 	}
 	if string(c.Secrets.IPLookupKey) != strings.Repeat("k", 32) {
 		t.Fatal("secret file not loaded")
+	}
+	if c.HTTP.BodyReadTimeout != 7*time.Second {
+		t.Fatalf("body read timeout=%s", c.HTTP.BodyReadTimeout)
 	}
 }
 

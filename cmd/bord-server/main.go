@@ -126,6 +126,7 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		ManagementAddress: managementAddress,
 		PublicHandler:     public,
 		ManagementHandler: management,
+		ReadTimeout:       cfg.HTTP.BodyReadTimeout,
 		StreamClosers:     []io.Closer{hub},
 		Closers:           []io.Closer{runtime},
 	}, lifecycle)

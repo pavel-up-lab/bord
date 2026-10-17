@@ -97,6 +97,52 @@ func IPPrefix(addr netip.Addr) (netip.Prefix, error) {
 	return netip.PrefixFrom(addr, bits).Masked(), nil
 }
 
+// ContainsRawIP reports whether untrusted free text contains an IP address,
+// prefix, or IP endpoint. It intentionally recognizes addresses next to common
+// prose punctuation so audit callers cannot bypass the privacy check with
+// forms such as "source=192.0.2.1" or "[2001:db8::1]:443".
+func ContainsRawIP(value string) bool {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return !strings.ContainsRune("0123456789abcdefABCDEF.:/%[]", r)
+	})
+	for _, field := range fields {
+		candidate := strings.Trim(field, ".,;(){}<>\"'")
+		if candidate == "" {
+			continue
+		}
+		// Check substrings too. Adjacent hexadecimal prose (for example the
+		// trailing 'e' in "case192.0.2.1") is otherwise indistinguishable
+		// while tokenizing, and must not provide an audit bypass.
+		for start := 0; start < len(candidate); start++ {
+			for end := len(candidate); end > start; end-- {
+				part := strings.Trim(candidate[start:end], ".,;(){}<>\"'")
+				if rawIPCandidate(part) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func rawIPCandidate(candidate string) bool {
+	if addr, err := netip.ParseAddr(candidate); err == nil && addr.IsValid() {
+		return true
+	}
+	if prefix, err := netip.ParsePrefix(candidate); err == nil && prefix.Addr().IsValid() {
+		return true
+	}
+	if endpoint, err := netip.ParseAddrPort(candidate); err == nil && endpoint.Addr().IsValid() {
+		return true
+	}
+	if base, _, ok := strings.Cut(candidate, "%"); ok {
+		if addr, err := netip.ParseAddr(strings.Trim(base, "[]")); err == nil && addr.IsValid() {
+			return true
+		}
+	}
+	return false
+}
+
 func IPLookup(key []byte, addr netip.Addr) ([32]byte, error) {
 	if len(key) < SecretSize {
 		return [32]byte{}, ErrInvalidSecret

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,8 +20,9 @@ type Config struct {
 	Secrets Secrets `yaml:"-"`
 }
 type HTTP struct {
-	Address      string `yaml:"address"`
-	MaxBodyBytes int64  `yaml:"max_body_bytes"`
+	Address         string        `yaml:"address"`
+	MaxBodyBytes    int64         `yaml:"max_body_bytes"`
+	BodyReadTimeout time.Duration `yaml:"body_read_timeout"`
 }
 type Storage struct {
 	Database string `yaml:"database"`
@@ -35,7 +37,7 @@ type Secrets struct {
 }
 
 func Defaults() Config {
-	return Config{HTTP: HTTP{Address: "127.0.0.1:8080", MaxBodyBytes: 1 << 20}, Storage: Storage{Database: "bord.db", Blobs: "data/blobs"}}
+	return Config{HTTP: HTTP{Address: "127.0.0.1:8080", MaxBodyBytes: 1 << 20, BodyReadTimeout: 15 * time.Second}, Storage: Storage{Database: "bord.db", Blobs: "data/blobs"}}
 }
 
 // Load applies defaults, then an optional YAML file, then BORD_* environment values.
@@ -59,6 +61,13 @@ func Load(path string, getenv func(string) string) (Config, error) {
 			return Config{}, errors.New("invalid BORD_HTTP_MAX_BODY_BYTES")
 		}
 		c.HTTP.MaxBodyBytes = n
+	}
+	if v := getenv("BORD_HTTP_BODY_READ_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, errors.New("invalid BORD_HTTP_BODY_READ_TIMEOUT")
+		}
+		c.HTTP.BodyReadTimeout = d
 	}
 	if v := getenv("BORD_DATABASE"); v != "" {
 		c.Storage.Database = v
@@ -90,6 +99,9 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	}
 	if c.HTTP.MaxBodyBytes <= 0 {
 		return Config{}, errors.New("HTTP body limit must be positive")
+	}
+	if c.HTTP.BodyReadTimeout <= 0 {
+		return Config{}, errors.New("HTTP body read timeout must be positive")
 	}
 	return c, nil
 }

@@ -62,9 +62,18 @@ func recoverMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-func requestIDMiddleware(next http.Handler) http.Handler {
+func requestIDMiddleware(trusted []*net.IPNet, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Request-ID")
+		id := ""
+		// Forwarded correlation data is authoritative only at a configured edge.
+		// Direct clients always receive a server-generated identifier.
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if trustedIP(net.ParseIP(host), trusted) {
+			id = r.Header.Get("X-Request-ID")
+		}
 		if _, err := requestid.ParseRequest(id); err != nil {
 			var b [16]byte
 			_, _ = rand.Read(b[:])
