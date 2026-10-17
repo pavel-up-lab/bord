@@ -37,6 +37,10 @@ type Backoff struct {
 
 var errInvalidSSEContentType = errors.New("invalid SSE content type")
 
+const maxSSEEventBytes = 1 << 20
+
+var errSSEEventTooLarge = errors.New("SSE event exceeds client limit")
+
 func DefaultBackoff() Backoff {
 	return Backoff{Min: 250 * time.Millisecond, Max: 15 * time.Second, Jitter: func(d time.Duration) time.Duration {
 		return time.Duration(rand.Int64N(int64(d/2) + 1))
@@ -80,11 +84,12 @@ func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks Stream
 		}
 		if err == nil {
 			seen, parseErr := parseSSE(ctx, resp.Body, func(event Event) {
-				if event.ID != "" {
-					lastID = event.ID
-				}
+				lastID = event.ID
 				switch event.Type {
 				case "stream.reset":
+					// A reset means the server cannot resume this history. Never send
+					// the reset event's ID (or an older ID) on the next connection.
+					lastID = ""
 					if callbacks.Reset != nil {
 						callbacks.Reset()
 					}
@@ -131,17 +136,23 @@ func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks Stream
 
 func parseSSE(ctx context.Context, r io.Reader, deliver func(Event), heartbeat func()) (bool, error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	var id, kind string
+	scanner.Buffer(make([]byte, 4096), maxSSEEventBytes+1)
+	var lastID, pendingID, kind string
+	var hasPendingID bool
 	var data []string
+	eventBytes := 0
 	seen := false
 	dispatch := func() {
-		if id == "" && kind == "" && len(data) == 0 {
+		if !hasPendingID && kind == "" && len(data) == 0 {
+			eventBytes = 0
 			return
 		}
+		if hasPendingID {
+			lastID = pendingID
+		}
 		seen = true
-		deliver(Event{ID: id, Type: kind, Data: json.RawMessage(strings.Join(data, "\n"))})
-		id, kind, data = "", "", nil
+		deliver(Event{ID: lastID, Type: kind, Data: json.RawMessage(strings.Join(data, "\n"))})
+		pendingID, kind, data, hasPendingID, eventBytes = "", "", nil, false, 0
 	}
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
@@ -151,6 +162,10 @@ func parseSSE(ctx context.Context, r io.Reader, deliver func(Event), heartbeat f
 		if line == "" {
 			dispatch()
 			continue
+		}
+		eventBytes += len(line) + 1
+		if eventBytes > maxSSEEventBytes {
+			return seen, errSSEEventTooLarge
 		}
 		if strings.HasPrefix(line, ":") {
 			seen = true
@@ -163,14 +178,16 @@ func parseSSE(ctx context.Context, r io.Reader, deliver func(Event), heartbeat f
 		value = strings.TrimPrefix(value, " ")
 		switch field {
 		case "id":
-			id = value
+			// The EventSource algorithm ignores ID fields containing NUL.
+			if !strings.ContainsRune(value, '\x00') {
+				pendingID, hasPendingID = value, true
+			}
 		case "event":
 			kind = value
 		case "data":
 			data = append(data, value)
 		}
 	}
-	dispatch()
 	if err := scanner.Err(); err != nil {
 		return seen, fmt.Errorf("read SSE stream: %w", err)
 	}
