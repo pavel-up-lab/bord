@@ -59,12 +59,12 @@
 
 ## 4. Media pipeline — `bord-media`
 
-- [ ] 4.1 Реализовать streaming intake с ограничением compressed bytes, sniffing JPEG/PNG, проверкой dimensions/pixel count и безопасным filename; проверить valid samples, polyglot/invalid content и decompression bomb fixtures.
-- [ ] 4.2 Реализовать полное decode/re-encode JPEG/PNG без EXIF и вычисление SHA-256 нормализованного файла; проверить отсутствие тестовых EXIF/GPS markers и стабильность metadata.
-- [ ] 4.3 Реализовать filesystem blob store с temp write, fsync по политике, atomic rename и content-addressed layout; проверить injected write/rename failures без видимого частичного blob.
-- [ ] 4.4 Реализовать attachment use cases prepare/attach/fetch/delete и транзакционное согласование с post repository; проверить, что один пост не получает два вложения, а orphan не становится публичным.
-- [ ] 4.5 Реализовать reconciliation/cleanup временных, orphaned и удаленных blobs с безопасным grace period; проверить dry-run отчет и фактическую очистку на fixture store.
-- [ ] 4.6 Добавить media fuzz targets и resource-bound tests; проверить установленное ограничение времени/памяти в CI-подходящем corpus run.
+- [x] 4.1 Реализовать streaming intake с ограничением compressed bytes, sniffing JPEG/PNG, проверкой dimensions/pixel count и безопасным filename; проверить valid samples, polyglot/invalid content и decompression bomb fixtures.
+- [x] 4.2 Реализовать полное decode/re-encode JPEG/PNG без EXIF и вычисление SHA-256 нормализованного файла; проверить отсутствие тестовых EXIF/GPS markers и стабильность metadata.
+- [x] 4.3 Реализовать filesystem blob store с temp write, fsync по политике, atomic rename и content-addressed layout; проверить injected write/rename failures без видимого частичного blob.
+- [x] 4.4 Реализовать attachment use cases prepare/attach/fetch/delete и транзакционное согласование с post repository; проверить, что один пост не получает два вложения, а orphan не становится публичным.
+- [x] 4.5 Реализовать reconciliation/cleanup временных, orphaned и удаленных blobs с безопасным grace period; проверить dry-run отчет и фактическую очистку на fixture store.
+- [x] 4.6 Добавить media fuzz targets и resource-bound tests; проверить установленное ограничение времени/памяти в CI-подходящем corpus run.
 
 ## 5. HTTP API and realtime — `bord-http-realtime`
 
