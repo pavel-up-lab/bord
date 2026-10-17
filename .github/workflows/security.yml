@@ -27,7 +27,9 @@ jobs:
           go install github.com/google/go-licenses@v1.6.0
           test "$(go list -m -f '{{.Version}}' modernc.org/mathutil)" = v1.7.1
           go-licenses check ./... --disallowed_types=forbidden,restricted --ignore modernc.org/mathutil
-          go-licenses report ./... --ignore modernc.org/mathutil > dependency-licenses.csv
+          # The main module path is intentionally local ("bord") and has no
+          # resolvable VCS URL; its own LICENSE is reviewed in this repository.
+          go-licenses report ./... --ignore bord,modernc.org/mathutil > dependency-licenses.csv
           cat .github/license-policy/manual-review.csv >> dependency-licenses.csv
       - name: Generate source SBOM
         run: |

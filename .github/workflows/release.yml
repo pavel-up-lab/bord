@@ -76,6 +76,7 @@ jobs:
         run: |
           (cd dist && sha256sum --check SHA256SUMS)
           mkdir smoke
+          python3 scripts/validate-release.py --directory dist --version "${{ steps.metadata.outputs.version }}"
           tar -xzf "dist/bord_${{ steps.metadata.outputs.version }}_linux_amd64.tar.gz" -C smoke
           tar -xzf "dist/bord-server_${{ steps.metadata.outputs.version }}_linux_amd64.tar.gz" -C smoke
           "smoke/bord_${{ steps.metadata.outputs.version }}_linux_amd64/bord" --version | grep -F "${{ steps.metadata.outputs.version }}"
