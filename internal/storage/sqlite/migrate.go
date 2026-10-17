@@ -15,9 +15,69 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const MaxSchemaVersion = 1
+const MaxSchemaVersion = 2
 
-func Open(dsn string) (*sql.DB, error) { return sql.Open("sqlite", dsn) }
+const (
+	defaultBusyTimeout = 5_000
+	normalSynchronous  = 1
+	// A single database/sql connection serializes SQLite writes predictably. WAL
+	// still lets external readers proceed, and PostgreSQL is the scale-out path.
+	defaultMaxOpenConns = 1
+)
+
+// Open configures every connection for foreign keys, bounded lock waits and WAL.
+func Open(dsn string) (*sql.DB, error) {
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	configured := dsn + separator + fmt.Sprintf("_pragma=foreign_keys(1)&_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", defaultBusyTimeout)
+	db, err := sql.Open("sqlite", configured)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(defaultMaxOpenConns)
+	db.SetMaxIdleConns(defaultMaxOpenConns)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// Ready verifies connectivity, required runtime pragmas and exact schema compatibility.
+func Ready(ctx context.Context, db *sql.DB) error {
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("storage ping: %w", err)
+	}
+	var foreignKeys int
+	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil || foreignKeys != 1 {
+		return fmt.Errorf("foreign keys disabled: value=%d err=%v", foreignKeys, err)
+	}
+	var mode string
+	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil || !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("journal mode is %q: %v", mode, err)
+	}
+	var busyTimeout int
+	if err := db.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil || busyTimeout != defaultBusyTimeout {
+		return fmt.Errorf("busy timeout is %d: %v", busyTimeout, err)
+	}
+	var synchronous int
+	if err := db.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&synchronous); err != nil || synchronous != normalSynchronous {
+		return fmt.Errorf("synchronous mode is %d: %v", synchronous, err)
+	}
+	if maxOpen := db.Stats().MaxOpenConnections; maxOpen != defaultMaxOpenConns {
+		return fmt.Errorf("maximum open connections is %d, want %d", maxOpen, defaultMaxOpenConns)
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, `SELECT version FROM schema_migrations LIMIT 1`).Scan(&version); err != nil {
+		return fmt.Errorf("schema version: %w", err)
+	}
+	if version != MaxSchemaVersion {
+		return fmt.Errorf("schema version %d does not match supported version %d", version, MaxSchemaVersion)
+	}
+	return nil
+}
 
 // Migrate upgrades an empty or older database and rejects schemas newer than this binary.
 func Migrate(ctx context.Context, db *sql.DB) error {

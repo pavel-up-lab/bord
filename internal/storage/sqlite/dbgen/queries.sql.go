@@ -7,7 +7,372 @@ package dbgen
 
 import (
 	"context"
+	"database/sql"
 )
+
+const appendOutbox = `-- name: AppendOutbox :exec
+INSERT INTO event_outbox(schema_version, event_type, board_id, thread_id, post_id, payload, created_at)
+VALUES (?1, ?2, ?3, ?4,
+        ?5, ?6, ?7)
+`
+
+type AppendOutboxParams struct {
+	SchemaVersion int64         `json:"schema_version"`
+	EventType     string        `json:"event_type"`
+	BoardID       sql.NullInt64 `json:"board_id"`
+	ThreadID      sql.NullInt64 `json:"thread_id"`
+	PostID        sql.NullInt64 `json:"post_id"`
+	Payload       []byte        `json:"payload"`
+	CreatedAt     string        `json:"created_at"`
+}
+
+func (q *Queries) AppendOutbox(ctx context.Context, arg AppendOutboxParams) error {
+	_, err := q.db.ExecContext(ctx, appendOutbox,
+		arg.SchemaVersion,
+		arg.EventType,
+		arg.BoardID,
+		arg.ThreadID,
+		arg.PostID,
+		arg.Payload,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const boardBySlug = `-- name: BoardBySlug :one
+SELECT id, slug, title, enabled, created_at
+FROM boards
+WHERE slug = ?1
+`
+
+func (q *Queries) BoardBySlug(ctx context.Context, slug string) (Board, error) {
+	row := q.db.QueryRowContext(ctx, boardBySlug, slug)
+	var i Board
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Title,
+		&i.Enabled,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const countOutbox = `-- name: CountOutbox :one
+SELECT count(*) FROM event_outbox
+`
+
+func (q *Queries) CountOutbox(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOutbox)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createBoard = `-- name: CreateBoard :exec
+INSERT INTO boards(id, slug, title, enabled, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5)
+`
+
+type CreateBoardParams struct {
+	ID        int64  `json:"id"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	Enabled   int64  `json:"enabled"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (q *Queries) CreateBoard(ctx context.Context, arg CreateBoardParams) error {
+	_, err := q.db.ExecContext(ctx, createBoard,
+		arg.ID,
+		arg.Slug,
+		arg.Title,
+		arg.Enabled,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const deleteVerifier = `-- name: DeleteVerifier :one
+SELECT verifier FROM post_delete_tokens WHERE post_id = ?1
+`
+
+func (q *Queries) DeleteVerifier(ctx context.Context, postID int64) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, deleteVerifier, postID)
+	var verifier []byte
+	err := row.Scan(&verifier)
+	return verifier, err
+}
+
+const insertDeleteVerifier = `-- name: InsertDeleteVerifier :exec
+INSERT INTO post_delete_tokens(post_id, verifier, params_version, created_at)
+VALUES (?1, ?2, 1, ?3)
+`
+
+type InsertDeleteVerifierParams struct {
+	PostID    int64  `json:"post_id"`
+	Verifier  []byte `json:"verifier"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (q *Queries) InsertDeleteVerifier(ctx context.Context, arg InsertDeleteVerifierParams) error {
+	_, err := q.db.ExecContext(ctx, insertDeleteVerifier, arg.PostID, arg.Verifier, arg.CreatedAt)
+	return err
+}
+
+const insertPost = `-- name: InsertPost :exec
+INSERT INTO posts(id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at)
+VALUES (?1, ?2, ?3, ?4, ?5,
+        ?6, ?7, ?8, ?9)
+`
+
+type InsertPostParams struct {
+	ID           int64          `json:"id"`
+	ThreadID     int64          `json:"thread_id"`
+	ReplyToID    sql.NullInt64  `json:"reply_to_id"`
+	AuthorID     string         `json:"author_id"`
+	Body         string         `json:"body"`
+	AttachmentID sql.NullString `json:"attachment_id"`
+	Status       string         `json:"status"`
+	CreatedAt    string         `json:"created_at"`
+	DeletedAt    sql.NullString `json:"deleted_at"`
+}
+
+func (q *Queries) InsertPost(ctx context.Context, arg InsertPostParams) error {
+	_, err := q.db.ExecContext(ctx, insertPost,
+		arg.ID,
+		arg.ThreadID,
+		arg.ReplyToID,
+		arg.AuthorID,
+		arg.Body,
+		arg.AttachmentID,
+		arg.Status,
+		arg.CreatedAt,
+		arg.DeletedAt,
+	)
+	return err
+}
+
+const insertThread = `-- name: InsertThread :exec
+INSERT INTO threads(id, board_id, status, created_at, bumped_at)
+VALUES (?1, ?2, ?3, ?4, ?5)
+`
+
+type InsertThreadParams struct {
+	ID        int64  `json:"id"`
+	BoardID   int64  `json:"board_id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	BumpedAt  string `json:"bumped_at"`
+}
+
+func (q *Queries) InsertThread(ctx context.Context, arg InsertThreadParams) error {
+	_, err := q.db.ExecContext(ctx, insertThread,
+		arg.ID,
+		arg.BoardID,
+		arg.Status,
+		arg.CreatedAt,
+		arg.BumpedAt,
+	)
+	return err
+}
+
+const listBoards = `-- name: ListBoards :many
+SELECT id, slug, title, enabled, created_at
+FROM boards
+WHERE enabled = 1
+ORDER BY slug ASC
+`
+
+func (q *Queries) ListBoards(ctx context.Context) ([]Board, error) {
+	rows, err := q.db.QueryContext(ctx, listBoards)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Board
+	for rows.Next() {
+		var i Board
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Title,
+			&i.Enabled,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPosts = `-- name: ListPosts :many
+SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at
+FROM posts
+WHERE thread_id = ?1 AND id > ?2
+ORDER BY id ASC
+LIMIT ?3
+`
+
+type ListPostsParams struct {
+	ThreadID int64 `json:"thread_id"`
+	AfterID  int64 `json:"after_id"`
+	PageSize int64 `json:"page_size"`
+}
+
+func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, error) {
+	rows, err := q.db.QueryContext(ctx, listPosts, arg.ThreadID, arg.AfterID, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Post
+	for rows.Next() {
+		var i Post
+		if err := rows.Scan(
+			&i.ID,
+			&i.ThreadID,
+			&i.ReplyToID,
+			&i.AuthorID,
+			&i.Body,
+			&i.AttachmentID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreads = `-- name: ListThreads :many
+SELECT id, board_id, status, created_at, bumped_at
+FROM threads
+WHERE board_id = ?1
+  AND (?2 = 0
+       OR bumped_at < ?3
+       OR (bumped_at = ?3 AND id < ?4))
+ORDER BY bumped_at DESC, id DESC
+LIMIT ?5
+`
+
+type ListThreadsParams struct {
+	BoardID        int64       `json:"board_id"`
+	HasCursor      interface{} `json:"has_cursor"`
+	CursorBumpedAt string      `json:"cursor_bumped_at"`
+	CursorID       int64       `json:"cursor_id"`
+	PageSize       int64       `json:"page_size"`
+}
+
+func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thread, error) {
+	rows, err := q.db.QueryContext(ctx, listThreads,
+		arg.BoardID,
+		arg.HasCursor,
+		arg.CursorBumpedAt,
+		arg.CursorID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Thread
+	for rows.Next() {
+		var i Thread
+		if err := rows.Scan(
+			&i.ID,
+			&i.BoardID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.BumpedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const loadIdempotency = `-- name: LoadIdempotency :one
+SELECT request_hash, response, created_at
+FROM idempotency_keys
+WHERE operation = ?1 AND key = ?2
+`
+
+type LoadIdempotencyParams struct {
+	Operation string `json:"operation"`
+	Key       string `json:"key"`
+}
+
+type LoadIdempotencyRow struct {
+	RequestHash []byte `json:"request_hash"`
+	Response    []byte `json:"response"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func (q *Queries) LoadIdempotency(ctx context.Context, arg LoadIdempotencyParams) (LoadIdempotencyRow, error) {
+	row := q.db.QueryRowContext(ctx, loadIdempotency, arg.Operation, arg.Key)
+	var i LoadIdempotencyRow
+	err := row.Scan(&i.RequestHash, &i.Response, &i.CreatedAt)
+	return i, err
+}
+
+const nextID = `-- name: NextID :one
+INSERT INTO id_sequences(kind, value) VALUES (?1, 1)
+ON CONFLICT(kind) DO UPDATE SET value = value + 1
+RETURNING value
+`
+
+func (q *Queries) NextID(ctx context.Context, kind string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextID, kind)
+	var value int64
+	err := row.Scan(&value)
+	return value, err
+}
+
+const postByID = `-- name: PostByID :one
+SELECT id, thread_id, reply_to_id, author_id, body, attachment_id, status, created_at, deleted_at
+FROM posts
+WHERE id = ?1
+`
+
+func (q *Queries) PostByID(ctx context.Context, id int64) (Post, error) {
+	row := q.db.QueryRowContext(ctx, postByID, id)
+	var i Post
+	err := row.Scan(
+		&i.ID,
+		&i.ThreadID,
+		&i.ReplyToID,
+		&i.AuthorID,
+		&i.Body,
+		&i.AttachmentID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
 
 const schemaVersion = `-- name: SchemaVersion :one
 SELECT version FROM schema_migrations LIMIT 1
@@ -18,4 +383,83 @@ func (q *Queries) SchemaVersion(ctx context.Context) (int64, error) {
 	var version int64
 	err := row.Scan(&version)
 	return version, err
+}
+
+const storeIdempotency = `-- name: StoreIdempotency :exec
+INSERT INTO idempotency_keys(operation, key, request_hash, response, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5)
+`
+
+type StoreIdempotencyParams struct {
+	Operation   string `json:"operation"`
+	Key         string `json:"key"`
+	RequestHash []byte `json:"request_hash"`
+	Response    []byte `json:"response"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func (q *Queries) StoreIdempotency(ctx context.Context, arg StoreIdempotencyParams) error {
+	_, err := q.db.ExecContext(ctx, storeIdempotency,
+		arg.Operation,
+		arg.Key,
+		arg.RequestHash,
+		arg.Response,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const threadByID = `-- name: ThreadByID :one
+SELECT id, board_id, status, created_at, bumped_at
+FROM threads
+WHERE id = ?1
+`
+
+func (q *Queries) ThreadByID(ctx context.Context, id int64) (Thread, error) {
+	row := q.db.QueryRowContext(ctx, threadByID, id)
+	var i Thread
+	err := row.Scan(
+		&i.ID,
+		&i.BoardID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.BumpedAt,
+	)
+	return i, err
+}
+
+const tombstonePost = `-- name: TombstonePost :execrows
+UPDATE posts
+SET body = '', attachment_id = NULL, status = 'deleted', deleted_at = ?1
+WHERE id = ?2 AND status = 'visible'
+`
+
+type TombstonePostParams struct {
+	DeletedAt sql.NullString `json:"deleted_at"`
+	ID        int64          `json:"id"`
+}
+
+func (q *Queries) TombstonePost(ctx context.Context, arg TombstonePostParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, tombstonePost, arg.DeletedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateThreadBump = `-- name: UpdateThreadBump :execrows
+UPDATE threads SET bumped_at = ?1 WHERE id = ?2
+`
+
+type UpdateThreadBumpParams struct {
+	BumpedAt string `json:"bumped_at"`
+	ID       int64  `json:"id"`
+}
+
+func (q *Queries) UpdateThreadBump(ctx context.Context, arg UpdateThreadBumpParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateThreadBump, arg.BumpedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
