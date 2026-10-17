@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "commit": "269bd17d146f96927d8ea4e85a2c8b0c2519d1ad",
+  "recorded_at": "2026-10-17T19:59:11.067485845Z",
+  "toolchain": {
+    "go_version": "go1.27.2",
+    "goarch": "amd64",
+    "goos": "linux"
+  },
+  "hardware": {
+    "cpu_model": "AMD Ryzen 9 7900 12-Core Processor",
+    "logical_cpus": 24,
+    "memory_bytes": 97872744448
+  },
+  "config": {
+    "duration_seconds": 10,
+    "read_rps": 100,
+    "write_rps": 10,
+    "sse_clients": 50,
+    "sse_events_per_second": 2
+  },
+  "public_read": {
+    "requests": 1000,
+    "throughput_per_second": 100.09089015518674,
+    "p50_ms": 0.238,
+    "p95_ms": 0.348,
+    "p99_ms": 0.426,
+    "errors": 0,
+    "sqlite_busy": 0
+  },
+  "create_write": {
+    "requests": 100,
+    "throughput_per_second": 10.099895241927172,
+    "p50_ms": 0.745,
+    "p95_ms": 0.937,
+    "p99_ms": 1.113,
+    "errors": 0,
+    "sqlite_busy": 0
+  },
+  "sse_fanout": {
+    "clients": 50,
+    "publish": {
+      "requests": 20,
+      "throughput_per_second": 2.105004616574561,
+      "p50_ms": 0.739,
+      "p95_ms": 1.096,
+      "p99_ms": 1.096,
+      "errors": 0,
+      "sqlite_busy": 0
+    },
+    "expected_deliveries": 1000,
+    "received_deliveries": 1000,
+    "delivery_throughput_per_second": 104.11973369888777,
+    "delivery_p50_ms": 2.264,
+    "delivery_p95_ms": 2.426,
+    "delivery_p99_ms": 2.453,
+    "disconnects_or_missing": 0
+  },
+  "resources": {
+    "heap_baseline_bytes": 68009832,
+    "heap_peak_bytes": 106656672,
+    "heap_end_bytes": 106656672,
+    "sys_baseline_bytes": 85883176,
+    "sys_peak_bytes": 135887144,
+    "sys_end_bytes": 135887144,
+    "goroutines_start": 8,
+    "goroutines_peak": 261,
+    "goroutines_end": 9
+  },
+  "sqlite_busy_total": 0,
+  "minimum_mvp_profile_passed": true
+}
