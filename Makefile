@@ -1,4 +1,4 @@
-.PHONY: fmt lint test test-race generate contract build
+.PHONY: fmt lint test test-race generate contract build terminal-smoke
 
 fmt:
 	gofmt -w $$(find . -name '*.go')
@@ -23,3 +23,6 @@ contract: generate
 
 build:
 	go build ./...
+
+terminal-smoke:
+	./scripts/terminal-smoke.sh
