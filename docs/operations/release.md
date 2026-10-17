@@ -24,9 +24,20 @@ upstream module archive не содержит распознаваемого lic
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" ./scripts/test-release.sh v0.0.0-test
 ```
 
-Повторите команду дважды на одном commit и сравните SHA-256 архивов. Для
-официального выпуска проверьте install/smoke jobs всех трех runner ОС, SBOM,
-license report и отсутствие critical finding до публикации tag.
+Скрипт сам собирает набор дважды, сравнивает `SHA256SUMS`, безопасно проверяет
+состав и встроенную версию всех четырех архивов и исполняет оба Linux-бинарника.
+Чужие форматы проверяются без исполнения; официальный workflow дополнительно
+выполняет нативный client smoke на трех runner ОС. До публикации tag проверьте
+SBOM, license report и отсутствие critical finding.
+
+Локальные supply-chain команды (версии зафиксированы в workflow):
+
+```sh
+govulncheck ./...
+go-licenses check ./... --disallowed_types=forbidden,restricted --ignore modernc.org/mathutil
+go-licenses report ./... --ignore bord,modernc.org/mathutil > dependency-licenses.csv
+cyclonedx-gomod mod -json -output source-bom.json
+```
 
 ## Capacity gate
 
@@ -34,5 +45,5 @@ license report и отсутствие critical finding до публикаци�
 на production-class staging host и приложите компактный JSON к release evidence.
 Минимальный профиль и блокирующие пороги описаны в
 [`docs/performance/README.md`](../performance/README.md). Любая ошибка, SQLite
-busy, пропущенная SSE delivery или превышение p95/memory/goroutine threshold
-блокирует выпуск; понижать пороги вместо расследования нельзя.
+ busy, пропущенная SSE delivery или превышение p95/memory/goroutine threshold
+ блокирует выпуск; понижать пороги вместо расследования нельзя.

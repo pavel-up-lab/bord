@@ -95,12 +95,12 @@
 
 ## 7. Operations and release — `bord-operations`
 
-- [ ] 7.1 Подготовить production-ready Caddyfile с TLS, request limits, trusted proxy boundary и отключением buffering/подходящими timeout для SSE; проверить `caddy validate` и staging SSE smoke.
+- [x] 7.1 Подготовить production-ready Caddyfile с TLS, request limits, trusted proxy boundary и отключением buffering/подходящими timeout для SSE; проверить `caddy validate` и staging SSE smoke.
 - [x] 7.2 Подготовить hardened systemd unit, environment/secret-file examples, data directory permissions и graceful stop timeout; проверить `systemd-analyze verify` и документированный fresh install.
 - [x] 7.3 Реализовать server subcommands migrate/status и защиту от запуска на более новой схеме; проверить upgrade fixture и incompatible-schema exit code.
 - [x] 7.4 Реализовать согласованный backup manifest для SQLite+blobs и offline restore verification с SHA-256; проверить end-to-end backup/restore на fixture data.
 - [ ] 7.5 Документировать установку, конфигурацию, key rotation, retention, создание администратора, блокировки, recovery и обязательство privacy policy; проверить все команды документации в чистом staging environment.
-- [ ] 7.6 Настроить release workflow для checksummed архивов `bord` на Linux/macOS/Windows и `bord-server` на целевом Linux; проверить reproducible version metadata и установку каждого artifact.
+- [x] 7.6 Настроить release workflow для checksummed архивов `bord` на Linux/macOS/Windows и `bord-server` на целевом Linux; проверить reproducible version metadata и установку каждого artifact.
 - [ ] 7.7 Добавить dependency/vulnerability/license scanning и SBOM для release; проверить CI artifacts и отсутствие неразрешенной лицензии или известной critical vulnerability.
 - [x] 7.8 Добавить operational metrics/log events для latency, SQLite busy, SSE reconnect/reset, media rejects, rate limits и retention без high-cardinality/raw IP labels; проверить telemetry schema tests.
 
@@ -112,7 +112,7 @@
 - [ ] 8.4 Запустить race detector, выбранные fuzz targets и goroutine leak tests для HTTP/SSE/media/client; устранить найденные дефекты и приложить успешные команды к release checklist.
 - [x] 8.5 Выполнить benchmark/load profile публичных read/write/SSE сценариев, зафиксировать MVP capacity и alerts для SQLite busy/latency; проверить достижение документированного минимального профиля либо записать blocking decision.
 - [x] 8.6 Выполнить Linux/macOS/Windows Terminal smoke matrix, включая narrow layout, external opener и graceful exit; зафиксировать поддержанные terminal capabilities и известные ограничения.
-- [ ] 8.7 Выполнить staging deployment за Caddy, upgrade, backup, destructive staging incident и restore; проверить readiness, data/blob hashes и rollback совместимого бинарника.
+- [x] 8.7 Выполнить staging deployment за Caddy, upgrade, backup, destructive staging incident и restore; проверить readiness, data/blob hashes и rollback совместимого бинарника.
 - [ ] 8.8 Провести security/privacy review входных лимитов, cryptography, secret handling, logs, admin boundary и retention; закрыть critical/high findings и сохранить отчет без секретных данных.
 - [ ] 8.9 Завершить MVP release checklist с версиями toolchain, checksums, SBOM, migration version, operator runbook и beta defaults; проверить, что OpenSpec tasks, CI и staging gates зеленые.
 

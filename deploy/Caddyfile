@@ -1,4 +1,5 @@
 {
+	http_port {$BORD_HTTP_PORT:80}
 	servers {
 		# Only these upstreams may supply a client address. Keep this list narrow.
 		trusted_proxies static {$BORD_UPSTREAM_PROXY_CIDRS:127.0.0.1/32}
@@ -8,7 +9,9 @@
 }
 
 {$BORD_DOMAIN:localhost} {
-	encode zstd gzip
+	# Compression can accumulate small chunks; never put it in the SSE chain.
+	@not_events not path /api/v1/events
+	encode @not_events zstd gzip
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
