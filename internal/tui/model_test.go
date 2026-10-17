@@ -82,6 +82,15 @@ func TestReducerTransitionsStaleResponsesAndHelp(t *testing.T) {
 	}
 }
 
+func TestPersistedBoardSelectionIsRestored(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{}).WithLastBoard("tech")
+	updated, cmd := m.Update(boardsMsg{id: 1, boards: []generated.Board{{Slug: "b"}, {Slug: "tech"}}})
+	m = updated.(Model)
+	if cmd == nil || m.boardIndex != 1 || m.LastBoard() != "tech" {
+		t.Fatalf("board index=%d last=%q cmd=%v", m.boardIndex, m.LastBoard(), cmd)
+	}
+}
+
 func TestComposerRetryReusesIdempotencyAndPreservesDraft(t *testing.T) {
 	f := &fakeService{createErr: errors.New("network unavailable")}
 	m := NewModel(context.Background(), f)
@@ -98,6 +107,11 @@ func TestComposerRetryReusesIdempotencyAndPreservesDraft(t *testing.T) {
 	second := m.sendDraft()().(sentMsg)
 	if len(f.keys) != 2 || f.keys[0] == "" || f.keys[0] != f.keys[1] || second.err == nil {
 		t.Fatalf("keys=%#v second=%#v", f.keys, second)
+	}
+	m.editor.SetValue("changed payload")
+	third := m.sendDraft()().(sentMsg)
+	if third.err == nil || len(f.keys) != 3 || f.keys[2] == f.keys[1] {
+		t.Fatalf("changed payload reused key: keys=%#v third=%#v", f.keys, third)
 	}
 	f.createErr = nil
 	updated, cmd := m.Update(sentMsg{id: m.requestID, result: generated.CreateResult{ThreadId: "thread_1", PostId: "post_1"}})
@@ -118,6 +132,34 @@ func TestReconcileDeduplicatesAndPreservesSelection(t *testing.T) {
 	m = updated.(Model)
 	if len(m.posts) != 3 || m.contentIndex != 1 {
 		t.Fatalf("posts=%#v selection=%d", m.posts, m.contentIndex)
+	}
+}
+
+func TestReconcilePreservesSelectedIdentityAfterReorder(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.requestID, m.activeThread, m.screen = 7, "thread_1", ThreadScreen
+	m.posts = []generated.Post{
+		{Id: "post_b", CreatedAt: time.Unix(2, 0)},
+		{Id: "post_a", CreatedAt: time.Unix(3, 0)},
+	}
+	m.contentIndex = 1
+	updated, _ := m.Update(postsMsg{id: 7, page: generated.PostPage{Posts: []generated.Post{
+		{Id: "post_a", CreatedAt: time.Unix(1, 0)},
+		{Id: "post_b", CreatedAt: time.Unix(2, 0)},
+	}}})
+	m = updated.(Model)
+	if got := m.posts[m.contentIndex].Id; got != "post_a" {
+		t.Fatalf("selected post changed to %q", got)
+	}
+}
+
+func TestStaleAttachmentUploadDoesNotMutateNewComposer(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.screen, m.requestID = ComposerScreen, 4
+	updated, _ := m.Update(AttachmentSelectedMsg{ID: "attachment_old", requestID: 3})
+	m = updated.(Model)
+	if m.draft.AttachmentID != "" {
+		t.Fatalf("stale attachment applied: %#v", m.draft)
 	}
 }
 
@@ -224,6 +266,22 @@ func TestKeyboardOnlySmokeAndGracefulQuit(t *testing.T) {
 	}
 }
 
+func TestControlCCancelsComposerAndOutstandingWork(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.screen = ComposerScreen
+	done := m.ctx.Done()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+c did not quit composer")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("model context was not cancelled")
+	}
+}
+
 type failingInput struct{}
 
 func (failingInput) Read([]byte) (int, error) { return 0, errors.New("injected terminal failure") }
@@ -292,5 +350,12 @@ func TestKittyRendererAndFallback(t *testing.T) {
 	r.Mode = InlineOff
 	if _, ok := r.Render([]byte("image"), 10, 4); ok {
 		t.Fatal("off rendered")
+	}
+	r.Mode = InlineKitty
+	if _, ok := r.Render(nil, 10, 4); ok {
+		t.Fatal("empty image rendered")
+	}
+	if _, ok := r.Render([]byte("image"), 0, 4); ok {
+		t.Fatal("invalid dimensions rendered")
 	}
 }

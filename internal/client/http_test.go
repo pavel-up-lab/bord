@@ -83,3 +83,25 @@ func TestAttachmentBody(t *testing.T) {
 		t.Fatalf("%q %q %v", body, mediaType, err)
 	}
 }
+
+func TestJSONResponseIsStrictlyBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"boards":[]} ` + strings.Repeat(" ", maxResponseBytes)))
+	}))
+	defer server.Close()
+	api, _ := New(server.URL, server.Client(), time.Second)
+	if _, err := api.Boards(context.Background()); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized response error = %v", err)
+	}
+}
+
+func TestJSONResponseRejectsTrailingValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"boards":[]} {}`))
+	}))
+	defer server.Close()
+	api, _ := New(server.URL, server.Client(), time.Second)
+	if _, err := api.Boards(context.Background()); err == nil || !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("trailing response error = %v", err)
+	}
+}

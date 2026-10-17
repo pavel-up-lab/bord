@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -221,8 +222,29 @@ func decodeJSON(resp *http.Response, want int, dst any) error {
 		return decodeAPIError(resp)
 	}
 	defer resp.Body.Close()
-	dec := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return errors.New("read API response")
+	}
+	if len(body) > maxResponseBytes {
+		return errors.New("API response exceeds client limit")
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("decode API response: %w", err)
+	}
+	if err := ensureJSONEOF(dec); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureJSONEOF(dec *json.Decoder) error {
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("decode API response: multiple JSON values")
+		}
 		return fmt.Errorf("decode API response: %w", err)
 	}
 	return nil
@@ -256,8 +278,11 @@ func decodeAPIError(resp *http.Response) error {
 		}
 	}
 	if result.RetryAfter == 0 {
-		if delay, err := time.ParseDuration(resp.Header.Get("Retry-After") + "s"); err == nil {
+		retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
+		if delay, err := time.ParseDuration(retryAfter + "s"); err == nil {
 			result.RetryAfter = delay
+		} else if when, err := http.ParseTime(retryAfter); err == nil {
+			result.RetryAfter = max(0, time.Until(when))
 		}
 	}
 	return result

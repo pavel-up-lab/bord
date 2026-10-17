@@ -57,6 +57,7 @@ func (r *oneByteReader) Read(p []byte) (int, error) {
 
 func TestUnknownEventsIgnoredBySubscriber(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event: unknown\ndata: nope\n\n")
 		<-r.Context().Done()
 	}))
@@ -68,5 +69,21 @@ func TestUnknownEventsIgnoredBySubscriber(t *testing.T) {
 	err := api.Subscribe(ctx, StreamScope{Thread: "thread_1"}, StreamCallbacks{Event: func(Event) { called = true }}, Backoff{Min: time.Millisecond, Max: time.Millisecond})
 	if !strings.Contains(err.Error(), "deadline") || called {
 		t.Fatalf("called=%v err=%v", called, err)
+	}
+}
+
+func TestSubscribeRejectsInvalidScopeAndContentType(t *testing.T) {
+	api := NewWithTransport(nil, time.Second)
+	if err := api.Subscribe(context.Background(), StreamScope{Board: "b", Thread: "thread_1"}, StreamCallbacks{}, Backoff{}); err == nil {
+		t.Fatal("expected invalid scope error")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	api, _ = New(server.URL, server.Client(), time.Second)
+	if err := api.Subscribe(context.Background(), StreamScope{}, StreamCallbacks{}, Backoff{}); err == nil || !strings.Contains(err.Error(), "content type") {
+		t.Fatalf("content type error = %v", err)
 	}
 }

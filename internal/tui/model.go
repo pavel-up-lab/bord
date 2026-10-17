@@ -62,6 +62,7 @@ func DefaultKeyMap() KeyMap {
 
 type Model struct {
 	ctx                                                  context.Context
+	cancel                                               context.CancelFunc
 	api                                                  Service
 	keys                                                 KeyMap
 	screen, previous                                     Screen
@@ -79,15 +80,23 @@ type Model struct {
 	attachmentPicking                                    bool
 	attachmentPath                                       string
 	streamCancel                                         context.CancelFunc
+	requestCancel                                        context.CancelFunc
 	requestID                                            uint64
 	err                                                  error
 	editor                                               textarea.Model
 	draft                                                Draft
+	submitted                                            *submission
+	catalogBoard                                         string
+	preferredBoard                                       string
 }
 
 type Draft struct {
 	Board, Thread, AttachmentID, IdempotencyKey string
 	ReplyTo                                     *string
+}
+
+type submission struct {
+	board, thread, attachment, replyTo, body string
 }
 
 type boardsMsg struct {
@@ -97,6 +106,7 @@ type boardsMsg struct {
 }
 type threadsMsg struct {
 	id     uint64
+	board  string
 	page   generated.ThreadPage
 	append bool
 	err    error
@@ -116,20 +126,28 @@ type ReconcileMsg struct{ Board, Thread string }
 
 // AttachmentSelectedMsg is emitted by a non-blocking file/upload command.
 type AttachmentSelectedMsg struct {
-	ID  string
-	Err error
+	ID        string
+	Err       error
+	requestID uint64
 }
 
 func NewModel(ctx context.Context, api Service) Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	editor := textarea.New()
 	editor.Placeholder = "Введите текст публикации…"
 	editor.CharLimit = 10000
 	editor.SetWidth(60)
 	editor.SetHeight(8)
-	return Model{ctx: ctx, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true}
+	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true}
+}
+
+// WithLastBoard selects the persisted board when it is present in the first response.
+func (m Model) WithLastBoard(slug string) Model {
+	m.preferredBoard = slug
+	return m
 }
 
 func (m Model) Init() tea.Cmd { return m.loadBoards() }
@@ -146,7 +164,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.requestID {
 			return m, nil
 		}
-		m.loading, m.err, m.boards = false, msg.err, msg.boards
+		m.loading, m.err = false, msg.err
+		if msg.err == nil {
+			selected := selectedBoard(m.boards, m.boardIndex)
+			if selected == "" {
+				selected = m.preferredBoard
+			}
+			m.boards = msg.boards
+			m.boardIndex = indexBoard(m.boards, selected, clamp(m.boardIndex, 0, len(m.boards)-1))
+		}
 		if len(m.boards) > 0 && m.screen == BoardsScreen {
 			m.screen = CatalogScreen
 			return m, m.loadThreads(false)
@@ -157,7 +183,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
+			selected, top := selectedThread(m.threads, m.contentIndex), selectedThread(m.threads, m.contentScroll)
+			preserve := msg.board == m.catalogBoard
 			m.threads = mergeThreads(m.threads, msg.page.Threads, msg.append)
+			if preserve {
+				m.contentIndex, m.contentScroll = restoreThreadPosition(m.threads, selected, top, m.contentIndex, m.contentScroll)
+			} else {
+				m.contentIndex, m.contentScroll = 0, 0
+			}
+			m.catalogBoard = msg.board
 			m.nextThreadCursor = msg.page.NextCursor
 			cmd := m.watchEvents()
 			return m, cmd
@@ -168,7 +202,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
+			selected, top := selectedPost(m.posts, m.contentIndex), selectedPost(m.posts, m.contentScroll)
 			m.posts = mergePosts(m.posts, msg.page.Posts, msg.append)
+			m.contentIndex, m.contentScroll = restorePostPosition(m.posts, selected, top, m.contentIndex, m.contentScroll)
 			m.nextPostCursor = msg.page.NextCursor
 			cmd := m.watchEvents()
 			return m, cmd
@@ -181,6 +217,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.editor.Reset()
 			m.draft = Draft{}
+			m.submitted = nil
 			m.screen = ThreadScreen
 			m.activeThread = msg.result.ThreadId
 			return m, m.loadPosts(false)
@@ -193,7 +230,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadThreads(false)
 		}
 	case AttachmentSelectedMsg:
+		if msg.requestID != 0 && msg.requestID != m.requestID {
+			return m, nil
+		}
 		if m.screen == ComposerScreen {
+			m.loading = false
 			m.err = msg.Err
 			if msg.Err == nil {
 				m.draft.AttachmentID = msg.ID
@@ -205,9 +246,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if matches(key, m.keys.Quit) && m.screen != ComposerScreen {
+	if matches(key, m.keys.Quit) && (m.screen != ComposerScreen || key == "ctrl+c") {
+		m.cancel()
 		if m.streamCancel != nil {
 			m.streamCancel()
+		}
+		if m.requestCancel != nil {
+			m.requestCancel()
 		}
 		return m, tea.Quit
 	}
@@ -233,6 +278,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case matches(key, m.keys.Cancel):
+			m.cancelRequest()
 			m.screen = m.previous
 			m.err = nil
 			return m, nil
@@ -325,14 +371,22 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) beginComposer(thread string) {
-	m.previous, m.screen = m.screen, ComposerScreen
-	m.draft.Thread = thread
+	board := ""
 	if len(m.boards) > 0 {
-		m.draft.Board = m.boards[m.boardIndex].Slug
+		board = m.boards[m.boardIndex].Slug
 	}
+	if m.draft.Board != board || m.draft.Thread != thread {
+		m.editor.Reset()
+		m.draft = Draft{Board: board, Thread: thread}
+		m.submitted = nil
+	}
+	m.previous, m.screen = m.screen, ComposerScreen
 	if m.draft.IdempotencyKey == "" {
 		key, err := newKey()
-		if err != nil { m.err = err; return }
+		if err != nil {
+			m.err = err
+			return
+		}
 		m.draft.IdempotencyKey = key
 	}
 	m.editor.Focus()
@@ -366,22 +420,36 @@ func (m *Model) move(delta int) {
 	m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, m.visibleRows())
 }
 
-func (m *Model) nextRequest() uint64 {
+func (m *Model) nextRequest() (uint64, context.Context, context.CancelFunc) {
 	if m.streamCancel != nil {
 		m.streamCancel()
 		m.streamCancel = nil
 	}
+	if m.requestCancel != nil {
+		m.requestCancel()
+	}
 	m.requestID++
 	m.loading = true
 	m.err = nil
-	return m.requestID
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.requestCancel = cancel
+	return m.requestID, ctx, cancel
+}
+
+func (m *Model) cancelRequest() {
+	if m.requestCancel != nil {
+		m.requestCancel()
+		m.requestCancel = nil
+		m.requestID++
+		m.loading = false
+	}
 }
 func (m Model) loadBoards() tea.Cmd {
 	id := m.requestID
 	return func() tea.Msg { v, err := m.api.Boards(m.ctx); return boardsMsg{id, v, err} }
 }
 func (m *Model) loadThreads(appendPage bool) tea.Cmd {
-	id := m.nextRequest()
+	id, ctx, cancel := m.nextRequest()
 	board := ""
 	if len(m.boards) > 0 {
 		board = m.boards[m.boardIndex].Slug
@@ -391,62 +459,78 @@ func (m *Model) loadThreads(appendPage bool) tea.Cmd {
 		cursor = m.nextThreadCursor
 	}
 	return func() tea.Msg {
-		v, err := m.api.Threads(m.ctx, board, cursor, 50)
-		return threadsMsg{id, v, appendPage, err}
+		defer cancel()
+		v, err := m.api.Threads(ctx, board, cursor, 50)
+		return threadsMsg{id, board, v, appendPage, err}
 	}
 }
 func (m *Model) loadPosts(appendPage bool) tea.Cmd {
-	id := m.nextRequest()
+	id, ctx, cancel := m.nextRequest()
 	thread := m.activeThread
 	var cursor *string
 	if appendPage {
 		cursor = m.nextPostCursor
 	}
 	return func() tea.Msg {
-		v, err := m.api.Posts(m.ctx, thread, cursor, 100)
+		defer cancel()
+		v, err := m.api.Posts(ctx, thread, cursor, 100)
 		return postsMsg{id, v, appendPage, err}
 	}
 }
 func (m *Model) sendDraft() tea.Cmd {
-	id := m.nextRequest()
 	text := m.editor.Value()
+	candidate := submissionFor(m.draft, text)
+	if m.draft.IdempotencyKey == "" || (m.submitted != nil && *m.submitted != candidate) {
+		key, err := newKey()
+		if err != nil {
+			m.err = err
+			return nil
+		}
+		m.draft.IdempotencyKey = key
+	}
+	candidate = submissionFor(m.draft, text)
+	m.submitted = &candidate
 	draft := m.draft
+	id, ctx, cancel := m.nextRequest()
 	return func() tea.Msg {
+		defer cancel()
 		body := &text
 		if draft.Thread == "" {
-			v, err := m.api.CreateThread(m.ctx, draft.Board, draft.IdempotencyKey, generated.CreateThread{Body: body, AttachmentId: optional(draft.AttachmentID)})
+			v, err := m.api.CreateThread(ctx, draft.Board, draft.IdempotencyKey, generated.CreateThread{Body: body, AttachmentId: optional(draft.AttachmentID)})
 			return sentMsg{id, v, err}
 		}
-		v, err := m.api.CreatePost(m.ctx, draft.Thread, draft.IdempotencyKey, generated.CreatePost{Body: body, AttachmentId: optional(draft.AttachmentID), ReplyToId: draft.ReplyTo})
+		v, err := m.api.CreatePost(ctx, draft.Thread, draft.IdempotencyKey, generated.CreatePost{Body: body, AttachmentId: optional(draft.AttachmentID), ReplyToId: draft.ReplyTo})
 		return sentMsg{id, v, err}
 	}
 }
 
 func (m *Model) uploadAttachment(path string) tea.Cmd {
 	path = filepath.Clean(path)
+	id, ctx, cancel := m.nextRequest()
 	return func() tea.Msg {
+		defer cancel()
 		file, err := os.Open(path)
 		if err != nil {
-			return AttachmentSelectedMsg{Err: errors.New("не удалось открыть вложение")}
+			return AttachmentSelectedMsg{Err: errors.New("не удалось открыть вложение"), requestID: id}
 		}
 		defer file.Close()
 		header := make([]byte, 512)
 		n, err := io.ReadFull(file, header)
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return AttachmentSelectedMsg{Err: errors.New("не удалось прочитать вложение")}
+			return AttachmentSelectedMsg{Err: errors.New("не удалось прочитать вложение"), requestID: id}
 		}
 		mediaType := http.DetectContentType(header[:n])
 		if mediaType != "image/jpeg" && mediaType != "image/png" {
-			return AttachmentSelectedMsg{Err: errors.New("поддерживаются только JPEG и PNG")}
+			return AttachmentSelectedMsg{Err: errors.New("поддерживаются только JPEG и PNG"), requestID: id}
 		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return AttachmentSelectedMsg{Err: errors.New("не удалось прочитать вложение")}
+			return AttachmentSelectedMsg{Err: errors.New("не удалось прочитать вложение"), requestID: id}
 		}
-		attachment, err := m.api.UploadAttachment(m.ctx, mediaType, file)
+		attachment, err := m.api.UploadAttachment(ctx, mediaType, file)
 		if err != nil {
-			return AttachmentSelectedMsg{Err: err}
+			return AttachmentSelectedMsg{Err: err, requestID: id}
 		}
-		return AttachmentSelectedMsg{ID: attachment.Id}
+		return AttachmentSelectedMsg{ID: attachment.Id, requestID: id}
 	}
 }
 
@@ -617,7 +701,12 @@ func mergePosts(old, incoming []generated.Post, appendPage bool) []generated.Pos
 	for _, p := range byID {
 		result = append(result, p)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Id < result[j].Id })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].Id < result[j].Id
+		}
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
 	return result
 }
 func mergeThreads(old, incoming []generated.Thread, appendPage bool) []generated.Thread {
@@ -635,7 +724,12 @@ func mergeThreads(old, incoming []generated.Thread, appendPage bool) []generated
 	for _, t := range byID {
 		result = append(result, t)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt.After(result[j].UpdatedAt) })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].UpdatedAt.Equal(result[j].UpdatedAt) {
+			return result[i].Id < result[j].Id
+		}
+		return result[i].UpdatedAt.After(result[j].UpdatedAt)
+	})
 	return result
 }
 func newKey() (string, error) {
@@ -650,6 +744,70 @@ func optional(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+func submissionFor(draft Draft, body string) submission {
+	replyTo := ""
+	if draft.ReplyTo != nil {
+		replyTo = *draft.ReplyTo
+	}
+	return submission{board: draft.Board, thread: draft.Thread, attachment: draft.AttachmentID, replyTo: replyTo, body: body}
+}
+
+func selectedBoard(boards []generated.Board, index int) string {
+	if index >= 0 && index < len(boards) {
+		return boards[index].Slug
+	}
+	return ""
+}
+
+func indexBoard(boards []generated.Board, slug string, fallback int) int {
+	for i := range boards {
+		if boards[i].Slug == slug {
+			return i
+		}
+	}
+	return fallback
+}
+
+func selectedThread(threads []generated.Thread, index int) string {
+	if index >= 0 && index < len(threads) {
+		return threads[index].Id
+	}
+	return ""
+}
+
+func restoreThreadPosition(threads []generated.Thread, selected, top string, oldIndex, oldScroll int) (int, int) {
+	index, scroll := clamp(oldIndex, 0, len(threads)-1), clamp(oldScroll, 0, len(threads)-1)
+	for i := range threads {
+		if threads[i].Id == selected {
+			index = i
+		}
+		if threads[i].Id == top {
+			scroll = i
+		}
+	}
+	return index, scroll
+}
+
+func selectedPost(posts []generated.Post, index int) string {
+	if index >= 0 && index < len(posts) {
+		return posts[index].Id
+	}
+	return ""
+}
+
+func restorePostPosition(posts []generated.Post, selected, top string, oldIndex, oldScroll int) (int, int) {
+	index, scroll := clamp(oldIndex, 0, len(posts)-1), clamp(oldScroll, 0, len(posts)-1)
+	for i := range posts {
+		if posts[i].Id == selected {
+			index = i
+		}
+		if posts[i].Id == top {
+			scroll = i
+		}
+	}
+	return index, scroll
 }
 func clamp(v, low, high int) int {
 	if high < low {

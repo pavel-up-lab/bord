@@ -1,8 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,6 +45,13 @@ func TestStoreRoundTripPermissionsAndCorruptRecovery(t *testing.T) {
 	if len(matches) != 1 || strings.Contains(state.String(), state.SessionSecret) {
 		t.Fatal("corrupt backup/redaction failure")
 	}
+	var log bytes.Buffer
+	slog.New(slog.NewTextHandler(&log, nil)).Info("state", "value", state)
+	for _, rendered := range []string{fmt.Sprintf("%v", state), fmt.Sprintf("%+v", state), fmt.Sprintf("%#v", state), log.String()} {
+		if strings.Contains(rendered, state.SessionSecret) || strings.Contains(rendered, "do-not-leak") {
+			t.Fatalf("state rendering leaked a secret: %q", rendered)
+		}
+	}
 }
 
 func TestCacheVerifiesSHA256(t *testing.T) {
@@ -58,6 +68,9 @@ func TestCacheVerifiesSHA256(t *testing.T) {
 	}
 	if _, err := cache.Put("attachment_1", strings.Repeat("0", 64), body); err == nil {
 		t.Fatal("expected checksum error")
+	}
+	if _, err := cache.Put("attachment_1", "not-a-digest", body); err == nil {
+		t.Fatal("expected invalid checksum error")
 	}
 }
 

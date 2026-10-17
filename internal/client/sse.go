@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +35,8 @@ type Backoff struct {
 	Jitter   func(time.Duration) time.Duration
 }
 
+var errInvalidSSEContentType = errors.New("invalid SSE content type")
+
 func DefaultBackoff() Backoff {
 	return Backoff{Min: 250 * time.Millisecond, Max: 15 * time.Second, Jitter: func(d time.Duration) time.Duration {
 		return time.Duration(rand.Int64N(int64(d/2) + 1))
@@ -42,6 +45,9 @@ func DefaultBackoff() Backoff {
 
 // Subscribe reconnects until ctx is cancelled, resuming from the most recently processed ID.
 func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks StreamCallbacks, backoff Backoff) error {
+	if scope.Board != "" && scope.Thread != "" {
+		return errors.New("SSE scope must select either a board or a thread")
+	}
 	if backoff.Min <= 0 {
 		backoff = DefaultBackoff()
 	}
@@ -62,8 +68,15 @@ func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks Stream
 			params.LastEventID = &lastID
 		}
 		resp, err := c.raw.StreamEvents(ctx, params)
-		if err == nil && resp.StatusCode != http.StatusOK {
-			err = decodeAPIError(resp)
+		if err == nil {
+			if resp == nil {
+				err = errors.New("empty HTTP response")
+			} else if resp.StatusCode != http.StatusOK {
+				err = decodeAPIError(resp)
+			} else if mediaType, _, parseErr := mime.ParseMediaType(resp.Header.Get("Content-Type")); parseErr != nil || mediaType != "text/event-stream" {
+				resp.Body.Close()
+				err = errInvalidSSEContentType
+			}
 		}
 		if err == nil {
 			seen, parseErr := parseSSE(ctx, resp.Body, func(event Event) {
@@ -94,6 +107,10 @@ func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks Stream
 			return err
 		}
 		wait := delay
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.RetryAfter > wait {
+			wait = apiErr.RetryAfter
+		}
 		if backoff.Jitter != nil {
 			wait += backoff.Jitter(delay)
 		}
@@ -161,6 +178,9 @@ func parseSSE(ctx context.Context, r io.Reader, deliver func(Event), heartbeat f
 }
 
 func isRetryableStreamError(err error) bool {
+	if errors.Is(err, errInvalidSSEContentType) {
+		return false
+	}
 	if errors.Is(err, io.EOF) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}

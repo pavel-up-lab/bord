@@ -6,13 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 )
 
 const stateVersion = 1
+const maxStateBytes = 1 << 20
 
 // State contains local client settings and credentials. It must never be logged as a value.
 type State struct {
@@ -24,7 +27,9 @@ type State struct {
 	DeleteSecrets map[string]string `json:"delete_secrets,omitempty"`
 }
 
-func (State) String() string { return "<redacted client state>" }
+func (State) String() string       { return "<redacted client state>" }
+func (State) GoString() string     { return "<redacted client state>" }
+func (State) LogValue() slog.Value { return slog.StringValue("<redacted client state>") }
 
 type Store struct{ path string }
 
@@ -56,18 +61,32 @@ func NewDeleteSecret() (string, error) {
 
 // Load returns a zero State when the file does not exist. Corrupt files are quarantined.
 func (s *Store) Load() (State, error) {
-	b, err := os.ReadFile(s.path)
+	file, err := os.Open(s.path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return State{}, nil
 	}
 	if err != nil {
 		return State{}, errors.New("read local client state")
 	}
+	defer file.Close()
+	if err := secureFile(s.path); err != nil {
+		return State{}, errors.New("secure local client state")
+	}
+	b, err := io.ReadAll(io.LimitReader(file, maxStateBytes+1))
+	if err != nil {
+		return State{}, errors.New("read local client state")
+	}
 	var state State
-	if err := json.Unmarshal(b, &state); err != nil || state.Version != stateVersion {
-		backup := fmt.Sprintf("%s.corrupt-%d", s.path, time.Now().Unix())
+	if len(b) > maxStateBytes || json.Unmarshal(b, &state) != nil || state.Version != stateVersion {
+		if err := file.Close(); err != nil {
+			return State{}, errors.New("close corrupt local client state")
+		}
+		backup := fmt.Sprintf("%s.corrupt-%d", s.path, time.Now().UnixNano())
 		if renameErr := os.Rename(s.path, backup); renameErr != nil {
 			return State{}, errors.New("recover corrupt local client state")
+		}
+		if err := syncParent(s.path); err != nil {
+			return State{}, errors.New("sync corrupt local client state recovery")
 		}
 		return State{}, nil
 	}
@@ -117,8 +136,11 @@ func (s *Store) Save(state State) error {
 	if err := replaceFile(tmpName, s.path); err != nil {
 		return errors.New("replace local client state")
 	}
-	if err := os.Chmod(s.path, 0o600); err != nil && os.PathSeparator == '/' {
+	if err := secureFile(s.path); err != nil {
 		return errors.New("secure local client state")
+	}
+	if err := syncParent(s.path); err != nil {
+		return errors.New("sync local client state directory")
 	}
 	ok = true
 	return nil

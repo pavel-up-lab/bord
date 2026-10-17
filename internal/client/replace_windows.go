@@ -15,3 +15,7 @@ func replaceFile(source, target string) error {
 	}
 	return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
 }
+
+func secureFile(string) error { return nil }
+func secureDir(string) error  { return nil }
+func syncParent(string) error { return nil }

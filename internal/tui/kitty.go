@@ -33,7 +33,7 @@ func (r KittyRenderer) Available() bool {
 	return r.Mode == InlineKitty || (r.Mode == InlineAuto && r.Capability != nil && r.Capability.KittyGraphics())
 }
 func (r KittyRenderer) Render(data []byte, columns, rows int) (string, bool) {
-	if !r.Available() {
+	if !r.Available() || len(data) == 0 || columns <= 0 || rows <= 0 {
 		return "", false
 	}
 	encoded := base64.StdEncoding.EncodeToString(data)

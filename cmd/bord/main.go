@@ -83,7 +83,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	model := tui.NewModel(ctx, api)
+	model := tui.NewModel(ctx, api).WithLastBoard(state.LastBoard)
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithOutput(stdout))
 	final, err := program.Run()
 	if err != nil {
