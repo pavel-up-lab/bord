@@ -81,17 +81,17 @@
 
 ## 6. Terminal client — `bord-tui-client`
 
-- [ ] 6.1 Реализовать типизированный HTTP client для boards, catalog, threads, create/delete, reports, attachments и uniform errors; проверить generated contract fixtures и cancellation/timeouts.
-- [ ] 6.2 Реализовать SSE client parser с heartbeat, unknown-event ignore, exponential backoff+jitter, resume ID и `stream.reset` callback; проверить fragmented stream, reconnect и cancellation tests.
-- [ ] 6.3 Реализовать кроссплатформенное атомарное local store для config, session secret, delete secrets и last board с Unix `0600`; проверить round-trip, corrupted file recovery и отсутствие secrets в error/log output.
-- [ ] 6.4 Реализовать root Bubble Tea model и состояния boards/catalog/thread/composer/help/attachment с неблокирующими commands; проверить reducer tests на переходы, stale responses и cancellation.
-- [ ] 6.5 Реализовать MC-подобную двухпанельную layout, focus, scrolling и однопанельный narrow fallback; проверить golden snapshots для нескольких размеров и color profiles.
-- [ ] 6.6 Реализовать единый keymap, контекстную help, keyboard-only navigation и graceful terminal restoration; проверить model tests всех обязательных действий и subprocess smoke test аварийного выхода.
-- [ ] 6.7 Реализовать thread view, ссылки `>>id`, tombstones, incremental pagination и SSE-triggered reconciliation; проверить сохранение selection/scroll и отсутствие дубликатов после reconnect.
-- [ ] 6.8 Реализовать multiline composer для thread/reply, attachment selection, idempotency reuse и сохранение draft при ошибке; проверить retry создает один пост и успешная отправка очищает draft.
-- [ ] 6.9 Реализовать attachment cache с SHA-256 verify и безопасные external opener adapters Linux/macOS/Windows без shell; проверить command construction unit tests и platform compile matrix.
-- [ ] 6.10 Реализовать capability interface и Kitty inline renderer с manual override/off; проверить escape-sequence golden tests и гарантированный fallback при неизвестном терминале.
-- [ ] 6.11 Собрать `cmd/bord`, CLI flags/config resolution и версию клиента; проверить `go build` для Linux/macOS/Windows и scripted TUI smoke flow с mock server.
+- [x] 6.1 Реализовать типизированный HTTP client для boards, catalog, threads, create/delete, reports, attachments и uniform errors; проверить generated contract fixtures и cancellation/timeouts.
+- [x] 6.2 Реализовать SSE client parser с heartbeat, unknown-event ignore, exponential backoff+jitter, resume ID и `stream.reset` callback; проверить fragmented stream, reconnect и cancellation tests.
+- [x] 6.3 Реализовать кроссплатформенное атомарное local store для config, session secret, delete secrets и last board с Unix `0600`; проверить round-trip, corrupted file recovery и отсутствие secrets в error/log output.
+- [x] 6.4 Реализовать root Bubble Tea model и состояния boards/catalog/thread/composer/help/attachment с неблокирующими commands; проверить reducer tests на переходы, stale responses и cancellation.
+- [x] 6.5 Реализовать MC-подобную двухпанельную layout, focus, scrolling и однопанельный narrow fallback; проверить golden snapshots для нескольких размеров и color profiles.
+- [x] 6.6 Реализовать единый keymap, контекстную help, keyboard-only navigation и graceful terminal restoration; проверить model tests всех обязательных действий и subprocess smoke test аварийного выхода.
+- [x] 6.7 Реализовать thread view, ссылки `>>id`, tombstones, incremental pagination и SSE-triggered reconciliation; проверить сохранение selection/scroll и отсутствие дубликатов после reconnect.
+- [x] 6.8 Реализовать multiline composer для thread/reply, attachment selection, idempotency reuse и сохранение draft при ошибке; проверить retry создает один пост и успешная отправка очищает draft.
+- [x] 6.9 Реализовать attachment cache с SHA-256 verify и безопасные external opener adapters Linux/macOS/Windows без shell; проверить command construction unit tests и platform compile matrix.
+- [x] 6.10 Реализовать capability interface и Kitty inline renderer с manual override/off; проверить escape-sequence golden tests и гарантированный fallback при неизвестном терминале.
+- [x] 6.11 Собрать `cmd/bord`, CLI flags/config resolution и версию клиента; проверить `go build` для Linux/macOS/Windows и scripted TUI smoke flow с mock server.
 
 ## 7. Operations and release — `bord-operations`
 
