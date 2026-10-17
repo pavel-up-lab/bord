@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"bord/internal/domain"
 )
@@ -115,7 +116,7 @@ func (h *Handler) createThread(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, validation("slug", errors.New("invalid board slug")))
 		return
 	}
-	h.create(w, r, "create_thread", func(key string, content CreateContent) (CreateResult, error) {
+	h.create(w, r, "create_thread", false, func(key string, content CreateContent) (CreateResult, error) {
 		return h.config.Public.CreateThread(r.Context(), r.PathValue("slug"), key, content)
 	})
 }
@@ -126,12 +127,12 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, validation("thread_id", errors.New("invalid ID")))
 		return
 	}
-	h.create(w, r, "create_post", func(key string, content CreateContent) (CreateResult, error) {
+	h.create(w, r, "create_post", true, func(key string, content CreateContent) (CreateResult, error) {
 		return h.config.Public.CreatePost(r.Context(), id, key, content)
 	})
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request, operation string, call func(string, CreateContent) (CreateResult, error)) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, operation string, allowReply bool, call func(string, CreateContent) (CreateResult, error)) {
 	if h.config.Public == nil {
 		writeError(w, r, unavailable())
 		return
@@ -150,8 +151,28 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, operation strin
 		writeError(w, r, validation("body", errors.New("body or attachment is required")))
 		return
 	}
-	if content.Body != nil && len(*content.Body) > 10000 {
+	if content.Body != nil && utf8.RuneCountInString(*content.Body) > 10000 {
 		writeError(w, r, validation("body", errors.New("too long")))
+		return
+	}
+	if content.AttachmentID != nil && !validResourceID(*content.AttachmentID) {
+		writeError(w, r, validation("attachment_id", errors.New("invalid ID")))
+		return
+	}
+	if content.SessionProof != nil && !validBoundedString(*content.SessionProof, 32, 512) {
+		writeError(w, r, validation("session_proof", errors.New("invalid proof")))
+		return
+	}
+	if content.DeleteVerifier != nil && !validBoundedString(*content.DeleteVerifier, 32, 512) {
+		writeError(w, r, validation("delete_verifier", errors.New("invalid verifier")))
+		return
+	}
+	if content.PoWSolution != nil && utf8.RuneCountInString(*content.PoWSolution) > 512 {
+		writeError(w, r, validation("pow_solution", errors.New("solution too long")))
+		return
+	}
+	if content.ReplyToID != nil && (!allowReply || !validResourceID(*content.ReplyToID)) {
+		writeError(w, r, validation("reply_to_id", errors.New("invalid reply target")))
 		return
 	}
 	if h.config.Abuse != nil {
@@ -170,6 +191,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, operation strin
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
+}
+
+func validBoundedString(value string, minimum, maximum int) bool {
+	length := utf8.RuneCountInString(value)
+	return length >= minimum && length <= maximum
 }
 
 func (h *Handler) deletePost(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,7 +18,8 @@ import (
 const defaultPageLimit = 50
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(strings.ToLower(ct), "application/json") {
+	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(contentType, "application/json") {
 		return errors.New("content-type must be application/json")
 	}
 	dec := json.NewDecoder(r.Body)

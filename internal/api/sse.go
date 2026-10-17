@@ -26,6 +26,10 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, validation("board", errors.New("select exactly one stream scope")))
 		return
 	}
+	if board != "" && !validBoardSlug(board) {
+		writeError(w, r, validation("board", errors.New("invalid board slug")))
+		return
+	}
 	if thread != "" && !validResourceID(thread) {
 		writeError(w, r, validation("thread", errors.New("invalid ID")))
 		return

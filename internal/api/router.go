@@ -112,7 +112,11 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status, response := MapError(err, RequestID(r.Context()))
 	var retry interface{ RetryAfter() time.Duration }
 	if errors.As(err, &retry) {
-		seconds := int(retry.RetryAfter().Seconds())
+		delay := retry.RetryAfter()
+		seconds := int(delay / time.Second)
+		if delay%time.Second != 0 {
+			seconds++
+		}
 		if seconds < 1 {
 			seconds = 1
 		}

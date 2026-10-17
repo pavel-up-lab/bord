@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,6 +106,69 @@ func TestStrictJSONAndIdempotencyValidation(t *testing.T) {
 	}
 }
 
+func TestStrictJSONMediaTypeAndCreateFieldValidation(t *testing.T) {
+	fake := &publicFake{}
+	router := testRouter(t, fake)
+	tests := []struct {
+		name        string
+		path        string
+		contentType string
+		body        string
+	}{
+		{"missing content type", "/api/v1/boards/test/threads", "", `{"body":"hello"}`},
+		{"prefix content type", "/api/v1/boards/test/threads", "application/json-patch+json", `{"body":"hello"}`},
+		{"invalid attachment", "/api/v1/boards/test/threads", "application/json", `{"attachment_id":"short"}`},
+		{"short session proof", "/api/v1/boards/test/threads", "application/json", `{"body":"hello","session_proof":"short"}`},
+		{"short delete verifier", "/api/v1/boards/test/threads", "application/json", `{"body":"hello","delete_verifier":"short"}`},
+		{"thread reply target", "/api/v1/boards/test/threads", "application/json", `{"body":"hello","reply_to_id":"post_1234"}`},
+		{"invalid post reply target", "/api/v1/threads/thread_1/posts", "application/json", `{"body":"hello","reply_to_id":"short"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			req.Header.Set("Content-Type", test.contentType)
+			req.Header.Set("Idempotency-Key", strings.Repeat("a", 16))
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if fake.createCalls != 0 {
+		t.Fatalf("invalid requests reached service %d times", fake.createCalls)
+	}
+}
+
+func TestTrustedProxyUsesNearestUntrustedHop(t *testing.T) {
+	_, trusted, err := net.ParseCIDR("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := trustedProxyMiddleware([]*net.IPNet{trusted}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, ClientIP(r.Context()))
+	}))
+	tests := []struct {
+		name, remote, forwarded, want string
+	}{
+		{"untrusted peer ignores header", "192.0.2.10:1234", "198.51.100.1", "192.0.2.10"},
+		{"spoofed leftmost ignored", "10.0.0.3:1234", "203.0.113.99, 198.51.100.7", "198.51.100.7"},
+		{"trusted chain traversed", "10.0.0.3:1234", "198.51.100.7, 10.0.0.2", "198.51.100.7"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = test.remote
+			req.Header.Set("X-Forwarded-For", test.forwarded)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if got := response.Body.String(); got != test.want {
+				t.Fatalf("client IP=%q want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCursorIsSignedBoundAndExpiring(t *testing.T) {
 	now := time.Unix(100, 0)
 	codec, _ := NewCursorCodec(bytes.Repeat([]byte("s"), 32), func() time.Time { return now })
@@ -136,7 +200,7 @@ func TestUniformErrorAndRetryAfter(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(context.WithValue(context.Background(), requestIDKey, "request-123"))
 	w := httptest.NewRecorder()
 	writeError(w, r, err)
-	if w.Header().Get("Retry-After") != "1" || !strings.Contains(w.Body.String(), `"retry_after":1`) {
+	if w.Header().Get("Retry-After") != "2" || !strings.Contains(w.Body.String(), `"retry_after":2`) {
 		t.Fatalf("missing retry metadata: %#v %s", w.Header(), w.Body.String())
 	}
 }
@@ -184,12 +248,27 @@ func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 		t.Fatalf("public route exposed on management listener: %d", w.Code)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/reports", nil)
-	req.Header.Set("Authorization", "Bearer credential-value")
+	req.Header.Set("Authorization", "bearer credential-value")
 	req.Header.Set("X-Request-ID", "request-123")
 	w = httptest.NewRecorder()
 	management.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || admin.credential != "credential-value" || admin.requestID != "request-123" {
 		t.Fatalf("admin request not correlated: %d %#v", w.Code, admin)
+	}
+}
+
+type unavailableEventStream struct{}
+
+func (unavailableEventStream) Subscribe(string, string, domain.EventID) ([]Event, bool, Subscription) {
+	return nil, false, nil
+}
+
+func TestSSERejectsInvalidBoardScope(t *testing.T) {
+	router := NewRouter(Config{Events: unavailableEventStream{}})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/events?board=Invalid", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

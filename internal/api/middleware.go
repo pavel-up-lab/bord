@@ -77,23 +77,21 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 
 func trustedProxyMiddleware(trusted []*net.IPNet, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, _ := net.SplitHostPort(r.RemoteAddr)
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
 		peer := net.ParseIP(host)
 		client := peer
-		isTrusted := false
-		for _, network := range trusted {
-			if network.Contains(peer) {
-				isTrusted = true
+		parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		// Walk from the socket peer toward the client. An untrusted hop is the
+		// trust boundary; values to its left are client-controlled and ignored.
+		for i := len(parts) - 1; i >= 0 && trustedIP(client, trusted); i-- {
+			forwarded := net.ParseIP(strings.TrimSpace(parts[i]))
+			if forwarded == nil {
 				break
 			}
-		}
-		if isTrusted {
-			parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-			if len(parts) > 0 {
-				if forwarded := net.ParseIP(strings.TrimSpace(parts[0])); forwarded != nil {
-					client = forwarded
-				}
-			}
+			client = forwarded
 		}
 		value := ""
 		if client != nil {
@@ -101,6 +99,18 @@ func trustedProxyMiddleware(trusted []*net.IPNet, next http.Handler) http.Handle
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey, value)))
 	})
+}
+
+func trustedIP(ip net.IP, networks []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, network := range networks {
+		if network != nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func bodyLimitMiddleware(limit int64, next http.Handler) http.Handler {

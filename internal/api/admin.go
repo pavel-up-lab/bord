@@ -11,12 +11,12 @@ import (
 
 func (h *Handler) admin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") || len(header) <= len("Bearer ") {
+		parts := strings.Fields(r.Header.Get("Authorization"))
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			writeError(w, r, domain.NewError(domain.CodeUnauthorized, "", errors.New("missing credential")))
 			return
 		}
-		if err := h.config.Admin.Authenticate(r.Context(), strings.TrimPrefix(header, "Bearer "), RequestID(r.Context())); err != nil {
+		if err := h.config.Admin.Authenticate(r.Context(), parts[1], RequestID(r.Context())); err != nil {
 			writeError(w, r, err)
 			return
 		}
