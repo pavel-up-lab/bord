@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,4 +85,87 @@ func TestVerifyRejectsTampering(t *testing.T) {
 	if _, err := Verify(backupRoot); err == nil {
 		t.Fatal("expected checksum failure")
 	}
+}
+
+func TestCreateRejectsDestinationInsideBlobs(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, "source.db")
+	db, err := storesqlite.Open(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storesqlite.Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	blobs := filepath.Join(root, "blobs")
+	if err := os.MkdirAll(blobs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Create(context.Background(), Config{
+		Database: database, Blobs: blobs, Destination: filepath.Join(blobs, "backup"), Quiescer: Offline{},
+	})
+	if err == nil {
+		t.Fatal("expected overlapping backup paths to be rejected")
+	}
+}
+
+func TestRestoreRejectsDestinationInsideBackup(t *testing.T) {
+	backupRoot := createFixtureBackup(t)
+	destination := filepath.Join(backupRoot, "unexpected", "restored")
+	if err := Restore(backupRoot, destination); err == nil {
+		t.Fatal("expected overlapping restore paths to be rejected")
+	}
+	if _, err := os.Stat(filepath.Dir(destination)); !os.IsNotExist(err) {
+		t.Fatalf("restore mutated backup before rejecting destination: %v", err)
+	}
+}
+
+func TestVerifyRejectsNonPortableManifestPath(t *testing.T) {
+	backupRoot := createFixtureBackup(t)
+	manifestPath := filepath.Join(backupRoot, ManifestName)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Blobs = append(manifest.Blobs, File{Path: `blobs/..\database.sqlite3`})
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(backupRoot); err == nil {
+		t.Fatal("expected non-portable path to be rejected")
+	}
+}
+
+func createFixtureBackup(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	database := filepath.Join(root, "source.db")
+	db, err := storesqlite.Open(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storesqlite.Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	blobs := filepath.Join(root, "blobs")
+	if err := os.MkdirAll(blobs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(root, "backup")
+	if _, err := Create(context.Background(), Config{
+		Database: database, Blobs: blobs, Destination: backupRoot, Quiescer: Offline{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return backupRoot
 }

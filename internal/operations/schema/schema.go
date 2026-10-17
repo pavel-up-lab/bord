@@ -28,16 +28,18 @@ func Inspect(ctx context.Context, db *sql.DB) (Status, error) {
 		status.Current = 0
 		return status, nil
 	}
-	if err := db.QueryRowContext(ctx, `SELECT version FROM schema_migrations LIMIT 1`).Scan(&status.Current); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Status{}, errors.New("schema_migrations contains no version")
-		}
+	var rows int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&rows, &status.Current); err != nil {
 		return Status{}, fmt.Errorf("read schema version: %w", err)
 	}
 	switch {
 	case status.Current > status.Maximum:
 		status.State = "incompatible_newer"
 		return status, fmt.Errorf("%w: current=%d maximum_supported=%d", ErrNewerSchema, status.Current, status.Maximum)
+	case rows == 0:
+		return Status{}, errors.New("schema_migrations contains no version")
+	case rows != 1:
+		return Status{}, fmt.Errorf("schema_migrations contains %d version rows", rows)
 	case status.Current == status.Maximum:
 		status.State = "ready"
 	default:

@@ -19,7 +19,7 @@
 	}
 
 	@writes {
-		method POST PUT PATCH
+		method POST PUT PATCH DELETE
 	}
 	request_body @writes {
 		max_size {$BORD_MAX_REQUEST_BODY:16MB}

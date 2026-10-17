@@ -60,6 +60,15 @@ jobs:
           case "${version}" in v*) ;; *) echo "version must start with v" >&2; exit 2;; esac
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+      - name: Gate known vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck ./...
+      - name: Gate dependency licenses
+        run: |
+          go install github.com/google/go-licenses@v1.6.0
+          test "$(go list -m -f '{{.Version}}' modernc.org/mathutil)" = v1.7.1
+          go-licenses check ./... --disallowed_types=forbidden,restricted --ignore modernc.org/mathutil
       - name: Build deterministic archives
         run: python3 scripts/release.py --version "${{ steps.metadata.outputs.version }}"
       - name: Verify checksums and Linux installs

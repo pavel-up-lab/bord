@@ -108,8 +108,18 @@ func Restore(backupRoot, destination string) error {
 	if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("restore destination must not exist")
 	}
+	if overlap, err := lexicalPathsOverlap(backupRoot, destination); err != nil {
+		return fmt.Errorf("validate restore paths: %w", err)
+	} else if overlap {
+		return errors.New("restore destination must be outside the backup directory")
+	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return err
+	}
+	if overlap, err := pathsOverlap(backupRoot, destination); err != nil {
+		return fmt.Errorf("validate restore paths: %w", err)
+	} else if overlap {
+		return errors.New("restore destination must be outside the backup directory")
 	}
 	stage, err := os.MkdirTemp(filepath.Dir(destination), ".bord-restore-")
 	if err != nil {
@@ -128,6 +138,9 @@ func Restore(backupRoot, destination string) error {
 }
 
 func safePath(path string) bool {
+	if strings.ContainsRune(path, '\\') {
+		return false
+	}
 	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
 	if path == "" || filepath.IsAbs(filepath.FromSlash(path)) || clean != path {
 		return false

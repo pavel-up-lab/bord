@@ -9,6 +9,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -64,8 +65,11 @@ def main() -> None:
 
     root = Path(__file__).resolve().parent.parent
     output = (root / options.output).resolve()
-    if output == root or root not in output.parents:
-        parser.error("output must be inside the repository")
+    safe_output = re.fullmatch(
+        r"dist(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?", output.name
+    )
+    if output.parent != root or safe_output is None:
+        parser.error("output must be a top-level dist or dist-NAME directory")
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir(parents=True)
     commit = run("git", "rev-parse", "HEAD")

@@ -66,9 +66,19 @@ func Create(ctx context.Context, cfg Config) (Manifest, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if overlap, err := lexicalPathsOverlap(cfg.Blobs, cfg.Destination); err != nil {
+		return Manifest{}, fmt.Errorf("validate backup paths: %w", err)
+	} else if overlap {
+		return Manifest{}, errors.New("backup destination must be outside the blob directory")
+	}
 	parent := filepath.Dir(cfg.Destination)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return Manifest{}, err
+	}
+	if overlap, err := pathsOverlap(cfg.Blobs, cfg.Destination); err != nil {
+		return Manifest{}, fmt.Errorf("validate backup paths: %w", err)
+	} else if overlap {
+		return Manifest{}, errors.New("backup destination must be outside the blob directory")
 	}
 	stage, err := os.MkdirTemp(parent, ".bord-backup-")
 	if err != nil {
@@ -104,6 +114,9 @@ func Create(ctx context.Context, cfg Config) (Manifest, error) {
 	data = append(data, '\n')
 	if err := os.WriteFile(filepath.Join(stage, ManifestName), data, 0o600); err != nil {
 		return Manifest{}, err
+	}
+	if _, err := Verify(stage); err != nil {
+		return Manifest{}, fmt.Errorf("verify staged backup: %w", err)
 	}
 	if _, err := os.Stat(cfg.Destination); !errors.Is(err, os.ErrNotExist) {
 		return Manifest{}, errors.New("backup destination already exists")
@@ -166,6 +179,9 @@ func copyBlobs(source, target, root string) ([]File, error) {
 		if err != nil {
 			return err
 		}
+		if strings.ContainsRune(rel, '\\') {
+			return fmt.Errorf("blob path is not portable: %q", rel)
+		}
 		destination := filepath.Join(target, rel)
 		if err := copyFile(path, destination); err != nil {
 			return err
@@ -179,6 +195,59 @@ func copyBlobs(source, target, root string) ([]File, error) {
 	})
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, err
+}
+
+// pathsOverlap resolves existing parents so a symlink cannot hide that the
+// destination is nested below the source (or vice versa).
+func pathsOverlap(first, second string) (bool, error) {
+	canonical := func(path string) (string, error) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(parent, filepath.Base(absolute)), nil
+	}
+	a, err := canonical(first)
+	if err != nil {
+		return false, err
+	}
+	b, err := canonical(second)
+	if err != nil {
+		return false, err
+	}
+	return cleanPathsOverlap(a, b)
+}
+
+func lexicalPathsOverlap(first, second string) (bool, error) {
+	a, err := filepath.Abs(first)
+	if err != nil {
+		return false, err
+	}
+	b, err := filepath.Abs(second)
+	if err != nil {
+		return false, err
+	}
+	return cleanPathsOverlap(a, b)
+}
+
+func cleanPathsOverlap(first, second string) (bool, error) {
+	contains := func(parent, child string) (bool, error) {
+		rel, err := filepath.Rel(parent, child)
+		if err != nil {
+			return false, err
+		}
+		return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))), nil
+	}
+	ab, err := contains(first, second)
+	if err != nil {
+		return false, err
+	}
+	ba, err := contains(second, first)
+	return ab || ba, err
 }
 
 func describe(root, path string) (File, error) {

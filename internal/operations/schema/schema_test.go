@@ -43,3 +43,32 @@ func TestInspectRejectsNewerSchema(t *testing.T) {
 		t.Fatalf("status = %#v, err = %v", status, err)
 	}
 }
+
+func TestInspectRejectsAmbiguousSchemaMetadata(t *testing.T) {
+	db, err := storesqlite.Open(filepath.Join(t.TempDir(), "bord.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER NOT NULL); INSERT INTO schema_migrations VALUES (0), (1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Inspect(context.Background(), db); err == nil {
+		t.Fatal("expected ambiguous migration metadata to be rejected")
+	}
+}
+
+func TestInspectFindsNewerVersionAmongDuplicateRows(t *testing.T) {
+	db, err := storesqlite.Open(filepath.Join(t.TempDir(), "bord.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER NOT NULL); INSERT INTO schema_migrations VALUES (?), (?)`, storesqlite.MaxSchemaVersion, storesqlite.MaxSchemaVersion+1); err != nil {
+		t.Fatal(err)
+	}
+	status, err := Inspect(context.Background(), db)
+	if !errors.Is(err, ErrNewerSchema) || status.State != "incompatible_newer" {
+		t.Fatalf("status = %#v, err = %v", status, err)
+	}
+}
