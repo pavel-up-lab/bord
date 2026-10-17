@@ -111,7 +111,7 @@
 - [x] 8.3 Провести anti-abuse E2E для spoofed proxy, rate limits, PoW, bans, reports, IP reveal audit и 90-day retention; проверить ожидаемые HTTP/CLI результаты без утечки raw IP.
 - [ ] 8.4 Запустить race detector, выбранные fuzz targets и goroutine leak tests для HTTP/SSE/media/client; устранить найденные дефекты и приложить успешные команды к release checklist.
 - [ ] 8.5 Выполнить benchmark/load profile публичных read/write/SSE сценариев, зафиксировать MVP capacity и alerts для SQLite busy/latency; проверить достижение документированного минимального профиля либо записать blocking decision.
-- [ ] 8.6 Выполнить Linux/macOS/Windows Terminal smoke matrix, включая narrow layout, external opener и graceful exit; зафиксировать поддержанные terminal capabilities и известные ограничения.
+- [x] 8.6 Выполнить Linux/macOS/Windows Terminal smoke matrix, включая narrow layout, external opener и graceful exit; зафиксировать поддержанные terminal capabilities и известные ограничения.
 - [ ] 8.7 Выполнить staging deployment за Caddy, upgrade, backup, destructive staging incident и restore; проверить readiness, data/blob hashes и rollback совместимого бинарника.
 - [ ] 8.8 Провести security/privacy review входных лимитов, cryptography, secret handling, logs, admin boundary и retention; закрыть critical/high findings и сохранить отчет без секретных данных.
 - [ ] 8.9 Завершить MVP release checklist с версиями toolchain, checksums, SBOM, migration version, operator runbook и beta defaults; проверить, что OpenSpec tasks, CI и staging gates зеленые.
