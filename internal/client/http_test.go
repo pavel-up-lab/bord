@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,5 +104,54 @@ func TestJSONResponseRejectsTrailingValue(t *testing.T) {
 	api, _ := New(server.URL, server.Client(), time.Second)
 	if _, err := api.Boards(context.Background()); err == nil || !strings.Contains(err.Error(), "multiple") {
 		t.Fatalf("trailing response error = %v", err)
+	}
+}
+
+func TestJSONResponseRejectsUnknownFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"boards":[],"unexpected":true}`))
+	}))
+	defer server.Close()
+	api, _ := New(server.URL, server.Client(), time.Second)
+	if _, err := api.Boards(context.Background()); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown response field error = %v", err)
+	}
+}
+
+func TestHTTPClientCancellationReleasesHandlers(t *testing.T) {
+	var active atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		active.Add(1)
+		defer active.Add(-1)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	api, _ := New(server.URL, server.Client(), time.Second)
+	for range 20 {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := api.Boards(ctx)
+			done <- err
+		}()
+		deadline := time.Now().Add(time.Second)
+		for active.Load() == 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if active.Load() == 0 {
+			cancel()
+			t.Fatal("HTTP handler did not start")
+		}
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Boards returned %v", err)
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for active.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := active.Load(); got != 0 {
+		t.Fatalf("%d HTTP handlers leaked after cancellation", got)
 	}
 }

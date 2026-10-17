@@ -1,4 +1,4 @@
-.PHONY: fmt lint test test-race generate contract build terminal-smoke
+.PHONY: fmt lint test test-race generate contract build terminal-smoke quality
 
 fmt:
 	gofmt -w $$(find . -name '*.go')
@@ -26,3 +26,6 @@ build:
 
 terminal-smoke:
 	./scripts/terminal-smoke.sh
+
+quality:
+	./scripts/quality-gate.sh

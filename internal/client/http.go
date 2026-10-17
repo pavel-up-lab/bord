@@ -230,6 +230,7 @@ func decodeJSON(resp *http.Response, want int, dst any) error {
 		return errors.New("API response exceeds client limit")
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("decode API response: %w", err)
 	}
