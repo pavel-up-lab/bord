@@ -4,6 +4,8 @@ package moderation
 import (
 	"context"
 	"errors"
+	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -33,15 +35,48 @@ func ValidateAudit(entry AuditEntry) error {
 	if entry.Action == "" || entry.RequestID == "" || entry.CreatedAt.IsZero() {
 		return ErrUnsafeAudit
 	}
-	for key := range entry.Metadata {
+	for _, value := range []string{entry.ActorID, entry.Action, entry.TargetID, entry.Reason, entry.ErrorCode, entry.RequestID} {
+		if containsRawIP(value) {
+			return ErrUnsafeAudit
+		}
+	}
+	for key, value := range entry.Metadata {
 		normalized := strings.ToLower(key)
 		for _, forbidden := range []string{"secret", "token", "credential", "bearer", "raw_ip", "plaintext", "ciphertext"} {
 			if strings.Contains(normalized, forbidden) {
 				return ErrUnsafeAudit
 			}
 		}
+		if containsRawIP(key) || containsRawIP(value) {
+			return ErrUnsafeAudit
+		}
 	}
 	return nil
+}
+
+func containsRawIP(value string) bool {
+	for _, field := range strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', ',', ';', '=', '(', ')', '[', ']', '{', '}', '"', '\'':
+			return true
+		default:
+			return false
+		}
+	}) {
+		candidate := strings.Trim(field, ".")
+		if _, err := netip.ParseAddr(candidate); err == nil {
+			return true
+		}
+		if _, err := netip.ParsePrefix(candidate); err == nil {
+			return true
+		}
+		if host, _, err := net.SplitHostPort(candidate); err == nil {
+			if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // MemoryAuditRepository intentionally exposes no update/delete operation.

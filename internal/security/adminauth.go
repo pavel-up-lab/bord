@@ -20,7 +20,12 @@ const (
 	RoleAdministrator
 )
 
+func (r Role) Valid() bool { return r >= RoleReports && r <= RoleAdministrator }
+
 func (r Role) Allows(required Role) bool {
+	if !r.Valid() || !required.Valid() {
+		return false
+	}
 	return subtle.ConstantTimeLessOrEq(int(required), int(r)) == 1
 }
 
@@ -65,7 +70,7 @@ func (a *AdminAuthenticator) Authenticate(ctx context.Context, bearer string, re
 	}
 	verified := VerifySecret([]byte(secret), verifier)
 	now := a.clock.Now()
-	if !found || !verified || identity.RevokedAt != nil || !identity.ExpiresAt.After(now) {
+	if !found || !verified || !identity.Role.Valid() || identity.RevokedAt != nil || !identity.ExpiresAt.After(now) {
 		return AdminIdentity{}, ErrUnauthorized
 	}
 	if !identity.Role.Allows(required) {
@@ -76,7 +81,7 @@ func (a *AdminAuthenticator) Authenticate(ctx context.Context, bearer string, re
 
 // NewAdminCredential generates a high-entropy bearer and its server-side verifier.
 func NewAdminCredential(id string, role Role, expiresAt time.Time, randomSource interface{ Read([]byte) (int, error) }, params Argon2Params) (string, AdminIdentity, error) {
-	if id == "" || role < RoleReports || role > RoleAdministrator || expiresAt.IsZero() {
+	if id == "" || strings.TrimSpace(id) != id || strings.Contains(id, ".") || !role.Valid() || expiresAt.IsZero() {
 		return "", AdminIdentity{}, ErrUnauthorized
 	}
 	if randomSource == nil {

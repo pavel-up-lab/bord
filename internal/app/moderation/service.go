@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -19,7 +20,9 @@ const (
 	RoleAdministrator
 )
 
-func (r Role) Allows(required Role) bool { return r >= required }
+func (r Role) Valid() bool { return r >= RoleReports && r <= RoleAdministrator }
+
+func (r Role) Allows(required Role) bool { return r.Valid() && required.Valid() && r >= required }
 
 type ContentRepository interface {
 	SetPostHidden(context.Context, string, bool, time.Time) error
@@ -81,9 +84,9 @@ func (s *Service) Close(ctx context.Context, actor Actor, threadID, reason, requ
 func (s *Service) contentAction(ctx context.Context, actor Actor, action, target, reason, requestID string, apply func(time.Time) error) error {
 	now := s.clock.Now()
 	err := ErrReasonRequired
-	if reason != "" && actor.Role.Allows(RoleModerator) {
+	if strings.TrimSpace(reason) != "" && actor.Role.Allows(RoleModerator) {
 		err = apply(now)
-	} else if reason != "" {
+	} else if strings.TrimSpace(reason) != "" {
 		err = ErrRoleDenied
 	}
 	return errors.Join(err, s.record(ctx, actor, action, target, reason, requestID, now, err))
@@ -92,7 +95,7 @@ func (s *Service) contentAction(ctx context.Context, actor Actor, action, target
 func (s *Service) CreateBan(ctx context.Context, actor Actor, ban BanRecord, requestID string) error {
 	now := s.clock.Now()
 	var err error
-	if ban.Reason == "" {
+	if strings.TrimSpace(ban.Reason) == "" {
 		err = ErrReasonRequired
 	} else if !actor.Role.Allows(RoleModerator) {
 		err = ErrRoleDenied
@@ -107,7 +110,7 @@ func (s *Service) CreateBan(ctx context.Context, actor Actor, ban BanRecord, req
 func (s *Service) RevokeBan(ctx context.Context, actor Actor, id, reason, requestID string) error {
 	now := s.clock.Now()
 	var err error
-	if reason == "" {
+	if strings.TrimSpace(reason) == "" {
 		err = ErrReasonRequired
 	} else if !actor.Role.Allows(RoleModerator) {
 		err = ErrRoleDenied
@@ -119,7 +122,7 @@ func (s *Service) RevokeBan(ctx context.Context, actor Actor, id, reason, reques
 
 func (s *Service) RevealIP(ctx context.Context, actor Actor, subjectID, reason, requestID string) (netip.Addr, error) {
 	now := s.clock.Now()
-	if reason == "" {
+	if strings.TrimSpace(reason) == "" {
 		return netip.Addr{}, errors.Join(ErrReasonRequired, s.record(ctx, actor, "ip.reveal", subjectID, reason, requestID, now, ErrReasonRequired))
 	}
 	if !actor.Role.Allows(RoleAdministrator) {

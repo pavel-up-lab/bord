@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -168,6 +170,30 @@ func TestLimiterBurstRefillAndOperationIsolation(t *testing.T) {
 	}
 }
 
+func TestLimiterConcurrentConsumptionDoesNotExceedCapacity(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(100, 0)}
+	limiter, err := NewLimiter(clock, map[string]Rate{"write": {Capacity: 5, RefillEvery: time.Hour}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := BucketKey{Dimension: "ip", Subject: "lookup", Operation: "reply", Class: "write"}
+	var accepted atomic.Int32
+	var group sync.WaitGroup
+	for range 64 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if ok, _ := limiter.Allow(key); ok {
+				accepted.Add(1)
+			}
+		}()
+	}
+	group.Wait()
+	if got := accepted.Load(); got != 5 {
+		t.Fatalf("accepted = %d, want 5", got)
+	}
+}
+
 func TestPoWPurposeExpiryDifficultyAndReplay(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1_000, 0)}
 	pow, err := NewPoW(bytes.Repeat([]byte{7}, 32), clock, bytes.NewReader(bytes.Repeat([]byte{8}, 48)), NewMemoryChallengeUses(), 16)
@@ -199,6 +225,37 @@ func TestPoWPurposeExpiryDifficultyAndReplay(t *testing.T) {
 	clock.now = clock.now.Add(time.Second)
 	if err := pow.Verify(expiring, "reply", "subject", expiringSolution); !errors.Is(err, ErrInvalidChallenge) {
 		t.Fatalf("expiry = %v", err)
+	}
+}
+
+func TestPoWConcurrentReplayAcceptsOnce(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(1_000, 0)}
+	pow, err := NewPoW(bytes.Repeat([]byte{7}, 32), clock, bytes.NewReader(bytes.Repeat([]byte{8}, 24)), NewMemoryChallengeUses(), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := pow.Issue("reply", "subject", 8, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	solution, err := Solve(context.Background(), token, 8, 1<<18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted atomic.Int32
+	var group sync.WaitGroup
+	for range 32 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if pow.Verify(token, "reply", "subject", solution) == nil {
+				accepted.Add(1)
+			}
+		}()
+	}
+	group.Wait()
+	if got := accepted.Load(); got != 1 {
+		t.Fatalf("accepted = %d, want 1", got)
 	}
 }
 
@@ -257,5 +314,29 @@ func TestAdminAuthenticationRolesExpiryAndRevocation(t *testing.T) {
 	_ = repo.Save(context.Background(), identity)
 	if _, err := auth.Authenticate(context.Background(), credential, RoleReports); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("revoked = %v", err)
+	}
+}
+
+func TestAdminAuthenticationRejectsInvalidStoredRoleAndAmbiguousID(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(3_000, 0)}
+	repo := NewMemoryAdminIdentities()
+	dummy, _ := HashSecret([]byte("dummy-secret-value"), testArgon, bytes.NewReader([]byte("abcdefgh")))
+	credential, identity, err := NewAdminCredential("alice", RoleModerator, clock.now.Add(time.Hour), bytes.NewReader(bytes.Repeat([]byte{9}, 128)), testArgon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity.Role = Role(255)
+	if err := repo.Save(context.Background(), identity); err != nil {
+		t.Fatal(err)
+	}
+	auth := NewAdminAuthenticator(repo, clock, dummy)
+	if _, err := auth.Authenticate(context.Background(), credential, RoleAdministrator); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("invalid stored role = %v", err)
+	}
+	if _, _, err := NewAdminCredential("alice.ops", RoleAdministrator, clock.now.Add(time.Hour), bytes.NewReader(bytes.Repeat([]byte{9}, 128)), testArgon); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("ambiguous id = %v", err)
+	}
+	if Role(255).Allows(RoleAdministrator) || RoleAdministrator.Allows(Role(0)) {
+		t.Fatal("invalid role participated in authorization")
 	}
 }

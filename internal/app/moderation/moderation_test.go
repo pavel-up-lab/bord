@@ -121,6 +121,15 @@ func TestAppendOnlyAuditRejectsSecretFieldsAndCopies(t *testing.T) {
 	if err := repo.Append(context.Background(), unsafe); !errors.Is(err, ErrUnsafeAudit) {
 		t.Fatalf("unsafe append = %v", err)
 	}
+	for _, unsafe := range []AuditEntry{
+		{Action: "ip.reveal", TargetID: "192.0.2.1", RequestID: "r", CreatedAt: now},
+		{Action: "login", RequestID: "r", CreatedAt: now, Metadata: map[string]string{"peer": "[2001:db8::1]:443"}},
+		{Action: "ban.create", RequestID: "r", CreatedAt: now, Metadata: map[string]string{"subject": "192.0.2.0/24"}},
+	} {
+		if err := repo.Append(context.Background(), unsafe); !errors.Is(err, ErrUnsafeAudit) {
+			t.Fatalf("raw IP append = %v", err)
+		}
+	}
 	entry := AuditEntry{Action: "login", RequestID: "r", CreatedAt: now, Metadata: map[string]string{"role": "moderator"}}
 	if err := repo.Append(context.Background(), entry); err != nil {
 		t.Fatal(err)
@@ -134,6 +143,31 @@ func TestAppendOnlyAuditRejectsSecretFieldsAndCopies(t *testing.T) {
 	}
 	// Compile-time API shape: the repository has append/list only, no update/delete methods.
 	var _ AuditRepository = repo
+}
+
+func TestModerationRejectsWhitespaceReasonWithoutMutation(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	content := NewMemoryContentRepository()
+	audit := &MemoryAuditRepository{}
+	service := NewService(content, NewMemoryBanRepository(), nil, audit, nil, fixedClock{now})
+	err := service.Hide(context.Background(), Actor{ID: "mod", Role: RoleModerator}, "p1", " \t", "req")
+	if !errors.Is(err, ErrReasonRequired) || content.Hidden["p1"] {
+		t.Fatalf("hide = %v, hidden = %v", err, content.Hidden["p1"])
+	}
+	entries, listErr := audit.List(context.Background())
+	if listErr != nil || len(entries) != 1 || entries[0].Success {
+		t.Fatalf("audit = %+v, %v", entries, listErr)
+	}
+}
+
+func TestModerationRejectsInvalidRoleWithoutMutation(t *testing.T) {
+	content := NewMemoryContentRepository()
+	audit := &MemoryAuditRepository{}
+	service := NewService(content, NewMemoryBanRepository(), nil, audit, nil, fixedClock{time.Unix(10_000, 0)})
+	err := service.Hide(context.Background(), Actor{ID: "invalid", Role: Role(255)}, "p1", "policy", "req")
+	if !errors.Is(err, ErrRoleDenied) || content.Hidden["p1"] {
+		t.Fatalf("hide = %v, hidden = %v", err, content.Hidden["p1"])
+	}
 }
 
 func TestRevealFailsClosedWhenAuditCannotAppend(t *testing.T) {
