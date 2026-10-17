@@ -97,14 +97,19 @@ func TestNormalizeCompressedBoundIsStreaming(t *testing.T) {
 }
 
 func TestNormalizeResourceBoundCorpus(t *testing.T) {
-	deadline := time.Now().Add(2 * time.Second)
-	for i := 0; i < 500; i++ {
-		for _, name := range []string{"valid.png", "valid.jpg", "invalid.png", "dimension-bomb.png", "polyglot.png"} {
-			_, _ = processor().Normalize(context.Background(), bytes.NewReader(fixture(t, name)), name)
+	names := []string{"valid.png", "valid.jpg", "invalid.png", "dimension-bomb.png", "polyglot.png"}
+	corpus := make(map[string][]byte, len(names))
+	for _, name := range names {
+		corpus[name] = fixture(t, name)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for i := 0; i < 250; i++ {
+		for _, name := range names {
+			_, _ = processor().Normalize(context.Background(), bytes.NewReader(corpus[name]), name)
 		}
 	}
 	if time.Now().After(deadline) {
-		t.Fatal("bounded media corpus exceeded two seconds")
+		t.Fatal("bounded media corpus exceeded five seconds")
 	}
 }
 

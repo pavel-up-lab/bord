@@ -115,7 +115,7 @@ func TestCleanupDryRunGraceAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmp := filepath.Join(root, "tmp", ".incoming-old")
+	tmp := filepath.Join(root, "tmp", ".incoming-"+blob.Key+"-1")
 	if err := os.WriteFile(tmp, []byte("partial"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +146,106 @@ func TestCleanupDryRunGraceAndReferences(t *testing.T) {
 		t.Fatal("referenced blob removed")
 	}
 	_ = reader.Close()
+}
+
+func TestStoreConfinesSymlinkedShard(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, SyncNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	image := normalizedPNG(t)
+	key := fmtHash(image.SHA256)
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(root, "blobs", key[:2])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), image); err == nil {
+		t.Fatal("store followed a shard symlink outside its root")
+	}
+	entries, err := os.ReadDir(external)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("store wrote outside its root: %v", entries)
+	}
+}
+
+func TestStoreRejectsSymlinkBlobAndCleanupLookalike(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, SyncNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	image := normalizedPNG(t)
+	key := fmtHash(image.SHA256)
+	dir := filepath.Join(root, "blobs", key[:2], key[2:4])
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "operator-file")
+	if err := os.WriteFile(target, image.Data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, key+".png")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), image); err == nil {
+		t.Fatal("store accepted a symlink as an existing blob")
+	}
+	if err := os.Remove(filepath.Join(dir, key+".png")); err != nil {
+		t.Fatal(err)
+	}
+	lookalike := filepath.Join(dir, key+".png.jpg")
+	if err := os.WriteFile(lookalike, []byte("operator data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(lookalike, old, old); err != nil {
+		t.Fatal(err)
+	}
+	report, err := store.Cleanup(context.Background(), CleanupOptions{Now: time.Now(), Grace: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.OrphanCandidates) != 0 || len(report.Removed) != 0 {
+		t.Fatalf("cleanup accepted an unrecognized lookalike: %+v", report)
+	}
+	if _, err := os.Stat(lookalike); err != nil {
+		t.Fatalf("cleanup removed operator data: %v", err)
+	}
+}
+
+func TestStoreRefreshesDeduplicatedBlobGrace(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, SyncNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	image := normalizedPNG(t)
+	blob, err := store.Put(context.Background(), image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "blobs", blob.Key[:2], blob.Key[2:4], blob.Key+".png")
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Put(context.Background(), image); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old.Add(time.Hour)) {
+		t.Fatalf("deduplicated blob grace was not refreshed: %v", info.ModTime())
+	}
 }
 
 func fmtHash(sum [32]byte) string {
