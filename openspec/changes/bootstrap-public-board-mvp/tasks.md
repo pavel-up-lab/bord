@@ -29,7 +29,7 @@
 - [x] 1.8 Добавить безопасный `slog` setup, request/correlation ID типы и redaction helpers; проверить тестом, что raw IP, post body, bearer и delete token не попадают в сериализованный лог.
 - [x] 1.9 Настроить `sqlc`, инструмент миграций и embed conventions на минимальной тестовой миграции; проверить создание временной SQLite, upgrade и отказ на неизвестной новой версии схемы.
 - [x] 1.10 Настроить CI foundation gate для format, vet/lint, unit tests, OpenAPI lint и Linux/macOS/Windows compile; проверить успешный workflow на текущем skeleton.
-- [ ] 1.11 Провести review/freeze foundation contracts, исправить замечания и влить worktree в `main`; проверить, что все шесть parallel lane создаются от одного commit `main` и `git status` чист.
+- [x] 1.11 Провести review/freeze foundation contracts, исправить замечания и влить worktree в `main`; проверить, что все шесть parallel lane создаются от одного commit `main` и `git status` чист.
 
 ## 2. Storage and board domain — `bord-storage-domain`
 
