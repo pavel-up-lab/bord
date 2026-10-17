@@ -45,17 +45,17 @@
 
 ## 3. Security, abuse controls and moderation — `bord-security-moderation`
 
-- [ ] 3.1 Реализовать генерацию session/delete secrets, session fingerprint, thread-local author HMAC и Argon2id verifier с версией параметров; проверить криптографические test vectors и отрицательные случаи.
-- [ ] 3.2 Реализовать trusted-proxy parser, canonical IP, prefix derivation, HMAC lookup и AES-256-GCM envelope с `key_id`; проверить spoofed forwarded headers, IPv4/IPv6 vectors, tamper detection и key rotation read path.
-- [ ] 3.3 Реализовать token-bucket limits по IP lookup, prefix, session и operation с injectable clock; проверить burst, refill, независимость read/write и `retry_after`.
-- [ ] 3.4 Реализовать подписанный expiring PoW challenge и ограниченный solver library для клиента; проверить purpose binding, expiry, difficulty bounds и запрет повторного использования.
-- [ ] 3.5 Реализовать ban evaluation по IP, prefix, lookup, board, operation и expiry; проверить приоритет совпадений и автоматическое прекращение действия после expiry.
-- [ ] 3.6 Реализовать reports use case с допустимыми причинами, дедупликацией и лимитами; проверить, что повторный источник не увеличивает приоритет жалобы.
-- [ ] 3.7 Реализовать admin identities/roles, Argon2id bearer verifier, expiry/revocation и constant-time verification; проверить unauthorized, expired, revoked и role-denied cases.
-- [ ] 3.8 Реализовать moderation use cases hide/restore, close thread, create/revoke ban и reveal IP с обязательной причиной; проверить доменные эффекты и запрет reveal для недостаточной роли.
-- [ ] 3.9 Реализовать append-only audit repository для успешных и неуспешных admin actions; проверить невозможность update/delete через public repository и отсутствие secrets/raw IP в audit payload.
-- [ ] 3.10 Реализовать retention job для encrypted IP, idempotency и использованных challenge с legal-hold/active-ban исключениями; проверить default 90-day boundary с fake clock.
-- [ ] 3.11 Добавить `internal/admin` command handlers для bootstrap/revoke/list-reports/hide/restore/close/ban/reveal без прямого изменения БД; проверить CLI handler tests через mock admin client.
+- [x] 3.1 Реализовать генерацию session/delete secrets, session fingerprint, thread-local author HMAC и Argon2id verifier с версией параметров; проверить криптографические test vectors и отрицательные случаи.
+- [x] 3.2 Реализовать trusted-proxy parser, canonical IP, prefix derivation, HMAC lookup и AES-256-GCM envelope с `key_id`; проверить spoofed forwarded headers, IPv4/IPv6 vectors, tamper detection и key rotation read path.
+- [x] 3.3 Реализовать token-bucket limits по IP lookup, prefix, session и operation с injectable clock; проверить burst, refill, независимость read/write и `retry_after`.
+- [x] 3.4 Реализовать подписанный expiring PoW challenge и ограниченный solver library для клиента; проверить purpose binding, expiry, difficulty bounds и запрет повторного использования.
+- [x] 3.5 Реализовать ban evaluation по IP, prefix, lookup, board, operation и expiry; проверить приоритет совпадений и автоматическое прекращение действия после expiry.
+- [x] 3.6 Реализовать reports use case с допустимыми причинами, дедупликацией и лимитами; проверить, что повторный источник не увеличивает приоритет жалобы.
+- [x] 3.7 Реализовать admin identities/roles, Argon2id bearer verifier, expiry/revocation и constant-time verification; проверить unauthorized, expired, revoked и role-denied cases.
+- [x] 3.8 Реализовать moderation use cases hide/restore, close thread, create/revoke ban и reveal IP с обязательной причиной; проверить доменные эффекты и запрет reveal для недостаточной роли.
+- [x] 3.9 Реализовать append-only audit repository для успешных и неуспешных admin actions; проверить невозможность update/delete через public repository и отсутствие secrets/raw IP в audit payload.
+- [x] 3.10 Реализовать retention job для encrypted IP, idempotency и использованных challenge с legal-hold/active-ban исключениями; проверить default 90-day boundary с fake clock.
+- [x] 3.11 Добавить `internal/admin` command handlers для bootstrap/revoke/list-reports/hide/restore/close/ban/reveal без прямого изменения БД; проверить CLI handler tests через mock admin client.
 
 ## 4. Media pipeline — `bord-media`
 
