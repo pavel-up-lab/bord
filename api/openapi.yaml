@@ -1,0 +1,227 @@
+openapi: 3.0.3
+info:
+  title: Bord API
+  version: 1.0.0
+  description: Frozen MVP contract. Unknown fields on write requests are rejected.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: public
+  - name: admin
+  - name: operations
+paths:
+  /healthz:
+    get:
+      operationId: health
+      tags: [operations]
+      responses:
+        '200': {description: Process is alive, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+  /readyz:
+    get:
+      operationId: readiness
+      tags: [operations]
+      responses:
+        '200': {description: Service is ready, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/boards:
+    get:
+      operationId: listBoards
+      tags: [public]
+      responses:
+        '200': {description: Boards, content: {application/json: {schema: {type: object, required: [boards], properties: {boards: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Board'}}}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/boards/{slug}/threads:
+    parameters:
+      - {$ref: '#/components/parameters/BoardSlug'}
+    get:
+      operationId: listThreads
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/PageLimit'}]
+      responses:
+        '200': {description: Thread catalog, content: {application/json: {schema: {$ref: '#/components/schemas/ThreadPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createThread
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateThread'}}}}
+      responses:
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/CreateResult'}}}}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/threads/{thread_id}:
+    get:
+      operationId: getThread
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/ThreadID'}]
+      responses:
+        '200': {description: Thread, content: {application/json: {schema: {$ref: '#/components/schemas/Thread'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/threads/{thread_id}/posts:
+    parameters: [{$ref: '#/components/parameters/ThreadID'}]
+    get:
+      operationId: listPosts
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/PageLimit'}]
+      responses:
+        '200': {description: Posts, content: {application/json: {schema: {$ref: '#/components/schemas/PostPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createPost
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreatePost'}}}}
+      responses:
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/CreateResult'}}}}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/posts/{post_id}:
+    delete:
+      operationId: deletePost
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/PostID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeletePost'}}}}
+      responses:
+        '204': {description: Deleted}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/posts/{post_id}/reports:
+    post:
+      operationId: reportPost
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/PostID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateReport'}}}}
+      responses:
+        '202': {description: Accepted}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/attachments:
+    post:
+      operationId: uploadAttachment
+      tags: [public]
+      requestBody: {required: true, content: {image/jpeg: {schema: {type: string, format: binary}}, image/png: {schema: {type: string, format: binary}}}}
+      responses:
+        '201': {description: Uploaded, content: {application/json: {schema: {$ref: '#/components/schemas/Attachment'}}}}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/attachments/{attachment_id}:
+    get:
+      operationId: getAttachment
+      tags: [public]
+      parameters: [{$ref: '#/components/parameters/AttachmentID'}]
+      responses:
+        '200': {description: Normalized image, headers: {X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}, Content-Disposition: {schema: {type: string}}}, content: {image/jpeg: {schema: {type: string, format: binary}}, image/png: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/events:
+    get:
+      operationId: streamEvents
+      tags: [public]
+      parameters:
+        - {name: board, in: query, schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}}
+        - {name: thread, in: query, schema: {$ref: '#/components/schemas/ThreadID'}}
+        - {name: Last-Event-ID, in: header, schema: {type: string, maxLength: 64}}
+      responses:
+        '200': {description: SSE stream including heartbeats and stream.reset, content: {text/event-stream: {schema: {type: string}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/pow/challenges:
+    post:
+      operationId: createChallenge
+      tags: [public]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ChallengeRequest'}}}}
+      responses:
+        '200': {description: Challenge, content: {application/json: {schema: {$ref: '#/components/schemas/Challenge'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/reports:
+    get:
+      operationId: adminListReports
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/PageLimit'}]
+      responses:
+        '200': {description: Reports, content: {application/json: {schema: {type: object, required: [reports], properties: {reports: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Report'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/posts/{post_id}/visibility:
+    put:
+      operationId: adminSetPostVisibility
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/PostID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SetVisibility'}}}}
+      responses: {'204': {description: Updated}, default: {$ref: '#/components/responses/Error'}}
+  /admin/v1/threads/{thread_id}/close:
+    post:
+      operationId: adminCloseThread
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/ThreadID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses: {'204': {description: Closed}, default: {$ref: '#/components/responses/Error'}}
+  /admin/v1/bans:
+    post:
+      operationId: adminCreateBan
+      tags: [admin]
+      security: [{adminBearer: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateBan'}}}}
+      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Ban'}}}}, default: {$ref: '#/components/responses/Error'}}
+  /admin/v1/bans/{ban_id}:
+    delete:
+      operationId: adminRevokeBan
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{name: ban_id, in: path, required: true, schema: {$ref: '#/components/schemas/ResourceID'}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses: {'204': {description: Revoked}, default: {$ref: '#/components/responses/Error'}}
+  /admin/v1/posts/{post_id}/ip:
+    post:
+      operationId: adminRevealPostIP
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/PostID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses: {'200': {description: Revealed only to authorized administrator, content: {application/json: {schema: {type: object, additionalProperties: false, required: [ip], properties: {ip: {type: string, format: ip}}}}}}, default: {$ref: '#/components/responses/Error'}}
+components:
+  securitySchemes:
+    adminBearer: {type: http, scheme: bearer}
+  parameters:
+    BoardSlug: {name: slug, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}}
+    ThreadID: {name: thread_id, in: path, required: true, schema: {$ref: '#/components/schemas/ThreadID'}}
+    PostID: {name: post_id, in: path, required: true, schema: {$ref: '#/components/schemas/PostID'}}
+    AttachmentID: {name: attachment_id, in: path, required: true, schema: {$ref: '#/components/schemas/AttachmentID'}}
+    Cursor: {name: cursor, in: query, schema: {$ref: '#/components/schemas/Cursor'}}
+    PageLimit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9._~-]+$'}}
+  responses:
+    Error: {description: Structured error, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    RateLimited: {description: Rate limited, headers: {Retry-After: {schema: {type: integer, minimum: 1}}}, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    PayloadTooLarge: {description: Body limit exceeded, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    ServiceUnavailable: {description: Not ready, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  schemas:
+    ResourceID: {type: string, minLength: 8, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}
+    ThreadID: {$ref: '#/components/schemas/ResourceID'}
+    PostID: {$ref: '#/components/schemas/ResourceID'}
+    AttachmentID: {$ref: '#/components/schemas/ResourceID'}
+    Cursor: {type: string, minLength: 16, maxLength: 1024, description: Opaque signed cursor bound to collection and expiry}
+    Timestamp: {type: string, format: date-time}
+    Health: {type: object, additionalProperties: false, required: [status], properties: {status: {type: string, enum: [ok]}}}
+    Board: {type: object, additionalProperties: false, required: [id, slug, title], properties: {id: {$ref: '#/components/schemas/ResourceID'}, slug: {type: string, maxLength: 32}, title: {type: string, maxLength: 100}}}
+    Thread: {type: object, additionalProperties: false, required: [id, board_id, created_at, updated_at, closed], properties: {id: {$ref: '#/components/schemas/ThreadID'}, board_id: {$ref: '#/components/schemas/ResourceID'}, created_at: {$ref: '#/components/schemas/Timestamp'}, updated_at: {$ref: '#/components/schemas/Timestamp'}, closed: {type: boolean}, initial_post: {$ref: '#/components/schemas/Post'}}}
+    ThreadPage: {type: object, additionalProperties: false, required: [threads], properties: {threads: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Thread'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
+    Post: {type: object, additionalProperties: false, required: [id, thread_id, author_id, state, created_at], properties: {id: {$ref: '#/components/schemas/PostID'}, thread_id: {$ref: '#/components/schemas/ThreadID'}, author_id: {type: string, minLength: 8, maxLength: 32}, state: {type: string, enum: [visible, deleted, hidden]}, body: {type: string, maxLength: 10000}, reply_to_id: {$ref: '#/components/schemas/PostID'}, attachment: {$ref: '#/components/schemas/Attachment'}, created_at: {$ref: '#/components/schemas/Timestamp'}, deleted_at: {$ref: '#/components/schemas/Timestamp'}}}
+    PostPage: {type: object, additionalProperties: false, required: [posts], properties: {posts: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Post'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
+    Attachment: {type: object, additionalProperties: false, required: [id, media_type, size, width, height, sha256], properties: {id: {$ref: '#/components/schemas/AttachmentID'}, media_type: {type: string, enum: [image/jpeg, image/png]}, filename: {type: string, maxLength: 255}, size: {type: integer, format: int64, maximum: 10485760}, width: {type: integer, maximum: 10000}, height: {type: integer, maximum: 10000}, sha256: {type: string, pattern: '^[a-f0-9]{64}$'}}}
+    CreateContent: {type: object, additionalProperties: false, properties: {body: {type: string, maxLength: 10000}, attachment_id: {$ref: '#/components/schemas/AttachmentID'}, session_proof: {type: string, minLength: 32, maxLength: 512}, delete_verifier: {type: string, minLength: 32, maxLength: 512}, pow_solution: {type: string, maxLength: 512}}}
+    CreateThread: {allOf: [{$ref: '#/components/schemas/CreateContent'}]}
+    CreatePost: {type: object, additionalProperties: false, properties: {body: {type: string, maxLength: 10000}, attachment_id: {$ref: '#/components/schemas/AttachmentID'}, session_proof: {type: string, minLength: 32, maxLength: 512}, delete_verifier: {type: string, minLength: 32, maxLength: 512}, pow_solution: {type: string, maxLength: 512}, reply_to_id: {$ref: '#/components/schemas/PostID'}}}
+    CreateResult: {type: object, additionalProperties: false, required: [thread_id, post_id], properties: {thread_id: {$ref: '#/components/schemas/ThreadID'}, post_id: {$ref: '#/components/schemas/PostID'}}}
+    DeletePost: {type: object, additionalProperties: false, required: [delete_token], properties: {delete_token: {type: string, minLength: 32, maxLength: 512}}}
+    CreateReport: {type: object, additionalProperties: false, required: [reason], properties: {reason: {type: string, enum: [spam, illegal, harassment, personal_data, other]}, detail: {type: string, maxLength: 500}}}
+    ChallengeRequest: {type: object, additionalProperties: false, required: [purpose], properties: {purpose: {type: string, enum: [create_thread, create_post, report]}}}
+    Challenge: {type: object, additionalProperties: false, required: [token, difficulty, expires_at], properties: {token: {type: string, maxLength: 2048}, difficulty: {type: integer, minimum: 1, maximum: 30}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
+    Report: {type: object, additionalProperties: false, required: [id, post_id, reason, created_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, post_id: {$ref: '#/components/schemas/PostID'}, reason: {type: string}, created_at: {$ref: '#/components/schemas/Timestamp'}}}
+    Reason: {type: object, additionalProperties: false, required: [reason], properties: {reason: {type: string, minLength: 3, maxLength: 500}}}
+    SetVisibility: {type: object, additionalProperties: false, required: [visible, reason], properties: {visible: {type: boolean}, reason: {type: string, minLength: 3, maxLength: 500}}}
+    CreateBan: {type: object, additionalProperties: false, required: [subject_type, subject, operations, expires_at, reason], properties: {subject_type: {type: string, enum: [ip, prefix, lookup]}, subject: {type: string, maxLength: 256}, board: {type: string, maxLength: 32}, operations: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string}}, expires_at: {$ref: '#/components/schemas/Timestamp'}, reason: {type: string, minLength: 3, maxLength: 500}}}
+    Ban: {type: object, additionalProperties: false, required: [id, expires_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
+    ErrorCode: {type: string, enum: [validation_failed, board_not_found, thread_not_found, post_not_found, attachment_not_found, thread_closed, unauthorized, forbidden, rate_limited, challenge_required, invalid_challenge, idempotency_conflict, payload_too_large, conflict, service_unavailable, internal_error]}
+    Error: {type: object, additionalProperties: false, required: [code, message, request_id], properties: {code: {$ref: '#/components/schemas/ErrorCode'}, message: {type: string, maxLength: 500}, request_id: {type: string, minLength: 8, maxLength: 128}, fields: {type: object, additionalProperties: {type: string}}, retry_after: {type: integer, minimum: 1}}}

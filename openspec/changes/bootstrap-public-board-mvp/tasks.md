@@ -19,16 +19,16 @@
 
 ## 1. Foundation gate — `bord-foundation`
 
-- [ ] 1.1 Инициализировать Go module, зафиксировать поддерживаемую версию Go, добавить `.gitignore`, `LICENSE`, базовый `README.md` и пустые entrypoints `cmd/bord`/`cmd/bord-server`; проверить `go build ./...`.
-- [ ] 1.2 Добавить Makefile или Taskfile с командами `fmt`, `lint`, `test`, `test-race`, `generate`, `contract` и `build`; проверить запуск локальных команд на чистом checkout.
-- [ ] 1.3 Подключить минимальные зависимости и package skeleton из `design.md`, документировать правило направленности импортов; проверить architecture test, запрещающий импорт adapters из domain/app.
-- [ ] 1.4 Описать OpenAPI 3 контракт `/api/v1`, `/admin/v1`, health/readiness, все DTO, error codes, pagination, idempotency и лимиты; проверить schema lint и генерацию тестового клиента.
-- [ ] 1.5 Добавить общие typed IDs, domain error taxonomy и API error mapping contracts без бизнес-реализации; проверить table-driven tests для стабильных кодов ошибок.
-- [ ] 1.6 Реализовать общие порты `Clock`, `Random`, транзакции, repositories, blob store и event publisher с compile-time mocks/fakes; проверить сборку всех будущих adapter packages против интерфейсов.
-- [ ] 1.7 Реализовать загрузку defaults → YAML → environment, secret-file references и валидацию обязательных секретов; проверить unit tests приоритетов и отказа при отсутствующем ключе IP encryption.
-- [ ] 1.8 Добавить безопасный `slog` setup, request/correlation ID типы и redaction helpers; проверить тестом, что raw IP, post body, bearer и delete token не попадают в сериализованный лог.
-- [ ] 1.9 Настроить `sqlc`, инструмент миграций и embed conventions на минимальной тестовой миграции; проверить создание временной SQLite, upgrade и отказ на неизвестной новой версии схемы.
-- [ ] 1.10 Настроить CI foundation gate для format, vet/lint, unit tests, OpenAPI lint и Linux/macOS/Windows compile; проверить успешный workflow на текущем skeleton.
+- [x] 1.1 Инициализировать Go module, зафиксировать поддерживаемую версию Go, добавить `.gitignore`, `LICENSE`, базовый `README.md` и пустые entrypoints `cmd/bord`/`cmd/bord-server`; проверить `go build ./...`.
+- [x] 1.2 Добавить Makefile или Taskfile с командами `fmt`, `lint`, `test`, `test-race`, `generate`, `contract` и `build`; проверить запуск локальных команд на чистом checkout.
+- [x] 1.3 Подключить минимальные зависимости и package skeleton из `design.md`, документировать правило направленности импортов; проверить architecture test, запрещающий импорт adapters из domain/app.
+- [x] 1.4 Описать OpenAPI 3 контракт `/api/v1`, `/admin/v1`, health/readiness, все DTO, error codes, pagination, idempotency и лимиты; проверить schema lint и генерацию тестового клиента.
+- [x] 1.5 Добавить общие typed IDs, domain error taxonomy и API error mapping contracts без бизнес-реализации; проверить table-driven tests для стабильных кодов ошибок.
+- [x] 1.6 Реализовать общие порты `Clock`, `Random`, транзакции, repositories, blob store и event publisher с compile-time mocks/fakes; проверить сборку всех будущих adapter packages против интерфейсов.
+- [x] 1.7 Реализовать загрузку defaults → YAML → environment, secret-file references и валидацию обязательных секретов; проверить unit tests приоритетов и отказа при отсутствующем ключе IP encryption.
+- [x] 1.8 Добавить безопасный `slog` setup, request/correlation ID типы и redaction helpers; проверить тестом, что raw IP, post body, bearer и delete token не попадают в сериализованный лог.
+- [x] 1.9 Настроить `sqlc`, инструмент миграций и embed conventions на минимальной тестовой миграции; проверить создание временной SQLite, upgrade и отказ на неизвестной новой версии схемы.
+- [x] 1.10 Настроить CI foundation gate для format, vet/lint, unit tests, OpenAPI lint и Linux/macOS/Windows compile; проверить успешный workflow на текущем skeleton.
 - [ ] 1.11 Провести review/freeze foundation contracts, исправить замечания и влить worktree в `main`; проверить, что все шесть parallel lane создаются от одного commit `main` и `git status` чист.
 
 ## 2. Storage and board domain — `bord-storage-domain`
