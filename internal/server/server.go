@@ -31,6 +31,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	ReadHeaderTimeout time.Duration
 	IdleTimeout       time.Duration
+	StreamClosers     []io.Closer
 	Closers           []io.Closer
 }
 
@@ -111,8 +112,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	var result error
 	s.stopOnce.Do(func() {
 		s.lifecycle.Stop()
-		// Closing the hub first terminates long-lived SSE handlers before HTTP drain.
-		for _, closer := range s.config.Closers {
+		// Stream closers terminate long-lived SSE handlers before HTTP drain.
+		for _, closer := range s.config.StreamClosers {
 			if err := closer.Close(); err != nil {
 				result = errors.Join(result, err)
 			}
@@ -124,6 +125,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 		if err := s.public.Shutdown(ctx); err != nil {
 			result = errors.Join(result, err)
+		}
+		// Storage and other handler dependencies remain available until active
+		// requests have drained.
+		for _, closer := range s.config.Closers {
+			if err := closer.Close(); err != nil {
+				result = errors.Join(result, err)
+			}
 		}
 	})
 	return result

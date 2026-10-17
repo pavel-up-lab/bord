@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"bord/internal/api"
 	"bord/internal/events"
@@ -80,6 +81,16 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_ = runtime.Close()
 		return err
 	}
+	if err := runtime.Ready(ctx); err != nil {
+		_ = runtime.Close()
+		return err
+	}
+	maintenance, err := runtime.Maintain(ctx)
+	if err != nil {
+		_ = runtime.Close()
+		return fmt.Errorf("startup maintenance: %w", err)
+	}
+	logger.Info("maintenance completed", "event", "maintenance.completed", "retention_ip", maintenance.Retention.IP, "retention_idempotency", maintenance.Retention.Idempotency, "retention_challenges", maintenance.Retention.Challenges, "media_removed", maintenance.Media.Removed, "media_bytes", maintenance.Media.Bytes)
 	cursors, err := api.NewCursorCodec(cfg.Secrets.IPLookupKey, nil)
 	if err != nil {
 		_ = runtime.Close()
@@ -87,15 +98,9 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	lifecycle := &server.Lifecycle{}
 	hub := events.NewHub(512, 32)
-	dispatcher := &events.Dispatcher{Outbox: runtime.Outbox, Hub: hub, Logger: logger}
-	go func() {
-		if err := dispatcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("outbox dispatcher stopped", "event", "outbox.stopped", "error", err)
-		}
-	}()
-	_, _ = runtime.Abuse.Retain(ctx)
 	trusted, err := trustedProxyNetworks(os.Getenv("BORD_TRUSTED_PROXIES"))
 	if err != nil {
+		_ = hub.Close()
 		_ = runtime.Close()
 		return err
 	}
@@ -121,13 +126,44 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		ManagementAddress: managementAddress,
 		PublicHandler:     public,
 		ManagementHandler: management,
-		Closers:           []io.Closer{hub, runtime},
+		StreamClosers:     []io.Closer{hub},
+		Closers:           []io.Closer{runtime},
 	}, lifecycle)
 	if err != nil {
+		_ = hub.Close()
+		_ = runtime.Close()
 		return err
 	}
+	backgroundCtx, cancelBackground := context.WithCancel(ctx)
+	dispatcher := &events.Dispatcher{Outbox: runtime.Outbox, Hub: hub, Logger: logger}
+	go func() {
+		if err := dispatcher.Run(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("outbox dispatcher stopped", "event", "outbox.stopped", "error", err)
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-backgroundCtx.Done():
+				return
+			case <-ticker.C:
+				maintenance, err := runtime.Maintain(backgroundCtx)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("maintenance failed", "event", "maintenance.failed", "error", err)
+				} else if err == nil {
+					logger.Info("maintenance completed", "event", "maintenance.completed", "retention_ip", maintenance.Retention.IP, "retention_idempotency", maintenance.Retention.Idempotency, "retention_challenges", maintenance.Retention.Challenges, "media_removed", maintenance.Media.Removed, "media_bytes", maintenance.Media.Bytes)
+				}
+			}
+		}
+	}()
 	logger.Info("server starting", "event", "server.start", "public_address", cfg.HTTP.Address, "management_address", managementAddress)
-	return service.Run(ctx)
+	runErr := service.Run(ctx)
+	cancelBackground()
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return errors.Join(runErr, service.Shutdown(cleanupCtx))
 }
 
 func trustedProxyNetworks(value string) ([]*net.IPNet, error) {

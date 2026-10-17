@@ -53,6 +53,21 @@ func (r *Repository) queries(ctx context.Context) *dbgen.Queries {
 	return dbgen.New(r.db)
 }
 
+// ExecContext and QueryRowContext let sibling SQLite adapters participate in
+// the transaction carried by ctx instead of accidentally acquiring a second
+// database connection. Open deliberately uses one connection, so bypassing
+// this boundary from inside WithinTransaction would deadlock.
+func (r *Repository) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return qtx(ctx, r.db).ExecContext(ctx, query, args...)
+}
+
+func (r *Repository) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	if tx, ok := ctx.Value(txContextKey{}).(*sql.Tx); ok {
+		return tx.QueryRowContext(ctx, query, args...)
+	}
+	return r.db.QueryRowContext(ctx, query, args...)
+}
+
 func (r *Repository) NextID(ctx context.Context, kind string) (string, error) {
 	id, err := r.queries(ctx).NextID(ctx, kind)
 	return formatID(id), err

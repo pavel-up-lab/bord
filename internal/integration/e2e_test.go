@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"bord/internal/api"
+	"bord/internal/domain"
 	"bord/internal/events"
 	"bord/internal/media"
 	"bord/internal/security"
@@ -83,6 +84,15 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	}
 	var uploaded api.Attachment
 	decode(t, response, &uploaded)
+	prepared, err := (Media{Runtime: runtime, Processor: media.Processor{Limits: media.DefaultLimits()}}).Upload(ctx, "image/png", bytes.NewReader(imageBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteCtx, cancelPreparedDelete := context.WithTimeout(ctx, time.Second)
+	defer cancelPreparedDelete()
+	if err = runtime.Attachments.Delete(deleteCtx, domain.AttachmentID(prepared.ID)); err != nil {
+		t.Fatalf("transactional prepared attachment delete: %v", err)
+	}
 	deleteToken := strings.Repeat("d", 32)
 	verifier, err := security.HashSecret([]byte(deleteToken), security.Argon2Params{Version: 1, Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 8, KeyLength: 16}, bytes.NewReader([]byte("12345678")))
 	if err != nil {
@@ -117,6 +127,23 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	}
 	var replied api.CreateResult
 	decode(t, response, &replied)
+	// A moderation mutation must not commit if its mandatory audit append fails.
+	if _, err = runtime.DB.Exec(`CREATE TRIGGER reject_test_audit BEFORE INSERT ON moderation_actions WHEN NEW.action='post.visibility' BEGIN SELECT RAISE(ABORT, 'test audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err = runtime.Admin.Authenticate(ctx, credential, "atomic-audit-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err = runtime.Admin.SetPostVisibility(ctx, replied.PostID, false, "atomic audit check", "atomic-audit-test"); err == nil {
+		t.Fatal("moderation succeeded despite rejected audit append")
+	}
+	if _, err = runtime.DB.Exec(`DROP TRIGGER reject_test_audit`); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err = runtime.DB.QueryRow(`SELECT status FROM posts WHERE id=?`, replied.PostID).Scan(&state); err != nil || state != "visible" {
+		t.Fatalf("unaudited moderation was not rolled back: state=%q err=%v", state, err)
+	}
 	eventLines := make(chan string, 1)
 	go func() {
 		scanner := bufio.NewScanner(stream.Body)
@@ -190,6 +217,10 @@ func TestProductionRuntimeE2E(t *testing.T) {
 		t.Fatalf("restore=%d %s", response.StatusCode, read(response))
 	}
 	_ = response.Body.Close()
+	var moderationEvents int
+	if err = runtime.DB.QueryRow(`SELECT count(*) FROM event_outbox WHERE event_type IN ('post.deleted','post.updated') AND post_id=?`, replied.PostID).Scan(&moderationEvents); err != nil || moderationEvents != 2 {
+		t.Fatalf("moderation outbox events=%d err=%v", moderationEvents, err)
+	}
 	response = requestJSON(t, server, http.MethodPost, "/admin/v1/posts/"+created.PostID+"/ip", map[string]string{"reason": "abuse investigation"}, adminHeaders)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("reveal=%d %s", response.StatusCode, read(response))

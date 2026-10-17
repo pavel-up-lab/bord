@@ -16,6 +16,7 @@ import (
 	"bord/internal/api"
 	"bord/internal/app/attachment"
 	boardapp "bord/internal/app/board"
+	"bord/internal/app/moderation"
 	"bord/internal/domain"
 	"bord/internal/media"
 	"bord/internal/security"
@@ -60,7 +61,8 @@ func New(config Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	attachments := attachment.Service{Repository: &attachmentRepo{db: config.DB}, Blobs: media.AttachmentStore{Store: blobs}, Tx: repo, Clock: config.Clock, Random: rand.Reader}
+	attachmentRepository := &attachmentRepo{repo: repo}
+	attachments := attachment.Service{Repository: attachmentRepository, Blobs: media.AttachmentStore{Store: blobs}, Tx: repo, Clock: config.Clock, Random: rand.Reader}
 	verifier := tokenVerifier{}
 	board := boardapp.NewService(repo, repo, config.Clock, verifier)
 	keyring := security.IPKeyring{}
@@ -98,6 +100,30 @@ func New(config Config) (*Runtime, error) {
 func (r *Runtime) Close() error                    { return errors.Join(r.Media.Close(), r.DB.Close()) }
 func (r *Runtime) Ready(ctx context.Context) error { return storage.Ready(ctx, r.DB) }
 
+// Maintain applies privacy retention and reconciles old unreferenced blobs.
+// Callers run it before readiness and periodically for automatic cleanup.
+type MaintenanceResult struct {
+	Retention moderation.RetentionResult
+	Media     attachment.CleanupReport
+}
+
+func (r *Runtime) Maintain(ctx context.Context) (MaintenanceResult, error) {
+	var result MaintenanceResult
+	retention, err := r.Abuse.Retain(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.Retention = retention
+	reconciler := attachment.Reconciler{
+		Repository: r.Attachments.Repository,
+		Cleaner:    media.AttachmentStore{Store: r.Media},
+		Clock:      r.Abuse.clock,
+		Grace:      24 * time.Hour,
+	}
+	result.Media, err = reconciler.Run(ctx, false)
+	return result, err
+}
+
 func (r *Runtime) SeedBoard(ctx context.Context, slug, title string) error {
 	var count int
 	if err := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM boards WHERE slug = ?`, slug).Scan(&count); err != nil {
@@ -114,7 +140,7 @@ func (r *Runtime) SeedBoard(ctx context.Context, slug, title string) error {
 	if err != nil {
 		return err
 	}
-	return r.Repo.CreateBoard(ctx, b, time.Now().UTC())
+	return r.Repo.CreateBoard(ctx, b, r.Abuse.clock.Now().UTC())
 }
 
 type tokenVerifier struct{}
@@ -262,13 +288,13 @@ func (p Public) ReportPost(ctx context.Context, id string, request api.ReportReq
 		return domain.NewError(domain.CodeInternal, "", nil)
 	}
 	var exists int
-	if err := p.Runtime.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts WHERE id=?`, id).Scan(&exists); err != nil {
+	if err := p.Runtime.DB.QueryRowContext(ctx, `SELECT count(*) FROM posts WHERE id=? AND status='visible'`, id).Scan(&exists); err != nil {
 		return err
 	}
 	if exists == 0 {
 		return domain.NewError(domain.CodePostNotFound, "post_id", nil)
 	}
-	_, err := p.Runtime.DB.ExecContext(ctx, `INSERT OR IGNORE INTO reports(post_id,subject_id,reason,created_at) VALUES(?,?,?,?)`, id, sid, request.Reason, encodeTime(time.Now()))
+	_, err := p.Runtime.DB.ExecContext(ctx, `INSERT OR IGNORE INTO reports(post_id,subject_id,reason,created_at) VALUES(?,?,?,?)`, id, sid, request.Reason, encodeTime(p.Runtime.Abuse.clock.Now()))
 	return err
 }
 
@@ -348,10 +374,10 @@ func mapAttachmentError(err error) error {
 	return err
 }
 
-type attachmentRepo struct{ db *sql.DB }
+type attachmentRepo struct{ repo *storage.Repository }
 
 func (r *attachmentRepo) CreatePrepared(ctx context.Context, a attachment.Record) error {
-	_, e := r.db.ExecContext(ctx, `INSERT INTO attachments(id,state,media_type,size_bytes,sha256,width,height,safe_filename,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, a.ID, a.State, a.MediaType, a.Size, a.SHA256[:], a.Width, a.Height, a.Filename, encodeTime(a.CreatedAt))
+	_, e := r.repo.ExecContext(ctx, `INSERT INTO attachments(id,state,media_type,size_bytes,sha256,width,height,safe_filename,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, a.ID, a.State, a.MediaType, a.Size, a.SHA256[:], a.Width, a.Height, a.Filename, encodeTime(a.CreatedAt))
 	return e
 }
 func (r *attachmentRepo) ByID(ctx context.Context, id domain.AttachmentID) (attachment.Record, error) {
@@ -370,7 +396,7 @@ func (r *attachmentRepo) get(ctx context.Context, id domain.AttachmentID, public
 	var a attachment.Record
 	var hash []byte
 	var created, deleted string
-	e := r.db.QueryRowContext(ctx, q, id).Scan(&a.ID, &a.State, &a.MediaType, &a.Size, &hash, &a.Width, &a.Height, &a.Filename, &created, &deleted)
+	e := r.repo.QueryRowContext(ctx, q, id).Scan(&a.ID, &a.State, &a.MediaType, &a.Size, &hash, &a.Width, &a.Height, &a.Filename, &created, &deleted)
 	if errors.Is(e, sql.ErrNoRows) {
 		return a, attachment.ErrNotFound
 	}
@@ -386,21 +412,27 @@ func (r *attachmentRepo) get(ctx context.Context, id domain.AttachmentID, public
 	return a, nil
 }
 func (r *attachmentRepo) Attach(ctx context.Context, id domain.AttachmentID, post domain.PostID) (attachment.Record, error) {
-	_, e := r.db.ExecContext(ctx, `UPDATE attachments SET state='attached',attached_at=? WHERE id=? AND state='prepared'`, encodeTime(time.Now()), id)
+	result, e := r.repo.ExecContext(ctx, `UPDATE attachments SET state='attached',attached_at=? WHERE id=? AND state='prepared' AND EXISTS (SELECT 1 FROM posts WHERE id=? AND attachment_id=attachments.id)`, encodeTime(time.Now()), id, post)
 	if e != nil {
 		return attachment.Record{}, e
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return attachment.Record{}, attachment.ErrInvalidState
 	}
 	return r.ByID(ctx, id)
 }
 func (r *attachmentRepo) MarkDeleted(ctx context.Context, id domain.AttachmentID, at time.Time) (attachment.Record, error) {
-	_, e := r.db.ExecContext(ctx, `UPDATE attachments SET state='deleted',deleted_at=? WHERE id=?`, encodeTime(at), id)
+	result, e := r.repo.ExecContext(ctx, `UPDATE attachments SET state='deleted',deleted_at=? WHERE id=? AND state!='deleted'`, encodeTime(at), id)
 	if e != nil {
 		return attachment.Record{}, e
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return attachment.Record{}, attachment.ErrNotFound
 	}
 	return r.ByID(ctx, id)
 }
 func (r *attachmentRepo) ReferencedBlobKeys(ctx context.Context) (map[string]struct{}, error) {
-	rows, e := r.db.QueryContext(ctx, `SELECT sha256 FROM attachments WHERE state!='deleted'`)
+	rows, e := r.repo.DB().QueryContext(ctx, `SELECT sha256 FROM attachments WHERE state!='deleted'`)
 	if e != nil {
 		return nil, e
 	}

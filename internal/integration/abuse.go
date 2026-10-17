@@ -190,31 +190,40 @@ func (s *challengeUses) Use(id string, expires, now time.Time) bool {
 // Retain removes personal and replay-protection data at exact boundaries while
 // preserving legal holds and subjects covered by an active matching ban.
 func (a *Abuse) Retain(ctx context.Context) (moderation.RetentionResult, error) {
-	job, err := moderation.NewRetentionJob(retentionRepo{db: a.db}, a.clock, moderation.DefaultRetention)
+	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return moderation.RetentionResult{}, err
 	}
-	return job.Run(ctx)
+	defer tx.Rollback()
+	job, err := moderation.NewRetentionJob(retentionRepo{executor: tx}, a.clock, moderation.DefaultRetention)
+	if err != nil {
+		return moderation.RetentionResult{}, err
+	}
+	result, err := job.Run(ctx)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
 }
 
-type retentionRepo struct{ db *sql.DB }
+type retentionRepo struct{ executor auditExecutor }
 
 func (r retentionRepo) DeleteExpiredIP(ctx context.Context, cutoff, now time.Time) (int64, error) {
-	res, e := r.db.ExecContext(ctx, `DELETE FROM request_subjects WHERE created_at<=? AND legal_hold=0 AND NOT EXISTS (SELECT 1 FROM bans WHERE revoked_at IS NULL AND expires_at>? AND ((subject_kind='lookup' AND subject_value=request_subjects.ip_lookup) OR (subject_kind='prefix' AND subject_value=request_subjects.ip_prefix)))`, encodeTime(cutoff), encodeTime(now))
+	res, e := r.executor.ExecContext(ctx, `DELETE FROM request_subjects WHERE created_at<=? AND legal_hold=0 AND NOT EXISTS (SELECT 1 FROM bans WHERE revoked_at IS NULL AND expires_at>? AND ((subject_kind='lookup' AND subject_value=request_subjects.ip_lookup) OR (subject_kind='prefix' AND subject_value=request_subjects.ip_prefix)))`, encodeTime(cutoff), encodeTime(now))
 	if e != nil {
 		return 0, e
 	}
 	return res.RowsAffected()
 }
 func (r retentionRepo) DeleteExpiredIdempotency(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, e := r.db.ExecContext(ctx, `DELETE FROM idempotency_keys WHERE created_at<=?`, encodeTime(cutoff))
+	res, e := r.executor.ExecContext(ctx, `DELETE FROM idempotency_keys WHERE created_at<=?`, encodeTime(cutoff))
 	if e != nil {
 		return 0, e
 	}
 	return res.RowsAffected()
 }
 func (r retentionRepo) DeleteExpiredChallenges(ctx context.Context, now time.Time) (int64, error) {
-	res, e := r.db.ExecContext(ctx, `DELETE FROM used_challenges WHERE expires_at<=?`, encodeTime(now))
+	res, e := r.executor.ExecContext(ctx, `DELETE FROM used_challenges WHERE expires_at<=?`, encodeTime(now))
 	if e != nil {
 		return 0, e
 	}
