@@ -109,7 +109,7 @@
 - [x] 8.1 Влить lane в порядке storage-domain → security/media → http-realtime → tui-client → operations, разрешая конфликты через frozen contracts; проверить `go test ./...` и `make contract` после каждого merge.
 - [x] 8.2 Провести сквозной сценарий create board seed → create thread with image → reply → SSE update → owner delete → tombstone → moderation audit; проверить автоматизированный E2E test на реальном SQLite/filesystem.
 - [x] 8.3 Провести anti-abuse E2E для spoofed proxy, rate limits, PoW, bans, reports, IP reveal audit и 90-day retention; проверить ожидаемые HTTP/CLI результаты без утечки raw IP.
-- [ ] 8.4 Запустить race detector, выбранные fuzz targets и goroutine leak tests для HTTP/SSE/media/client; устранить найденные дефекты и приложить успешные команды к release checklist.
+- [x] 8.4 Запустить race detector, выбранные fuzz targets и goroutine leak tests для HTTP/SSE/media/client; устранить найденные дефекты и приложить успешные команды к release checklist.
 - [x] 8.5 Выполнить benchmark/load profile публичных read/write/SSE сценариев, зафиксировать MVP capacity и alerts для SQLite busy/latency; проверить достижение документированного минимального профиля либо записать blocking decision.
 - [x] 8.6 Выполнить Linux/macOS/Windows Terminal smoke matrix, включая narrow layout, external opener и graceful exit; зафиксировать поддержанные terminal capabilities и известные ограничения.
 - [x] 8.7 Выполнить staging deployment за Caddy, upgrade, backup, destructive staging incident и restore; проверить readiness, data/blob hashes и rollback совместимого бинарника.

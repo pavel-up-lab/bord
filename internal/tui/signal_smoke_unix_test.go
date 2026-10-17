@@ -4,10 +4,13 @@ package tui
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
 	"testing"
@@ -29,8 +32,10 @@ func (signalSmokeModel) View() string                          { return "bord si
 
 func TestTerminalSmokeSignalRestoresAlternateScreen(t *testing.T) {
 	if os.Getenv("BORD_SIGNAL_SMOKE_HELPER") == "1" {
-		program := tea.NewProgram(signalSmokeModel{}, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen())
-		if _, err := program.Run(); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+		defer stop()
+		program := tea.NewProgram(signalSmokeModel{}, tea.WithContext(ctx), tea.WithoutSignalHandler(), tea.WithInput(nil), tea.WithOutput(os.Stdout), tea.WithAltScreen())
+		if _, err := program.Run(); err != nil && !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
@@ -39,10 +44,6 @@ func TestTerminalSmokeSignalRestoresAlternateScreen(t *testing.T) {
 
 	command := exec.Command(os.Args[0], "-test.run=^TestTerminalSmokeSignalRestoresAlternateScreen$")
 	command.Env = append(os.Environ(), "BORD_SIGNAL_SMOKE_HELPER=1")
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -54,15 +55,26 @@ func TestTerminalSmokeSignalRestoresAlternateScreen(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer stdin.Close()
 
 	ready := make(chan error, 1)
+	stderrDone := make(chan string, 1)
 	go func() {
-		line, err := bufio.NewReader(stderr).ReadString('\n')
-		if err == nil && !strings.Contains(line, "BORD_SIGNAL_SMOKE_READY") {
-			err = fmt.Errorf("unexpected helper readiness: %q", line)
+		scanner := bufio.NewScanner(stderr)
+		var output strings.Builder
+		found := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			output.WriteString(line)
+			output.WriteByte('\n')
+			if !found && strings.Contains(line, "BORD_SIGNAL_SMOKE_READY") {
+				found = true
+				ready <- nil
+			}
 		}
-		ready <- err
+		if !found {
+			ready <- fmt.Errorf("helper exited before readiness: %v", scanner.Err())
+		}
+		stderrDone <- output.String()
 	}()
 	select {
 	case err := <-ready:
@@ -81,8 +93,10 @@ func TestTerminalSmokeSignalRestoresAlternateScreen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := command.Wait(); err != nil {
-		t.Fatalf("helper did not exit gracefully: %v; output=%q", err, output)
+	waitErr := command.Wait()
+	helperStderr := <-stderrDone
+	if waitErr != nil {
+		t.Fatalf("helper did not exit gracefully: %v; output=%q; stderr=%q", waitErr, output, helperStderr)
 	}
 	if rendered := string(output); !strings.Contains(rendered, "\x1b[?1049h") || !strings.Contains(rendered, "\x1b[?1049l") {
 		t.Fatalf("alternate screen was not entered and restored: %q", rendered)

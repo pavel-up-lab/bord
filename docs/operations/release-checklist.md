@@ -1,6 +1,7 @@
 # MVP release checklist
 
-Дата локальной проверки: 2026-10-17. Целевой commit: `6b935f997a35`.
+Дата локальной проверки: 2026-10-17. Целевой commit release/staging:
+`6b935f997a35`; baseline quality gate 8.4: `a00cb00`.
 
 ## Выполненные локальные gates
 
@@ -19,11 +20,33 @@
 - [x] Beta defaults: loopback upstream, 16 MiB edge body limit, raw-IP retention
   90 дней, inline-графика клиента не включается без подтвержденной capability.
 
+## Quality gate 8.4
+
+- [x] `./scripts/quality-gate.sh` (`FUZZTIME=5s`, `REPEAT=5`) прошел на
+  `go1.27.2 linux/amd64`: внутри выполнены `go test ./...`,
+  `go test -race ./...`, повторные race-тесты HTTP strict decoding,
+  SSE parser/reconnect/reset, hub, media normalization/resource bounds,
+  client cancellation и server shutdown, затем `make contract` и
+  `go vet ./...`.
+- [x] Явные leak assertions `TestHTTPClientCancellationReleasesHandlers` и
+  `TestSubscribeCancellationReleasesHandlers` по 20 циклов подтверждают ноль
+  оставшихся HTTP/SSE handlers после cancel; весь выбранный набор дополнительно
+  прошел под race detector пять раз.
+- [x] Ограниченный fuzz: `FuzzParseSSEFragmentationIDsAndMultiline` — 382011
+  executions за 6.0 s; `FuzzNormalize` — 408875 executions за 6.0 s. Оба
+  запуска завершились `PASS`; лимиты цели: SSE event 1 MiB, media input 5 MiB,
+  6000×6000 и 16 MP.
+- [x] Gate выявил и закрыл два дефекта hardening: client success decoder теперь
+  отклоняет unknown JSON fields, а signal smoke синхронизирует обработку
+  `SIGTERM` до проверки восстановления alternate screen и стабильно проходит
+  под `-race` (`-count=20`).
+
 ## Внешние и продуктовые blockers
 
 - [ ] Admin bootstrap/revoke, ручной retention и re-encryption key rotation не
   подключены к production `bord-server`; task 7.5 остается открытой.
-- [ ] OpenSpec tasks 8.4–8.6 и 8.8 принадлежат другим проверкам и еще открыты.
+- [ ] OpenSpec task 8.8 принадлежит другой проверке и еще открыта; 8.4–8.6
+  закрыты локальными quality/load/terminal gates.
 - [ ] Hosted GitHub Actions, GitHub Release assets, публичный DNS/ACME и нативное
   исполнение macOS/Windows нельзя честно подтвердить в локальном Linux staging.
 - [ ] Поэтому task 7.7 остается открытой до проверки загруженных CI artifacts,
