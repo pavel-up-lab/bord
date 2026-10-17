@@ -96,13 +96,13 @@
 ## 7. Operations and release — `bord-operations`
 
 - [ ] 7.1 Подготовить production-ready Caddyfile с TLS, request limits, trusted proxy boundary и отключением buffering/подходящими timeout для SSE; проверить `caddy validate` и staging SSE smoke.
-- [ ] 7.2 Подготовить hardened systemd unit, environment/secret-file examples, data directory permissions и graceful stop timeout; проверить `systemd-analyze verify` и документированный fresh install.
-- [ ] 7.3 Реализовать server subcommands migrate/status и защиту от запуска на более новой схеме; проверить upgrade fixture и incompatible-schema exit code.
-- [ ] 7.4 Реализовать согласованный backup manifest для SQLite+blobs и offline restore verification с SHA-256; проверить end-to-end backup/restore на fixture data.
+- [x] 7.2 Подготовить hardened systemd unit, environment/secret-file examples, data directory permissions и graceful stop timeout; проверить `systemd-analyze verify` и документированный fresh install.
+- [x] 7.3 Реализовать server subcommands migrate/status и защиту от запуска на более новой схеме; проверить upgrade fixture и incompatible-schema exit code.
+- [x] 7.4 Реализовать согласованный backup manifest для SQLite+blobs и offline restore verification с SHA-256; проверить end-to-end backup/restore на fixture data.
 - [ ] 7.5 Документировать установку, конфигурацию, key rotation, retention, создание администратора, блокировки, recovery и обязательство privacy policy; проверить все команды документации в чистом staging environment.
 - [ ] 7.6 Настроить release workflow для checksummed архивов `bord` на Linux/macOS/Windows и `bord-server` на целевом Linux; проверить reproducible version metadata и установку каждого artifact.
 - [ ] 7.7 Добавить dependency/vulnerability/license scanning и SBOM для release; проверить CI artifacts и отсутствие неразрешенной лицензии или известной critical vulnerability.
-- [ ] 7.8 Добавить operational metrics/log events для latency, SQLite busy, SSE reconnect/reset, media rejects, rate limits и retention без high-cardinality/raw IP labels; проверить telemetry schema tests.
+- [x] 7.8 Добавить operational metrics/log events для latency, SQLite busy, SSE reconnect/reset, media rejects, rate limits и retention без high-cardinality/raw IP labels; проверить telemetry schema tests.
 
 ## 8. Integration and hardening — `bord-integration-hardening`
 

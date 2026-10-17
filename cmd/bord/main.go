@@ -16,7 +16,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "dev"
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -26,6 +30,11 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 1 && args[0] == "version" {
+		fmt.Fprintf(stdout, "bord %s commit=%s built=%s\n", version, commit, buildDate)
+		return nil
+	}
+
 	flags := flag.NewFlagSet("bord", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	server := flags.String("server", "", "адрес сервера")
@@ -37,7 +46,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if *showVersion {
-		fmt.Fprintln(stdout, version)
+		if commit == "unknown" && buildDate == "unknown" {
+			fmt.Fprintln(stdout, version)
+		} else {
+			fmt.Fprintf(stdout, "bord %s commit=%s built=%s\n", version, commit, buildDate)
+		}
 		return nil
 	}
 

@@ -1,0 +1,42 @@
+name: security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-security-license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Known vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck ./...
+      - name: License policy
+        run: |
+          go install github.com/google/go-licenses@v1.6.0
+          test "$(go list -m -f '{{.Version}}' modernc.org/mathutil)" = v1.7.1
+          go-licenses check ./... --disallowed_types=forbidden,restricted --ignore modernc.org/mathutil
+          go-licenses report ./... --ignore modernc.org/mathutil > dependency-licenses.csv
+          cat .github/license-policy/manual-review.csv >> dependency-licenses.csv
+      - name: Generate source SBOM
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
+          cyclonedx-gomod mod -json -output source-bom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-evidence
+          path: |
+            dependency-licenses.csv
+            source-bom.json
+          if-no-files-found: error

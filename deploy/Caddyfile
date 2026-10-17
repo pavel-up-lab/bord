@@ -1,0 +1,48 @@
+{
+	servers {
+		# Only these upstreams may supply a client address. Keep this list narrow.
+		trusted_proxies static {$BORD_UPSTREAM_PROXY_CIDRS:127.0.0.1/32}
+		trusted_proxies_strict
+		client_ip_headers X-Forwarded-For X-Real-IP
+	}
+}
+
+{$BORD_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	@writes {
+		method POST PUT PATCH DELETE
+	}
+	request_body @writes {
+		max_size {$BORD_MAX_REQUEST_BODY:16MB}
+	}
+
+	# Caddy must flush every SSE event and must not impose a response timeout.
+	@events path /api/v1/events
+	reverse_proxy @events {$BORD_UPSTREAM:127.0.0.1:8080} {
+		flush_interval -1
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 15s
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	reverse_proxy {$BORD_UPSTREAM:127.0.0.1:8080} {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+			read_timeout 30s
+			write_timeout 30s
+		}
+	}
+}
