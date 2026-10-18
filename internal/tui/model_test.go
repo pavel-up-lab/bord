@@ -337,17 +337,17 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 			},
 		},
 		{
-			name: "post row selection",
+			name: "post row selection and repeated click reply",
 			model: func() Model {
 				m := newModel(80, 24)
 				m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
 				m.posts = []generated.Post{{Id: "post_1"}, {Id: "post_2"}, {Id: "post_3"}}
 				return m
 			}(),
-			msgs: []tea.MouseMsg{click(60, 6)},
+			msgs: []tea.MouseMsg{click(60, 6), click(60, 6)},
 			check: func(t *testing.T, m Model, _ []tea.Cmd) {
-				if m.contentIndex != 1 || m.screen != ThreadScreen {
-					t.Fatalf("index=%d screen=%v", m.contentIndex, m.screen)
+				if m.contentIndex != 1 || m.screen != ComposerScreen || m.draft.Thread != "thread_1" || m.draft.ReplyTo == nil || *m.draft.ReplyTo != "post_2" {
+					t.Fatalf("index=%d screen=%v draft=%+v", m.contentIndex, m.screen, m.draft)
 				}
 			},
 		},
@@ -449,6 +449,34 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 	m = updated.(Model)
 	if m.screen != CatalogScreen {
 		t.Fatalf("composer Cancel zone screen=%v", m.screen)
+	}
+}
+
+func TestComposerActionsDistinguishThreadAndPostReplies(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.loading = false
+	m.boards = []generated.Board{{Slug: "general"}}
+	m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1"}, {Id: "post_2"}}
+	m.contentIndex = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyF7})
+	threadReply := updated.(Model)
+	if threadReply.screen != ComposerScreen || threadReply.draft.Thread != "thread_1" || threadReply.draft.ReplyTo != nil || !strings.Contains(threadReply.composerTarget(), "thread_1") {
+		t.Fatalf("thread reply target=%+v", threadReply.draft)
+	}
+
+	m.draft = Draft{}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF8})
+	postReply := updated.(Model)
+	if postReply.screen != ComposerScreen || postReply.draft.Thread != "thread_1" || postReply.draft.ReplyTo == nil || *postReply.draft.ReplyTo != "post_2" || !strings.Contains(postReply.composerTarget(), ">>post_2") {
+		t.Fatalf("post reply target=%+v", postReply.draft)
+	}
+
+	m.screen, m.activeThread, m.draft = ThreadScreen, "thread_1", Draft{}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if got := updated.(Model); got.screen != ThreadScreen || got.draft.Thread != "" {
+		t.Fatalf("n unexpectedly created a thread from thread view: screen=%v draft=%+v", got.screen, got.draft)
 	}
 }
 
@@ -778,8 +806,20 @@ func TestComposerPostsThreadAndReplyThroughProductionRuntime(t *testing.T) {
 	if err != nil || len(page.Posts) != 2 {
 		t.Fatalf("reply not visible after refresh: posts=%#v err=%v", page.Posts, err)
 	}
+	m.loading = false
+	m.screen, m.activeThread = ThreadScreen, created.result.ThreadId
+	m.beginReplyComposer(created.result.PostId)
+	m.editor.SetValue("addressed reply from composer")
+	addressed := m.sendDraft()().(sentMsg)
+	if addressed.err != nil || addressed.result.PostId == "" {
+		t.Fatalf("addressed reply create=%#v", addressed)
+	}
+	page, err = posting.Posts(ctx, created.result.ThreadId, nil, 100)
+	if err != nil || len(page.Posts) != 3 || page.Posts[2].ReplyToId == nil || *page.Posts[2].ReplyToId != created.result.PostId {
+		t.Fatalf("addressed reply target missing: posts=%#v err=%v", page.Posts, err)
+	}
 	loaded, err := store.Load()
-	if err != nil || loaded.DeleteSecrets[created.result.PostId] == "" || loaded.DeleteSecrets[replied.result.PostId] == "" || len(loaded.PendingDeleteSecrets) != 0 {
+	if err != nil || loaded.DeleteSecrets[created.result.PostId] == "" || loaded.DeleteSecrets[replied.result.PostId] == "" || loaded.DeleteSecrets[addressed.result.PostId] == "" || len(loaded.PendingDeleteSecrets) != 0 {
 		t.Fatalf("resource credentials not atomically mapped: err=%v state=%#v", err, loaded)
 	}
 	if loaded.DeleteSecrets[created.result.PostId] == loaded.DeleteSecrets[replied.result.PostId] {

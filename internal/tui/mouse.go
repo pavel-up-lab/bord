@@ -94,6 +94,9 @@ func (m Model) commandKeys() []tea.KeyMsg {
 	if m.screen == HelpScreen {
 		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyF2}, {Type: tea.KeyF10}}
 	}
+	if m.screen == ThreadScreen {
+		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
+	}
 	return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF2}, {Type: tea.KeyF4}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF10}}
 }
 
@@ -161,6 +164,9 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 	m.focus, m.contentIndex = FocusContent, index
 	if wasSelected && m.screen == CatalogScreen {
 		return m.openSelection()
+	}
+	if wasSelected && m.screen == ThreadScreen {
+		m.beginReplyComposer(m.posts[index].Id)
 	}
 	return m, nil
 }

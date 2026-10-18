@@ -51,13 +51,13 @@ type Service interface {
 }
 
 type KeyMap struct {
-	Up, Down, Switch, Open, Back, Refresh, Search, NewThread, Reply, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
+	Up, Down, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
 }
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up: "up,k", Down: "down,j", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
-		NewThread: "n,f7", Reply: "p", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
+		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
 		Theme: "t,f2",
 	}
 }
@@ -376,14 +376,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadThreads(false)
 	case matches(key, m.keys.Open):
 		return m.openSelection()
-	case matches(key, m.keys.NewThread):
-		if len(m.boards) > 0 {
-			m.beginComposer("")
-		}
-	case matches(key, m.keys.Reply):
-		if m.activeThread != "" {
-			m.beginComposer(m.activeThread)
-		}
+	case matches(key, m.keys.NewThread) && len(m.boards) > 0 && m.screen == CatalogScreen:
+		m.beginComposer("")
+	case matches(key, m.keys.Reply) && m.activeThread != "":
+		m.beginComposer(m.activeThread)
+	case matches(key, m.keys.ReplyPost) && m.activeThread != "" && len(m.posts) > 0:
+		postID := m.posts[clamp(m.contentIndex, 0, len(m.posts)-1)].Id
+		m.beginReplyComposer(postID)
 	case matches(key, m.keys.Attachment):
 		if m.screen == ThreadScreen {
 			m.previous, m.screen = m.screen, AttachmentScreen
@@ -395,13 +394,21 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) beginComposer(thread string) {
+	m.beginComposerTarget(thread, nil)
+}
+
+func (m *Model) beginReplyComposer(postID string) {
+	m.beginComposerTarget(m.activeThread, &postID)
+}
+
+func (m *Model) beginComposerTarget(thread string, replyTo *string) {
 	board := ""
 	if len(m.boards) > 0 {
 		board = m.boards[m.boardIndex].Slug
 	}
-	if m.draft.Board != board || m.draft.Thread != thread {
+	if m.draft.Board != board || m.draft.Thread != thread || optionalValue(m.draft.ReplyTo) != optionalValue(replyTo) {
 		m.editor.Reset()
-		m.draft = Draft{Board: board, Thread: thread}
+		m.draft = Draft{Board: board, Thread: thread, ReplyTo: replyTo}
 		m.submitted = nil
 	}
 	m.previous, m.screen = m.screen, ComposerScreen
@@ -611,6 +618,9 @@ func (m Model) View() string {
 func (m Model) isNarrow() bool { return m.width > 0 && m.width < 72 }
 
 func (m Model) contentTitle() string {
+	if m.screen == ComposerScreen {
+		return m.composerTitle()
+	}
 	if m.screen == ThreadScreen {
 		return "Тред " + SanitizeTerminalText(m.activeThread)
 	}
@@ -663,7 +673,7 @@ func (m Model) topBarLeft() string {
 
 func (m Model) workspace(t theme, width, height int) []string {
 	if m.screen == ComposerScreen {
-		return m.singlePanel(t, width, height, "Редактор", "ТЕКСТ ПУБЛИКАЦИИ", m.composerLines(), true)
+		return m.singlePanel(t, width, height, m.composerTitle(), "ТЕКСТ ПУБЛИКАЦИИ", m.composerLines(), true)
 	}
 	if m.screen == HelpScreen {
 		return m.singlePanel(t, width, height, "Справка", "КЛАВИША  ДЕЙСТВИЕ", m.helpLines(), true)
@@ -828,7 +838,8 @@ func (m Model) composerLines() []displayRow {
 	if m.draft.AttachmentID != "" {
 		attachment = SanitizeTerminalText(m.draft.AttachmentID)
 	}
-	lines := strings.Split(m.editor.View(), "\n")
+	lines := []string{m.composerTarget(), ""}
+	lines = append(lines, strings.Split(m.editor.View(), "\n")...)
 	action := "Ctrl+S ОТПРАВИТЬ • Ctrl+O вложение • Esc оставить черновик"
 	if m.loading {
 		action = "ОТПРАВКА… дождитесь результата • Esc отменить запрос"
@@ -842,8 +853,9 @@ func (m Model) composerLines() []displayRow {
 func (m Model) helpLines() []displayRow {
 	return []displayRow{{lines: []string{
 		"↑/k ↓/j   навигация и дозагрузка", "Tab        сменить панель", "Enter      открыть", "Esc        назад / закрыть",
-		"n / p      новый тред / ответ", "r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t          следующая тема",
-		"?          эта справка", "q Ctrl+C   выход", "Мышь       выбор; повторный щелчок открыть", "Колесо     прокрутка панели под указателем",
+		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост",
+		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t          следующая тема", "?          эта справка", "q Ctrl+C   выход",
+		"Мышь       повторный клик по треду открывает его", "Мышь       повторный клик по посту отвечает на него", "Колесо     прокрутка панели под указателем",
 	}}}
 }
 
@@ -878,7 +890,37 @@ func (m Model) commandLabels() []string {
 	if m.screen == HelpScreen {
 		return []string{"Esc Back", "F2 Theme", "F10 Quit"}
 	}
-	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New", "F10 Quit"}
+	if m.screen == ThreadScreen {
+		return []string{"F1 Help", "F5 Refresh", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
+	}
+	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New Thread", "F10 Quit"}
+}
+
+func (m Model) composerTitle() string {
+	if m.draft.Thread == "" {
+		return "Новый тред"
+	}
+	if m.draft.ReplyTo != nil {
+		return "Ответ на пост >>" + SanitizeTerminalText(*m.draft.ReplyTo)
+	}
+	return "Ответ в тред " + SanitizeTerminalText(m.draft.Thread)
+}
+
+func (m Model) composerTarget() string {
+	if m.draft.Thread == "" {
+		return "Цель: новый тред в /" + SanitizeTerminalText(m.draft.Board) + "/"
+	}
+	if m.draft.ReplyTo != nil {
+		return "Цель: пост >>" + SanitizeTerminalText(*m.draft.ReplyTo) + " в треде " + SanitizeTerminalText(m.draft.Thread)
+	}
+	return "Цель: тред " + SanitizeTerminalText(m.draft.Thread)
+}
+
+func optionalValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (m Model) location() string {
