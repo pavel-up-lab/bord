@@ -1100,7 +1100,7 @@ func (m Model) statusLine(t theme, width int) string {
 func (m Model) commandBar(t theme, width int) string {
 	commands := m.commandLabels()
 	plain := strings.Join(commands, " ")
-	if textWidth(plain)+len(commands)-1 > width {
+	if m.compactCommandBar(width) {
 		return paint(t.barBackground, t.barForeground, plain, width)
 	}
 	var b strings.Builder
@@ -1115,6 +1115,11 @@ func (m Model) commandBar(t theme, width int) string {
 		}
 	}
 	return b.String() + paint(t.background, t.foreground, "", max(0, width-lipgloss.Width(b.String())))
+}
+
+func (m Model) compactCommandBar(width int) bool {
+	commands := m.commandLabels()
+	return textWidth(strings.Join(commands, " "))+len(commands)-1 > width
 }
 
 func (m Model) commandLabels() []string {

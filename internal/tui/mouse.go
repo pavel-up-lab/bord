@@ -1,6 +1,10 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 const mouseWheelStep = 3
 
@@ -73,9 +77,10 @@ func (m Model) canGoBack() bool {
 func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 	labels := m.commandLabels()
 	keys := m.commandKeys()
+	compact := m.compactCommandBar(m.width)
 	offset := 0
 	for i, label := range labels {
-		width := commandLabelWidth(label)
+		width := commandLabelWidth(label, compact)
 		if x >= offset && x < minInt(m.width, offset+width) {
 			return m.updateKey(keys[i])
 		}
@@ -87,9 +92,16 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// commandLabelWidth mirrors commandBar: " key " + " action ". Compared with
-// the source label ("key action"), rendering adds three cells.
-func commandLabelWidth(label string) int { return textWidth(label) + 3 }
+// commandLabelWidth mirrors commandBar exactly. The styled form renders the
+// key without padding and " action " with one trailing cell; the compact form
+// renders the source label as-is.
+func commandLabelWidth(label string, compact bool) int {
+	width := textWidth(label)
+	if !compact && strings.Contains(label, " ") {
+		width++
+	}
+	return width
+}
 
 func (m Model) commandKeys() []tea.KeyMsg {
 	if m.screen == ComposerScreen {

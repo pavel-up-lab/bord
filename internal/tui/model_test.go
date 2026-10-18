@@ -490,13 +490,13 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 		t.Fatal("composer Send zone did not use send action")
 	}
 	m.loading = false
-	updated, _ = m.Update(click(commandLabelWidth("Ctrl+S Send")+1, m.height-1))
+	updated, _ = m.Update(click(commandLabelWidth("Ctrl+S Send", false)+1, m.height-1))
 	m = updated.(Model)
 	if !m.attachmentPicking {
 		t.Fatal("composer Attach zone did not open picker")
 	}
 	m.attachmentPicking = false
-	updated, _ = m.Update(click(commandLabelWidth("Ctrl+S Send")+1+commandLabelWidth("Ctrl+O Attach")+1, m.height-1))
+	updated, _ = m.Update(click(commandLabelWidth("Ctrl+S Send", false)+1+commandLabelWidth("Ctrl+O Attach", false)+1, m.height-1))
 	m = updated.(Model)
 	if m.screen != CatalogScreen {
 		t.Fatalf("composer Cancel zone screen=%v", m.screen)
@@ -540,12 +540,29 @@ func TestMouseReplyPostUsesRenderedCommandGeometry(t *testing.T) {
 	labels := m.commandLabels()
 	x := 0
 	for _, label := range labels[:3] {
-		x += commandLabelWidth(label) + 1
+		x += commandLabelWidth(label, false) + 1
 	}
-	updated, cmd := m.Update(tea.MouseMsg{X: x + 1, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	got := updated.(Model)
-	if cmd != nil || got.screen != ComposerScreen || got.draft.ReplyTo == nil || *got.draft.ReplyTo != "post_2" {
-		t.Fatalf("Reply Post click mapped incorrectly: x=%d screen=%v reply=%v cmd=%v", x+1, got.screen, got.draft.ReplyTo, cmd)
+	for clickX := x; clickX < x+commandLabelWidth(labels[3], false); clickX++ {
+		updated, cmd := m.Update(tea.MouseMsg{X: clickX, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		got := updated.(Model)
+		if cmd != nil || got.screen != ComposerScreen || got.draft.ReplyTo == nil || *got.draft.ReplyTo != "post_2" {
+			t.Fatalf("Reply Post click mapped incorrectly: x=%d screen=%v reply=%v cmd=%v", clickX, got.screen, got.draft.ReplyTo, cmd)
+		}
+	}
+}
+
+func TestCompactCommandGeometryMatchesRenderedLabels(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 30, 24, false
+	m.screen = ComposerScreen
+	if !m.compactCommandBar(m.width) {
+		t.Fatal("expected compact command bar")
+	}
+	labels := m.commandLabels()
+	attachStart := commandLabelWidth(labels[0], true) + 1
+	updated, _ := m.Update(tea.MouseMsg{X: attachStart, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := updated.(Model); !got.attachmentPicking {
+		t.Fatalf("compact Attach click mapped incorrectly at x=%d", attachStart)
 	}
 }
 
