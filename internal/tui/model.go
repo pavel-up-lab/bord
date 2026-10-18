@@ -172,6 +172,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	case boardsMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -268,7 +270,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
-	if matches(key, m.keys.Theme) && m.screen != ComposerScreen {
+	if matches(key, m.keys.Theme) && (m.screen != ComposerScreen || key == "f2") {
 		m.theme = nextTheme(m.theme)
 		return m, nil
 	}
@@ -293,6 +295,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch {
+		case key == "f1":
+			m.previous, m.screen = m.screen, HelpScreen
+			return m, nil
 		case matches(key, m.keys.Cancel):
 			m.cancelRequest()
 			m.screen = m.previous
@@ -630,13 +635,21 @@ func (m Model) statusText() string {
 }
 
 func (m Model) topBar(t theme, width int) string {
-	left := " BORD  Файл  Вид  Тема  Справка"
+	left := m.topBarLeft()
 	right := " " + m.contentTitle() + " "
 	space := width - textWidth(left) - textWidth(right)
 	if space < 1 {
 		return paint(t.barBackground, t.barForeground, left, width)
 	}
 	return paint(t.barBackground, t.barForeground, left+strings.Repeat(" ", space)+right, width)
+}
+
+func (m Model) topBarLeft() string {
+	left := " BORD  "
+	if m.canGoBack() {
+		left += "[← Назад] "
+	}
+	return left + "[Тема] [Справка]"
 }
 
 func (m Model) workspace(t theme, width, height int) []string {
@@ -652,10 +665,7 @@ func (m Model) workspace(t theme, width, height int) []string {
 		}
 		return m.singlePanel(t, width, height, m.contentTitle(), m.contentHint(), m.contentRows(), true)
 	}
-	leftWidth := max(24, width/3)
-	if leftWidth > width-28 {
-		leftWidth = width / 2
-	}
+	leftWidth := m.leftPanelWidth()
 	rightWidth := width - leftWidth
 	left := m.singlePanel(t, leftWidth, height, "Доски", "РАЗДЕЛ / НАЗВАНИЕ", m.boardRows(), m.focus == FocusBoards)
 	right := m.singlePanel(t, rightWidth, height, m.contentTitle(), m.contentHint(), m.contentRows(), m.focus == FocusContent)
@@ -810,7 +820,7 @@ func (m Model) composerLines() []displayRow {
 		attachment = SanitizeTerminalText(m.draft.AttachmentID)
 	}
 	lines := strings.Split(m.editor.View(), "\n")
-	lines = append(lines, "", "Ctrl+S отправить • Ctrl+O вложение • Esc отменить", "Вложение: "+attachment)
+	lines = append(lines, "", "Нажмите элементы командной строки ниже", "Вложение: "+attachment)
 	return []displayRow{{lines: lines, trustedANSI: true}}
 }
 
@@ -818,7 +828,7 @@ func (m Model) helpLines() []displayRow {
 	return []displayRow{{lines: []string{
 		"↑/k ↓/j   навигация и дозагрузка", "Tab        сменить панель", "Enter      открыть", "Esc        назад / закрыть",
 		"n / p      новый тред / ответ", "r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t          следующая тема",
-		"?          эта справка", "q Ctrl+C   выход",
+		"?          эта справка", "q Ctrl+C   выход", "Мышь       выбор; повторный щелчок открыть", "Колесо     прокрутка панели под указателем",
 	}}}
 }
 
@@ -827,7 +837,7 @@ func (m Model) statusLine(t theme, width int) string {
 }
 
 func (m Model) commandBar(t theme, width int) string {
-	commands := []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New", "F10 Quit"}
+	commands := m.commandLabels()
 	plain := strings.Join(commands, " ")
 	if textWidth(plain)+len(commands)-1 > width {
 		return paint(t.barBackground, t.barForeground, plain, width)
@@ -844,6 +854,16 @@ func (m Model) commandBar(t theme, width int) string {
 		}
 	}
 	return b.String() + paint(t.background, t.foreground, "", max(0, width-lipgloss.Width(b.String())))
+}
+
+func (m Model) commandLabels() []string {
+	if m.screen == ComposerScreen {
+		return []string{"Ctrl+S Send", "Ctrl+O Attach", "Esc Cancel"}
+	}
+	if m.screen == HelpScreen {
+		return []string{"Esc Back", "F2 Theme", "F10 Quit"}
+	}
+	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New", "F10 Quit"}
 }
 
 func (m Model) location() string {
