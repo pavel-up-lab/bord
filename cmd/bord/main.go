@@ -40,6 +40,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	server := flags.String("server", "", "адрес сервера")
 	statePath := flags.String("config", "", "путь к локальному состоянию")
 	inline := flags.String("inline", "", "inline-графика: auto, kitty или off")
+	themeFlag := flags.String("theme", "", "тема: classic, amber, green или mono")
 	timeout := flags.Duration("timeout", 15*time.Second, "таймаут HTTP")
 	showVersion := flags.Bool("version", false, "показать версию")
 	if err := flags.Parse(args); err != nil {
@@ -84,19 +85,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("недопустимый --inline")
 		}
 	}
+	if *themeFlag != "" {
+		name, parseErr := tui.ParseTheme(*themeFlag)
+		if parseErr != nil {
+			return fmt.Errorf("недопустимый --theme: %w", parseErr)
+		}
+		state.Theme = string(name)
+	}
 	if state.Version == 0 {
 		fresh, err := client.NewState(state.Server)
 		if err != nil {
 			return err
 		}
 		fresh.InlineMode = state.InlineMode
+		fresh.Theme = state.Theme
 		state = fresh
+	}
+	if state.Theme == "" {
+		state.Theme = string(tui.ThemeClassic)
+	}
+	themeName, err := tui.ParseTheme(state.Theme)
+	if err != nil {
+		themeName = tui.ThemeClassic
 	}
 	api, err := client.New(state.Server, &http.Client{}, *timeout)
 	if err != nil {
 		return err
 	}
-	model := tui.NewModel(ctx, api).WithLastBoard(state.LastBoard)
+	model := tui.NewModel(ctx, api).WithLastBoard(state.LastBoard).WithTheme(themeName)
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithOutput(stdout))
 	final, err := program.Run()
 	if err != nil {
@@ -106,6 +122,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if board := m.LastBoard(); board != "" {
 			state.LastBoard = board
 		}
+		state.Theme = string(m.Theme())
 	}
 	if err := store.Save(state); err != nil {
 		return err

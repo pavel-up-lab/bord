@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Screen uint8
@@ -50,13 +51,14 @@ type Service interface {
 }
 
 type KeyMap struct {
-	Up, Down, Switch, Open, Back, Refresh, Search, NewThread, Reply, Attachment, PickAttachment, Help, Quit, Send, Cancel string
+	Up, Down, Switch, Open, Back, Refresh, Search, NewThread, Reply, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
 }
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		Up: "up,k", Down: "down,j", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r", Search: "/",
-		NewThread: "n", Reply: "p", Attachment: "o", PickAttachment: "ctrl+o", Help: "?", Quit: "q,ctrl+c", Send: "ctrl+s", Cancel: "esc",
+		Up: "up,k", Down: "down,j", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
+		NewThread: "n,f7", Reply: "p", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
+		Theme: "t,f2",
 	}
 }
 
@@ -88,6 +90,7 @@ type Model struct {
 	submitted                                            *submission
 	catalogBoard                                         string
 	preferredBoard                                       string
+	theme                                                ThemeName
 }
 
 type Draft struct {
@@ -141,7 +144,15 @@ func NewModel(ctx context.Context, api Service) Model {
 	editor.CharLimit = 10000
 	editor.SetWidth(60)
 	editor.SetHeight(8)
-	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true}
+	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic}
+}
+
+// WithTheme selects a validated presentation theme.
+func (m Model) WithTheme(name ThemeName) Model {
+	if _, err := ParseTheme(string(name)); err == nil {
+		m.theme = name
+	}
+	return m
 }
 
 // WithLastBoard selects the persisted board when it is present in the first response.
@@ -155,8 +166,9 @@ func (m Model) Init() tea.Cmd { return m.loadBoards() }
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.editor.SetWidth(max(20, msg.Width-6))
+		m.width, m.height = max(1, msg.Width), max(1, msg.Height)
+		m.editor.SetWidth(max(1, msg.Width-6))
+		m.editor.SetHeight(max(1, msg.Height-10))
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -246,7 +258,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if matches(key, m.keys.Quit) && (m.screen != ComposerScreen || key == "ctrl+c") {
+	if matches(key, m.keys.Quit) && (m.screen != ComposerScreen || key == "ctrl+c" || key == "f10") {
 		m.cancel()
 		if m.streamCancel != nil {
 			m.streamCancel()
@@ -255,6 +267,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.requestCancel()
 		}
 		return m, tea.Quit
+	}
+	if matches(key, m.keys.Theme) && m.screen != ComposerScreen {
+		m.theme = nextTheme(m.theme)
+		return m, nil
 	}
 	if m.screen == ComposerScreen {
 		if m.attachmentPicking {
@@ -564,39 +580,28 @@ func (m *Model) watchEvents() tea.Cmd {
 }
 
 func (m Model) View() string {
-	if m.screen == ComposerScreen {
-		return m.composerView()
+	w, h := max(1, m.width), max(1, m.height)
+	colors := palette(m.theme)
+	lines := make([]string, 0, h)
+	lines = append(lines, m.topBar(colors, w))
+	workspaceHeight := max(0, h-3)
+	if workspaceHeight > 0 {
+		lines = append(lines, m.workspace(colors, w, workspaceHeight)...)
 	}
-	if m.screen == HelpScreen {
-		return m.helpView()
+	if len(lines) < h-1 {
+		lines = append(lines, m.statusLine(colors, w))
 	}
-	left := m.boardsView()
-	right := m.contentView()
-	if m.isNarrow() {
-		if m.focus == FocusBoards {
-			return frame("Доски", left, true, m.width) + m.status()
-		}
-		return frame(m.contentTitle(), right, true, m.width) + m.status()
+	if len(lines) < h {
+		lines = append(lines, m.commandBar(colors, w))
 	}
-	lw := max(22, m.width/3)
-	rw := max(30, m.width-lw)
-	return lipgloss.JoinHorizontal(lipgloss.Top, frame("Доски", left, m.focus == FocusBoards, lw), frame(m.contentTitle(), right, m.focus == FocusContent, rw)) + m.status()
+	for len(lines) < h {
+		lines = append(lines, paint(colors.background, colors.foreground, "", w))
+	}
+	return strings.Join(lines[:h], "\n")
 }
 
 func (m Model) isNarrow() bool { return m.width > 0 && m.width < 72 }
-func (m Model) boardsView() string {
-	var b strings.Builder
-	end := minInt(len(m.boards), m.boardScroll+m.visibleRows())
-	for i := m.boardScroll; i < end; i++ {
-		board := m.boards[i]
-		marker := "  "
-		if i == m.boardIndex {
-			marker = "> "
-		}
-		fmt.Fprintf(&b, "%s/%s/ %s\n", marker, SanitizeTerminalText(board.Slug), SanitizeTerminalText(board.Title))
-	}
-	return b.String()
-}
+
 func (m Model) contentTitle() string {
 	if m.screen == ThreadScreen {
 		return "Тред " + SanitizeTerminalText(m.activeThread)
@@ -606,11 +611,155 @@ func (m Model) contentTitle() string {
 	}
 	return "Каталог"
 }
-func (m Model) contentView() string {
-	if m.screen == AttachmentScreen {
-		return "Enter: открыть системным приложением\nEsc: назад"
+
+func (m Model) statusText() string {
+	if m.searching {
+		return " Поиск: " + SanitizeTerminalText(m.searchQuery) + "_  Enter применить • Esc отменить"
 	}
-	var b strings.Builder
+	if m.loading {
+		return " Загрузка…"
+	}
+	if m.err != nil {
+		var apiErr *client.APIError
+		if errorsAs(m.err, &apiErr) {
+			return " Ошибка: " + SanitizeTerminalText(string(apiErr.Code))
+		}
+		return " Ошибка сети"
+	}
+	return fmt.Sprintf(" %s • %s • тема:%s • Tab панели • ? справка", m.location(), m.selectionCount(), m.theme)
+}
+
+func (m Model) topBar(t theme, width int) string {
+	left := " BORD  Файл  Вид  Тема  Справка"
+	right := " " + m.contentTitle() + " "
+	space := width - textWidth(left) - textWidth(right)
+	if space < 1 {
+		return paint(t.barBackground, t.barForeground, left, width)
+	}
+	return paint(t.barBackground, t.barForeground, left+strings.Repeat(" ", space)+right, width)
+}
+
+func (m Model) workspace(t theme, width, height int) []string {
+	if m.screen == ComposerScreen {
+		return m.singlePanel(t, width, height, "Редактор", "ТЕКСТ ПУБЛИКАЦИИ", m.composerLines(), true)
+	}
+	if m.screen == HelpScreen {
+		return m.singlePanel(t, width, height, "Справка", "КЛАВИША  ДЕЙСТВИЕ", m.helpLines(), true)
+	}
+	if m.isNarrow() {
+		if m.focus == FocusBoards {
+			return m.singlePanel(t, width, height, "Доски", "РАЗДЕЛ / НАЗВАНИЕ", m.boardRows(), true)
+		}
+		return m.singlePanel(t, width, height, m.contentTitle(), m.contentHint(), m.contentRows(), true)
+	}
+	leftWidth := max(24, width/3)
+	if leftWidth > width-28 {
+		leftWidth = width / 2
+	}
+	rightWidth := width - leftWidth
+	left := m.singlePanel(t, leftWidth, height, "Доски", "РАЗДЕЛ / НАЗВАНИЕ", m.boardRows(), m.focus == FocusBoards)
+	right := m.singlePanel(t, rightWidth, height, m.contentTitle(), m.contentHint(), m.contentRows(), m.focus == FocusContent)
+	joined := make([]string, height)
+	for i := range joined {
+		joined[i] = left[i] + right[i]
+	}
+	return joined
+}
+
+type displayRow struct {
+	lines       []string
+	active      bool
+	trustedANSI bool
+}
+
+func (m Model) singlePanel(t theme, width, height int, title, hint string, rows []displayRow, active bool) []string {
+	if height <= 0 {
+		return nil
+	}
+	border := t.muted
+	if active {
+		border = t.accent
+	}
+	if width < 2 || height < 2 {
+		lines := make([]string, height)
+		for i := range lines {
+			value := ""
+			if i == 0 {
+				value = title
+			}
+			lines[i] = paint(t.background, t.foreground, value, width)
+		}
+		return lines
+	}
+	inner := width - 2
+	topText := "═ " + SanitizeTerminalText(title) + " "
+	top := paint(t.background, border, "╔"+fit(topText, inner, '═')+"╗", width)
+	bottom := paint(t.background, border, "╚"+strings.Repeat("═", inner)+"╝", width)
+	lines := []string{top}
+	if height > 2 {
+		lines = append(lines, paint(t.background, border, "║", 1)+paint(t.barBackground, t.barForeground, " "+hint, inner)+paint(t.background, border, "║", 1))
+	}
+	available := height - len(lines) - 1
+	for _, row := range rows {
+		for _, text := range row.lines {
+			if available <= 0 {
+				break
+			}
+			bg, fg := t.background, t.foreground
+			if row.active {
+				if active {
+					bg, fg = t.selectionBackground, t.selection
+				} else {
+					bg, fg = t.background, t.accent
+				}
+			}
+			rowPaint := paint
+			if row.trustedANSI {
+				rowPaint = paintANSI
+			}
+			lines = append(lines, paint(t.background, border, "║", 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.background, border, "║", 1))
+			available--
+		}
+		if available <= 0 {
+			break
+		}
+	}
+	for available > 0 {
+		lines = append(lines, paint(t.background, border, "║", 1)+paint(t.background, t.foreground, "", inner)+paint(t.background, border, "║", 1))
+		available--
+	}
+	return append(lines, bottom)
+}
+
+func (m Model) boardRows() []displayRow {
+	end := minInt(len(m.boards), m.boardScroll+m.visibleRows())
+	rows := make([]displayRow, 0, end-m.boardScroll)
+	for i := m.boardScroll; i < end; i++ {
+		board := m.boards[i]
+		marker := "  "
+		if i == m.boardIndex {
+			marker = "> "
+		}
+		rows = append(rows, displayRow{lines: []string{fmt.Sprintf("%s/%s/  %s", marker, SanitizeTerminalText(board.Slug), SanitizeTerminalText(board.Title))}, active: i == m.boardIndex})
+	}
+	return rows
+}
+
+func (m Model) contentHint() string {
+	if m.screen == ThreadScreen {
+		return "POST / AUTHOR / TIME"
+	}
+	if m.screen == AttachmentScreen {
+		return "ВЛОЖЕНИЕ"
+	}
+	return "THREAD / UPDATED / PREVIEW"
+}
+
+func (m Model) contentRows() []displayRow {
+	if m.screen == AttachmentScreen {
+		return []displayRow{{lines: []string{"Enter  открыть системным приложением", "Esc    вернуться к треду"}}}
+	}
+	rows := make([]displayRow, 0, m.visibleRows())
 	if m.screen == ThreadScreen {
 		end := minInt(len(m.posts), m.contentScroll+m.visibleRows())
 		for i := m.contentScroll; i < end; i++ {
@@ -619,72 +768,135 @@ func (m Model) contentView() string {
 			if i == m.contentIndex {
 				marker = "> "
 			}
-			fmt.Fprintf(&b, "%s%s\n", marker, formatPost(p))
-		}
-	} else {
-		end := minInt(len(m.threads), m.contentScroll+m.visibleRows())
-		for i := m.contentScroll; i < end; i++ {
-			t := m.threads[i]
-			marker := "  "
-			if i == m.contentIndex {
-				marker = "> "
+			meta := fmt.Sprintf("%s>>%s  %-12s  %s", marker, SanitizeTerminalText(p.Id), SanitizeTerminalText(p.AuthorId), p.CreatedAt.Format("2006-01-02 15:04"))
+			if p.ReplyToId != nil {
+				meta += "  → >>" + SanitizeTerminalText(*p.ReplyToId)
 			}
-			fmt.Fprintf(&b, "%s%s  %s\n", marker, SanitizeTerminalText(t.Id), t.UpdatedAt.Format("2006-01-02 15:04"))
+			body := "[" + SanitizeTerminalText(string(p.State)) + "]"
+			if p.State == generated.Visible && p.Body != nil {
+				body = preview(*p.Body)
+			}
+			rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
 		}
+		return rows
 	}
-	return b.String()
+	end := minInt(len(m.threads), m.contentScroll+m.visibleRows())
+	for i := m.contentScroll; i < end; i++ {
+		t := m.threads[i]
+		marker := "  "
+		if i == m.contentIndex {
+			marker = "> "
+		}
+		state := " "
+		if t.Closed {
+			state = "×"
+		}
+		meta := fmt.Sprintf("%s%s %-18s  %s", marker, state, SanitizeTerminalText(t.Id), t.UpdatedAt.Format("2006-01-02 15:04"))
+		body := "(нет текста)"
+		if t.InitialPost != nil && t.InitialPost.Body != nil {
+			body = preview(*t.InitialPost.Body)
+		}
+		rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
+	}
+	return rows
 }
-func (m Model) composerView() string {
+
+func (m Model) composerLines() []displayRow {
 	if m.attachmentPicking {
-		return frame("Путь к изображению", m.attachmentPath+"_\n\nEnter загрузить • Esc отменить", true, max(30, m.width))
+		return []displayRow{{lines: []string{"Путь: " + SanitizeTerminalText(m.attachmentPath) + "_", "", "Enter загрузить • Esc отменить"}}}
 	}
 	attachment := "нет"
 	if m.draft.AttachmentID != "" {
 		attachment = SanitizeTerminalText(m.draft.AttachmentID)
 	}
-	return frame("Редактор", m.editor.View()+"\n\nCtrl+S отправить • Ctrl+O вложение • Esc отменить\n10000 символов • вложение: "+attachment, true, max(30, m.width)) + m.status()
-}
-func (m Model) helpView() string {
-	text := fmt.Sprintf("%s %s навигация\n%s сменить панель\n%s открыть\n%s новый тред • %s ответ\n%s обновить • %s поиск\n%s вложение • %s справка\n%s назад • %s выход", m.keys.Up, m.keys.Down, m.keys.Switch, m.keys.Open, m.keys.NewThread, m.keys.Reply, m.keys.Refresh, m.keys.Search, m.keys.Attachment, m.keys.Help, m.keys.Back, m.keys.Quit)
-	return frame("Справка", text, true, max(30, m.width))
-}
-func (m Model) status() string {
-	if m.searching {
-		return "\n Поиск: " + m.searchQuery + "_  Enter применить • Esc отменить"
-	}
-	if m.loading {
-		return "\n Загрузка…"
-	}
-	if m.err != nil {
-		var apiErr *client.APIError
-		if errorsAs(m.err, &apiErr) {
-			return "\n Ошибка: " + SanitizeTerminalText(string(apiErr.Code))
-		}
-		return "\n Ошибка сети"
-	}
-	return "\n Tab панели • ? справка • q выход"
+	lines := strings.Split(m.editor.View(), "\n")
+	lines = append(lines, "", "Ctrl+S отправить • Ctrl+O вложение • Esc отменить", "Вложение: "+attachment)
+	return []displayRow{{lines: lines, trustedANSI: true}}
 }
 
-func frame(title, content string, active bool, width int) string {
-	color := lipgloss.Color("240")
-	if active {
-		color = lipgloss.Color("39")
-	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(color).Width(max(1, width-3)).Height(12).Render(" " + title + " \n" + content)
+func (m Model) helpLines() []displayRow {
+	return []displayRow{{lines: []string{
+		"↑/k ↓/j   навигация и дозагрузка", "Tab        сменить панель", "Enter      открыть", "Esc        назад / закрыть",
+		"n / p      новый тред / ответ", "r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t          следующая тема",
+		"?          эта справка", "q Ctrl+C   выход",
+	}}}
 }
-func formatPost(p generated.Post) string {
-	if p.State != generated.Visible {
-		return fmt.Sprintf(">>%s [%s]", SanitizeTerminalText(p.Id), SanitizeTerminalText(string(p.State)))
+
+func (m Model) statusLine(t theme, width int) string {
+	return paint(t.background, t.foreground, m.statusText(), width)
+}
+
+func (m Model) commandBar(t theme, width int) string {
+	commands := []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New", "F10 Quit"}
+	plain := strings.Join(commands, " ")
+	if textWidth(plain)+len(commands)-1 > width {
+		return paint(t.barBackground, t.barForeground, plain, width)
 	}
-	prefix := fmt.Sprintf(">>%s (%s)", SanitizeTerminalText(p.Id), SanitizeTerminalText(p.AuthorId))
-	if p.ReplyToId != nil {
-		prefix += " → >>" + SanitizeTerminalText(*p.ReplyToId)
+	var b strings.Builder
+	for i, command := range commands {
+		parts := strings.SplitN(command, " ", 2)
+		b.WriteString(lipgloss.NewStyle().Background(t.accent).Foreground(t.selection).Render(parts[0]))
+		if len(parts) == 2 {
+			b.WriteString(lipgloss.NewStyle().Background(t.barBackground).Foreground(t.barForeground).Render(" " + parts[1] + " "))
+		}
+		if i < len(commands)-1 {
+			b.WriteString(lipgloss.NewStyle().Background(t.background).Render(" "))
+		}
 	}
-	body := ""
-	if p.Body != nil {
-		body = sanitizeMultilineTerminalText(*p.Body)
+	return b.String() + paint(t.background, t.foreground, "", max(0, width-lipgloss.Width(b.String())))
+}
+
+func (m Model) location() string {
+	if len(m.boards) == 0 {
+		return "BORD"
 	}
-	return prefix + "\n" + body
+	return "/" + SanitizeTerminalText(m.boards[m.boardIndex].Slug) + "/ " + m.contentTitle()
+}
+
+func (m Model) selectionCount() string {
+	if m.screen == ThreadScreen {
+		return fmt.Sprintf("%d posts", len(m.posts))
+	}
+	return fmt.Sprintf("%d threads", len(m.threads))
+}
+
+func preview(value string) string {
+	value = sanitizeMultilineTerminalText(value)
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return "(пусто)"
+	}
+	return value
+}
+
+func textWidth(value string) int { return lipgloss.Width(value) }
+
+func fit(value string, width int, fill rune) string {
+	return fitWidth(SanitizeTerminalText(value), width, fill)
+}
+
+func fitANSI(value string, width int, fill rune) string {
+	return fitWidth(value, width, fill)
+}
+
+func fitWidth(value string, width int, fill rune) string {
+	if width <= 0 {
+		return ""
+	}
+	value = ansi.Truncate(value, width, "…")
+	used := textWidth(value)
+	if used < width {
+		value += strings.Repeat(string(fill), width-used)
+	}
+	return value
+}
+
+func paint(background, foreground lipgloss.Color, value string, width int) string {
+	return lipgloss.NewStyle().Background(background).Foreground(foreground).Render(fit(value, width, ' '))
+}
+
+func paintANSI(background, foreground lipgloss.Color, value string, width int) string {
+	return lipgloss.NewStyle().Background(background).Foreground(foreground).Render(fitANSI(value, width, ' '))
 }
 func mergePosts(old, incoming []generated.Post, appendPage bool) []generated.Post {
 	if !appendPage {
@@ -843,7 +1055,7 @@ func minInt(a, b int) int {
 	}
 	return b
 }
-func (m Model) visibleRows() int { return max(1, m.height-7) }
+func (m Model) visibleRows() int { return max(1, (m.height-6)/2) }
 func ensureVisible(scroll, index, rows int) int {
 	if index < scroll {
 		return index
@@ -891,6 +1103,9 @@ func (m Model) LastBoard() string {
 	}
 	return m.boards[m.boardIndex].Slug
 }
+
+// Theme returns the current stable theme name for persistence.
+func (m Model) Theme() ThemeName { return m.theme }
 
 // errorsAs is kept tiny so View never risks exposing the wrapped error text.
 func errorsAs(err error, target any) bool { return errors.As(err, target) }
