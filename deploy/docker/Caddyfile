@@ -1,5 +1,12 @@
 {
 	auto_https off
+	servers {
+		# Preserve the address set by the only public reverse proxy. This edge has
+		# no published host port, so requests cannot bypass that trusted network.
+		trusted_proxies static {$BORD_UPSTREAM_PROXY_CIDRS:172.18.0.0/16}
+		trusted_proxies_strict
+		client_ip_headers X-Forwarded-For X-Real-IP
+	}
 }
 
 :8088 {
