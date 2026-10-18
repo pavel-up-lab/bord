@@ -77,6 +77,11 @@ func (m Model) canGoBack() bool {
 func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 	labels := m.commandLabels()
 	keys := m.commandKeys()
+	if len(labels) != len(keys) {
+		// A malformed command bar must never turn one visible action into a
+		// different (especially destructive) action.
+		return m, nil
+	}
 	compact := m.compactCommandBar(m.width)
 	offset := 0
 	for i, label := range labels {
@@ -117,7 +122,7 @@ func (m Model) commandKeys() []tea.KeyMsg {
 		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
 	}
 	if m.screen == PostScreen {
-		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
+		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyRunes, Runes: []rune{'o'}}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
 	}
 	return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF2}, {Type: tea.KeyF4}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF10}}
 }

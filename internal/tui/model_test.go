@@ -551,6 +551,41 @@ func TestMouseReplyPostUsesRenderedCommandGeometry(t *testing.T) {
 	}
 }
 
+func TestPostScreenF8HitBoxMatchesButtonAndNeverQuits(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 120, 24, false
+	m.screen, m.focus, m.activeThread = PostScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1"}, {Id: "post_2"}}
+	m.contentIndex = 1
+	labels := m.commandLabels()
+	keys := m.commandKeys()
+	if len(labels) != len(keys) {
+		t.Fatalf("command labels=%d keys=%d", len(labels), len(keys))
+	}
+	start := 0
+	for _, label := range labels[:3] {
+		start += commandLabelWidth(label, false) + 1
+	}
+	width := commandLabelWidth(labels[3], false)
+	for x := start; x < start+width; x++ {
+		updated, cmd := m.Update(tea.MouseMsg{X: x, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		got := updated.(Model)
+		if cmd != nil || got.screen != ComposerScreen || got.draft.ReplyTo == nil || *got.draft.ReplyTo != "post_2" {
+			t.Fatalf("F8 hit box x=%d [%d,%d) mapped to screen=%v reply=%v cmd=%v", x, start, start+width, got.screen, got.draft.ReplyTo, cmd)
+		}
+	}
+}
+
+func TestCommandLabelsAndKeysStayAligned(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	for _, screen := range []Screen{CatalogScreen, ThreadScreen, PostScreen, AttachmentScreen, ComposerScreen, HelpScreen} {
+		m.screen = screen
+		if labels, keys := m.commandLabels(), m.commandKeys(); len(labels) != len(keys) {
+			t.Fatalf("screen=%v labels=%d keys=%d", screen, len(labels), len(keys))
+		}
+	}
+}
+
 func TestCompactCommandGeometryMatchesRenderedLabels(t *testing.T) {
 	m := NewModel(context.Background(), &fakeService{})
 	m.width, m.height, m.loading = 30, 24, false
