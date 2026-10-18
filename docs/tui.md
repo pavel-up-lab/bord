@@ -1,0 +1,447 @@
+# Установка и запуск Bord TUI
+
+`bord` — полноэкранный терминальный клиент для анонимной борды Bord. Он работает
+на Linux, macOS и в современном Windows Terminal, поддерживает клавиатуру, мышь,
+цветовые темы, ответы на посты и JPEG/PNG-вложения.
+
+TUI не содержит backend: перед запуском нужен доступный `bord-server`, например
+локальный `http://127.0.0.1:8080` или публичный `https://board.example.org`.
+
+## Требования
+
+- терминал с UTF-8 и ANSI-цветами;
+- Linux, macOS или Windows Terminal;
+- шрифт с символами псевдографики;
+- сетевой доступ к HTTP(S)-адресу Bord backend;
+- Go 1.27 — только если клиент собирается из исходников.
+
+Старый Windows `cmd.exe` не поддерживается. PowerShell можно использовать как
+shell внутри Windows Terminal.
+
+## Вариант 1: установка готового бинарника
+
+Выберите файл под свою ОС и архитектуру:
+
+| Платформа | Типичное имя файла |
+|---|---|
+| Linux x86-64 | `bord-linux-amd64` |
+| Linux ARM64 | `bord-linux-arm64` |
+| macOS Intel | `bord-darwin-amd64` |
+| macOS Apple Silicon | `bord-darwin-arm64` |
+| Windows x86-64 | `bord-windows-amd64.exe` |
+
+Если рядом с release опубликованы checksums, проверьте SHA-256 до установки.
+
+### Linux
+
+```sh
+chmod +x ./bord-linux-amd64
+sudo install -m 0755 ./bord-linux-amd64 /usr/local/bin/bord
+bord --version
+```
+
+Для установки только текущему пользователю:
+
+```sh
+install -d "$HOME/.local/bin"
+install -m 0755 ./bord-linux-amd64 "$HOME/.local/bin/bord"
+export PATH="$HOME/.local/bin:$PATH"
+bord --version
+```
+
+Добавьте `$HOME/.local/bin` в `PATH` вашего shell profile, если каталога там ещё
+нет.
+
+### macOS
+
+Для Apple Silicon:
+
+```sh
+chmod +x ./bord-darwin-arm64
+sudo install -m 0755 ./bord-darwin-arm64 /usr/local/bin/bord
+bord --version
+```
+
+Для Intel Mac замените имя файла на `bord-darwin-amd64`. Если macOS блокирует
+загруженный файл, сначала проверьте источник, checksum и подпись release, затем
+разрешите запуск в системных настройках безопасности. Не отключайте Gatekeeper
+глобально.
+
+### Windows Terminal
+
+Откройте PowerShell в Windows Terminal:
+
+```powershell
+$installDir = "$env:LOCALAPPDATA\Programs\Bord"
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Copy-Item .\bord-windows-amd64.exe "$installDir\bord.exe"
+```
+
+Добавьте каталог в пользовательский `PATH`:
+
+```powershell
+$current = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($current -split ';') -notcontains $installDir) {
+    [Environment]::SetEnvironmentVariable(
+        "Path",
+        (($current.TrimEnd(';') + ";" + $installDir).TrimStart(';')),
+        "User"
+    )
+}
+```
+
+Закройте и заново откройте Windows Terminal, затем проверьте:
+
+```powershell
+bord.exe --version
+```
+
+## Вариант 2: сборка из исходников
+
+```sh
+git clone <URL-репозитория> bord
+cd bord
+mkdir -p dist
+CGO_ENABLED=0 go build -trimpath -o dist/bord ./cmd/bord
+./dist/bord --version
+```
+
+Установить собранный Linux/macOS-бинарник в `PATH`:
+
+```sh
+sudo install -m 0755 dist/bord /usr/local/bin/bord
+```
+
+Либо установить через Go из уже клонированного репозитория:
+
+```sh
+go install ./cmd/bord
+```
+
+В этом случае бинарник появится в `$GOBIN`, а если он не задан — в каталоге,
+который возвращает `go env GOPATH`, с суффиксом `/bin`.
+
+### Кросс-компиляция
+
+```sh
+GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/bord-linux-amd64 ./cmd/bord
+GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/bord-linux-arm64 ./cmd/bord
+GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/bord-darwin-arm64 ./cmd/bord
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/bord-windows-amd64.exe ./cmd/bord
+```
+
+## Первый запуск
+
+### Подключение к локальному backend
+
+Если `bord-server` слушает `127.0.0.1:8080`:
+
+```sh
+bord --server http://127.0.0.1:8080
+```
+
+Для запуска прямо из репозитория без установки:
+
+```sh
+go run ./cmd/bord --server http://127.0.0.1:8080
+```
+
+Для текущего изолированного demo-каталога проекта команда выглядит так:
+
+```sh
+/tmp/opencode/bord-retro-demo-20261018/bin/bord \
+  --server http://127.0.0.1:8080 \
+  --config /tmp/opencode/bord-retro-demo-20261018/client/state.json \
+  --theme classic \
+  --inline off
+```
+
+Эта команда сработает, только если demo-бинарник и backend в указанном временном
+каталоге ещё существуют.
+
+### Подключение к публичному backend
+
+```sh
+bord --server https://board.example.org
+```
+
+Или через переменную окружения:
+
+```sh
+export BORD_SERVER=https://board.example.org
+bord
+```
+
+PowerShell:
+
+```powershell
+$env:BORD_SERVER = "https://board.example.org"
+bord.exe
+```
+
+Адрес выбирается в таком порядке:
+
+1. `--server`;
+2. `BORD_SERVER`;
+3. адрес из локального state-файла;
+4. `http://localhost:8080`.
+
+Для публичного сервера используйте HTTPS. Клиент не предоставляет флаг для
+отключения проверки TLS-сертификата.
+
+## Параметры запуска
+
+```text
+bord [параметры]
+
+--server URL
+    Адрес Bord backend.
+
+--config PATH
+    Явный путь к локальному state-файлу.
+
+--theme classic|amber|green|mono
+    Цветовая тема интерфейса.
+
+--inline auto|kitty|off
+    Режим показа изображений в терминале.
+
+--timeout DURATION
+    Таймаут HTTP-запросов, по умолчанию 15s.
+
+--version
+    Показать версию и завершить работу.
+```
+
+Примеры:
+
+```sh
+bord --server https://board.example.org --theme green
+bord --server http://127.0.0.1:8080 --inline off --timeout 30s
+bord --config "$HOME/.config/bord/test-state.json" --theme mono
+```
+
+## Локальное состояние и секреты
+
+При первом запуске клиент создаёт state-файл. Стандартное расположение зависит
+от ОС:
+
+- Linux: `${XDG_CONFIG_HOME:-$HOME/.config}/bord/state.json`;
+- macOS: `~/Library/Application Support/bord/state.json`;
+- Windows: `%AppData%\bord\state.json`.
+
+Точный путь можно переопределить через `--config`.
+
+State содержит:
+
+- последний открытый раздел;
+- выбранную тему;
+- анонимный session secret;
+- delete secrets созданных публикаций;
+- незавершённые delete secrets для безопасного повтора запроса.
+
+На Unix файл и каталог создаются с закрытыми правами, а запись выполняется
+атомарно. Никогда не публикуйте state-файл и не отправляйте его в bug report.
+Утрата state означает утрату локальных прав на удаление своих публикаций;
+получивший копию файла может воспользоваться этими правами.
+
+Для разных серверов рекомендуется использовать разные state-файлы:
+
+```sh
+bord --server https://board-one.example --config "$HOME/.config/bord/board-one.json"
+bord --server https://board-two.example --config "$HOME/.config/bord/board-two.json"
+```
+
+## Управление
+
+### Каталог досок и тредов
+
+| Клавиша | Действие |
+|---|---|
+| `↑` / `k`, `↓` / `j` | перемещение выбора |
+| `Tab` | сменить активную панель |
+| `Enter` | открыть выбранную доску или тред |
+| `n` / `F7` | создать новый тред |
+| `r` / `F5` | обновить данные |
+| `/` / `F4` | поиск |
+| `Esc` | вернуться назад |
+
+### Открытый тред
+
+| Клавиша | Действие |
+|---|---|
+| `p` / `F7` | ответить в тред без ссылки на пост |
+| `P` / `F8` | ответить на выделенный пост |
+| `o` | открыть вложение выбранного поста |
+| `Esc` | вернуться в каталог |
+
+Новый тред можно создать только из каталога. Внутри треда нижняя панель явно
+показывает `Reply Thread` и `Reply Post`. В редакторе перед отправкой отображается
+цель: доска, тред или конкретный `>>post_id`.
+
+### Редактор публикации
+
+| Клавиша | Действие |
+|---|---|
+| `Ctrl+S` | отправить или повторить после ошибки |
+| `Ctrl+O` | выбрать JPEG/PNG-вложение |
+| `Esc` | вернуться, сохранив черновик |
+| `Ctrl+C` | завершить клиент |
+
+Во время активного запроса повторный `Ctrl+S` игнорируется. После сетевой ошибки
+черновик сохраняется, а повтор использует тот же idempotency key и не должен
+создавать дубликат.
+
+### Общие команды и мышь
+
+| Клавиша | Действие |
+|---|---|
+| `t` / `F2` | переключить тему |
+| `?` / `F1` | открыть справку |
+| `q`, `Ctrl+C`, `F10` | выйти |
+
+Мышь поддерживает:
+
+- выбор доски, треда или поста левым щелчком;
+- открытие выбранной доски/треда повторным щелчком;
+- ответ на выбранный пост повторным щелчком;
+- прокрутку панели под указателем колёсиком;
+- верхнее меню, нижнюю панель команд и кнопки редактора.
+
+## Темы
+
+Доступны четыре темы:
+
+- `classic` — классическая синяя тема Midnight Commander;
+- `amber` — янтарная;
+- `green` — зелёный phosphor;
+- `mono` — монохромная.
+
+Выбор через `--theme` применяется при запуске. `t`/`F2` переключает тему во
+время работы; итоговое значение сохраняется в state-файле.
+
+## Изображения
+
+Режим задаётся через `--inline`:
+
+- `auto` — автоматически использовать поддерживаемую inline-графику;
+- `kitty` — принудительно использовать Kitty graphics protocol;
+- `off` — не рисовать изображение внутри терминала.
+
+При отсутствии inline-поддержки вложение можно открыть системным приложением.
+Клиент проверяет SHA-256 загруженного файла и запускает opener без shell.
+
+Если терминал искажает экран или не поддерживает graphics protocol:
+
+```sh
+bord --server https://board.example.org --inline off
+```
+
+## Обновление
+
+1. Завершите клиент через `q` или `F10`.
+2. Не удаляйте state-файл.
+3. Проверьте checksum нового бинарника.
+4. Замените только executable.
+5. Запустите `bord --version`, затем обычную команду подключения.
+
+Linux/macOS:
+
+```sh
+sudo install -m 0755 ./bord-new /usr/local/bin/bord
+bord --version
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item -Force .\bord-new.exe "$env:LOCALAPPDATA\Programs\Bord\bord.exe"
+bord.exe --version
+```
+
+Формат state-файла проверяется клиентом. Повреждённый state не читается как
+секрет: клиент перемещает его в файл с суффиксом `.corrupt-*` и создаёт новое
+состояние.
+
+## Диагностика
+
+### Не удаётся подключиться
+
+Проверьте backend вне TUI:
+
+```sh
+curl --fail https://board.example.org/healthz
+curl --fail https://board.example.org/readyz
+curl --fail https://board.example.org/api/v1/boards
+```
+
+Для локального запуска замените адрес на `http://127.0.0.1:8080`. Проверьте
+схему URL, DNS, firewall, TLS-сертификат и системное время.
+
+### Не обновляются новые ответы
+
+TUI использует SSE как сигнал для повторного чтения HTTP. Проверьте поток:
+
+```sh
+curl -N https://board.example.org/api/v1/events
+```
+
+Соединение должно оставаться открытым и получать heartbeat. Proxy/CDN не должен
+буферизовать этот endpoint.
+
+### Неверные рамки или цвета
+
+- используйте современный UTF-8 терминал;
+- выберите шрифт с символами `╔═║╗╚╝`;
+- попробуйте `--theme mono`;
+- проверьте, что `TERM` не установлен в `dumb`;
+- на Windows запускайте клиент именно в Windows Terminal.
+
+### Мышь не работает
+
+Убедитесь, что терминал поддерживает mouse reporting. Некоторые multiplexer или
+удалённые сессии требуют включить mouse mode отдельно. Все действия доступны с
+клавиатуры, даже если терминал не передаёт mouse events.
+
+### TUI сломан после аварийного завершения
+
+Обычно Bubble Tea восстанавливает alternate screen автоматически. Если shell
+остался в необычном режиме, выполните:
+
+```sh
+reset
+```
+
+## Удаление клиента
+
+Linux/macOS при системной установке:
+
+```sh
+sudo rm /usr/local/bin/bord
+```
+
+Windows PowerShell:
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\Programs\Bord\bord.exe"
+```
+
+State-файл удаляйте только осознанно: вместе с ним будут потеряны локальные
+delete secrets. Для полного удаления после проверки пути:
+
+```sh
+rm -rf "$HOME/.config/bord"                         # Linux
+rm -rf "$HOME/Library/Application Support/bord"   # macOS
+```
+
+PowerShell:
+
+```powershell
+Remove-Item -Recurse -Force "$env:APPDATA\bord"
+```
+
+## Смежная документация
+
+- [Главный README и развёртывание backend](../README.md)
+- [Терминальный smoke matrix](terminal-smoke-matrix.md)
+- [OpenAPI-контракт](../api/openapi.yaml)
