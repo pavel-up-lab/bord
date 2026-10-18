@@ -2,6 +2,11 @@
 set -eu
 
 version="${1:-v0.0.0-test}"
+
+if python3 scripts/release.py --version 'v../../unsafe' --output dist-invalid >/dev/null 2>&1; then
+	echo "unsafe release version was accepted" >&2
+	exit 1
+fi
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}"
 first=dist-test-first
 second=dist-test-second

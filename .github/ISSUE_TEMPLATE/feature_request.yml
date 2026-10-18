@@ -1,0 +1,28 @@
+name: Предложить улучшение
+description: Новая возможность или изменение поведения Bord
+title: "proposal: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему нужно решить?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы и компромиссы
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Границы
+      options:
+        - label: Предложение сохраняет анонимность и не требует пользовательских аккаунтов.
+        - label: Учтены Linux, macOS и современный Windows Terminal.

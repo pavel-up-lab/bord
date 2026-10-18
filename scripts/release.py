@@ -64,8 +64,8 @@ def main() -> None:
     parser.add_argument("--output", default="dist")
     parser.add_argument("--tui-only", action="store_true", help="package only cross-platform bord clients")
     options = parser.parse_args()
-    if not options.version.startswith("v"):
-        parser.error("version must start with v")
+    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?", options.version) is None:
+        parser.error("version must be a safe semantic version beginning with v")
 
     root = Path(__file__).resolve().parent.parent
     output = (root / options.output).resolve()

@@ -1,0 +1,58 @@
+name: Сообщить об ошибке
+description: Воспроизводимая ошибка Bord server, TUI или landing
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Уязвимости не публикуйте здесь — используйте SECURITY.md и private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      description: Вывод `bord --version`, `bord-server version` или commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Компонент
+      options: [TUI, Backend API, SSE, Media, Landing, Deployment, Release tooling]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС, архитектура и терминал; не указывайте IP и секреты.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: "1. …\n2. …\n3. …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение и очищенные логи
+      description: Удалите токены, session/delete secrets, IP и пользовательские данные.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Проверки
+      options:
+        - label: Я проверил актуальную версию и поискал существующий issue.
+          required: true
+        - label: В тексте нет секретов и персональных данных.
+          required: true

@@ -11,7 +11,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   native-smoke:
@@ -27,8 +27,8 @@ jobs:
             suffix: .exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -41,11 +41,13 @@ jobs:
   package:
     needs: native-smoke
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -57,7 +59,10 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ]; then version="${INPUT_VERSION}"; fi
-          case "${version}" in v*) ;; *) echo "version must start with v" >&2; exit 2;; esac
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+             echo "version must be a safe semantic version beginning with v" >&2
+             exit 2
+          fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
       - name: Gate known vulnerabilities
@@ -89,7 +94,7 @@ jobs:
           "smoke/bord_${{ steps.metadata.outputs.version }}_linux_amd64/bord" --version | grep -F "${{ steps.metadata.outputs.version }}"
           "smoke/bord-server_${{ steps.metadata.outputs.version }}_linux_amd64/bord-server" version | grep -F "${{ steps.metadata.outputs.version }}"
       - name: Generate release SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: release-contents
           format: cyclonedx-json
@@ -98,7 +103,7 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
       - name: Scan release artifacts
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
         with:
           sbom: supply-chain-evidence/release-bom.cdx.json
           # Module-level findings still block release even when govulncheck
@@ -113,14 +118,14 @@ jobs:
           python3 scripts/validate-supply-chain.py --directory supply-chain-evidence --release
           (cd supply-chain-evidence && sha256sum dependency-licenses.csv govulncheck.json grype.json release-bom.cdx.json source-bom.cdx.json > EVIDENCE_SHA256SUMS)
           cp supply-chain-evidence/* dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ steps.metadata.outputs.version }}
           path: dist/*
           if-no-files-found: error
       - name: Publish GitHub release
         if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           fail_on_unmatched_files: true
