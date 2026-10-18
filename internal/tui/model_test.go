@@ -260,6 +260,184 @@ func TestWindowResizeConsumesExactTerminalAndThemeCycles(t *testing.T) {
 	}
 }
 
+func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
+	body := "preview"
+	newModel := func(width, height int) Model {
+		m := NewModel(context.Background(), &fakeService{})
+		m.width, m.height, m.loading = width, height, false
+		m.boards = []generated.Board{{Slug: "b"}, {Slug: "tech"}, {Slug: "art"}, {Slug: "news"}}
+		m.threads = []generated.Thread{
+			{Id: "thread_1", InitialPost: &generated.Post{Body: &body}},
+			{Id: "thread_2", InitialPost: &generated.Post{Body: &body}},
+			{Id: "thread_3", InitialPost: &generated.Post{Body: &body}},
+			{Id: "thread_4", InitialPost: &generated.Post{Body: &body}},
+		}
+		m.screen, m.focus = CatalogScreen, FocusBoards
+		return m
+	}
+	click := func(x, y int) tea.MouseMsg {
+		return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	}
+	wheel := func(x, y int, button tea.MouseButton) tea.MouseMsg {
+		return tea.MouseMsg{X: x, Y: y, Button: button, Action: tea.MouseActionPress}
+	}
+
+	tests := []struct {
+		name  string
+		model Model
+		msgs  []tea.MouseMsg
+		check func(*testing.T, Model, []tea.Cmd)
+	}{
+		{
+			name:  "80x24 board select and repeated click open",
+			model: newModel(80, 24),
+			msgs:  []tea.MouseMsg{click(5, 4), click(5, 4)},
+			check: func(t *testing.T, m Model, cmds []tea.Cmd) {
+				if m.boardIndex != 1 || m.focus != FocusContent || cmds[1] == nil {
+					t.Fatalf("board=%d focus=%v commands=%v", m.boardIndex, m.focus, cmds)
+				}
+			},
+		},
+		{
+			name:  "wide content row click and open",
+			model: newModel(120, 30),
+			msgs:  []tea.MouseMsg{click(70, 5), click(70, 6)},
+			check: func(t *testing.T, m Model, cmds []tea.Cmd) {
+				if m.contentIndex != 0 || m.screen != ThreadScreen || m.activeThread != "thread_2" || cmds[1] == nil {
+					t.Fatalf("index=%d screen=%v thread=%q", m.contentIndex, m.screen, m.activeThread)
+				}
+			},
+		},
+		{
+			name: "narrow content coordinates",
+			model: func() Model {
+				m := newModel(48, 18)
+				m.focus = FocusContent
+				return m
+			}(),
+			msgs: []tea.MouseMsg{click(20, 7)},
+			check: func(t *testing.T, m Model, _ []tea.Cmd) {
+				if m.contentIndex != 2 || m.focus != FocusContent {
+					t.Fatalf("index=%d focus=%v", m.contentIndex, m.focus)
+				}
+			},
+		},
+		{
+			name: "post row selection",
+			model: func() Model {
+				m := newModel(80, 24)
+				m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+				m.posts = []generated.Post{{Id: "post_1"}, {Id: "post_2"}, {Id: "post_3"}}
+				return m
+			}(),
+			msgs: []tea.MouseMsg{click(60, 6)},
+			check: func(t *testing.T, m Model, _ []tea.Cmd) {
+				if m.contentIndex != 1 || m.screen != ThreadScreen {
+					t.Fatalf("index=%d screen=%v", m.contentIndex, m.screen)
+				}
+			},
+		},
+		{
+			name:  "wheel uses hovered panel",
+			model: newModel(120, 30),
+			msgs: []tea.MouseMsg{
+				wheel(10, 10, tea.MouseButtonWheelDown),
+				wheel(80, 10, tea.MouseButtonWheelDown),
+				wheel(80, 10, tea.MouseButtonWheelUp),
+			},
+			check: func(t *testing.T, m Model, _ []tea.Cmd) {
+				if m.boardIndex != 3 || m.contentIndex != 0 || m.focus != FocusContent {
+					t.Fatalf("board=%d content=%d focus=%v", m.boardIndex, m.contentIndex, m.focus)
+				}
+			},
+		},
+		{
+			name: "wheel paginates at content end",
+			model: func() Model {
+				m := newModel(80, 24)
+				cursor := "next"
+				m.focus, m.contentIndex, m.nextThreadCursor = FocusContent, 2, &cursor
+				return m
+			}(),
+			msgs: []tea.MouseMsg{wheel(60, 10, tea.MouseButtonWheelDown)},
+			check: func(t *testing.T, m Model, cmds []tea.Cmd) {
+				if m.contentIndex != 3 || cmds[0] == nil || !m.loading {
+					t.Fatalf("index=%d command=%v loading=%v", m.contentIndex, cmds[0], m.loading)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.model
+			cmds := make([]tea.Cmd, 0, len(tc.msgs))
+			for _, msg := range tc.msgs {
+				updated, cmd := m.Update(msg)
+				m = updated.(Model)
+				cmds = append(cmds, cmd)
+			}
+			tc.check(t, m, cmds)
+		})
+	}
+}
+
+func TestMouseMenusBackAndComposerControls(t *testing.T) {
+	click := func(x, y int) tea.MouseMsg {
+		return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	}
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 80, 24, false
+	m.boards = []generated.Board{{Slug: "b"}}
+	m.screen = CatalogScreen
+
+	updated, _ := m.Update(click(1, m.height-1))
+	m = updated.(Model)
+	if m.screen != HelpScreen {
+		t.Fatalf("bottom Help zone screen=%v", m.screen)
+	}
+	updated, _ = m.Update(click(1, m.height-1))
+	m = updated.(Model)
+	if m.screen != CatalogScreen {
+		t.Fatalf("bottom Back zone screen=%v", m.screen)
+	}
+
+	updated, _ = m.Update(click(textWidth(" BORD  ")+1, 0))
+	m = updated.(Model)
+	if m.theme != ThemeAmber {
+		t.Fatalf("top theme click selected %q", m.theme)
+	}
+	updated, _ = m.Update(click(textWidth(" BORD  [Тема] ")+1, 0))
+	m = updated.(Model)
+	if m.screen != HelpScreen {
+		t.Fatalf("top help click screen=%v", m.screen)
+	}
+	updated, _ = m.Update(click(textWidth(" BORD  ")+1, 0))
+	m = updated.(Model)
+	if m.screen != CatalogScreen {
+		t.Fatalf("top back click screen=%v", m.screen)
+	}
+
+	m.beginComposer("")
+	m.editor.SetValue("draft")
+	updated, cmd := m.Update(click(1, m.height-1))
+	m = updated.(Model)
+	if cmd == nil || !m.loading {
+		t.Fatal("composer Send zone did not use send action")
+	}
+	m.loading = false
+	updated, _ = m.Update(click(textWidth("Ctrl+S Send ")+2, m.height-1))
+	m = updated.(Model)
+	if !m.attachmentPicking {
+		t.Fatal("composer Attach zone did not open picker")
+	}
+	m.attachmentPicking = false
+	updated, _ = m.Update(click(textWidth("Ctrl+S Send ")+1+textWidth("Ctrl+O Attach ")+2, m.height-1))
+	m = updated.(Model)
+	if m.screen != CatalogScreen {
+		t.Fatalf("composer Cancel zone screen=%v", m.screen)
+	}
+}
+
 func TestFitPreservesGraphemeWidth(t *testing.T) {
 	setColorProfile(3)
 	for _, tc := range []struct {
@@ -429,9 +607,9 @@ func (failingInput) Read([]byte) (int, error) { return 0, errors.New("injected t
 func TestTerminalRestorationSubprocess(t *testing.T) {
 	if os.Getenv("BORD_TUI_FAILURE_HELPER") == "1" {
 		var output bytes.Buffer
-		program := tea.NewProgram(NewModel(context.Background(), &fakeService{}), tea.WithInput(failingInput{}), tea.WithOutput(&output), tea.WithAltScreen())
+		program := tea.NewProgram(NewModel(context.Background(), &fakeService{}), tea.WithInput(failingInput{}), tea.WithOutput(&output), tea.WithAltScreen(), tea.WithMouseCellMotion())
 		_, err := program.Run()
-		if err == nil || !strings.Contains(output.String(), "\x1b[?1049l") {
+		if err == nil || !strings.Contains(output.String(), "\x1b[?1049l") || !strings.Contains(output.String(), "\x1b[?1002l") || !strings.Contains(output.String(), "\x1b[?1006l") {
 			fmt.Fprintf(os.Stderr, "err=%v output=%q", err, output.String())
 			os.Exit(2)
 		}

@@ -113,7 +113,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	model := tui.NewModel(ctx, api).WithLastBoard(state.LastBoard).WithTheme(themeName)
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithOutput(stdout))
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx), tea.WithOutput(stdout))
 	final, err := program.Run()
 	if err != nil {
 		return fmt.Errorf("интерфейс завершился с внутренней ошибкой")
