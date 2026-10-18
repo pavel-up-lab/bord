@@ -1006,3 +1006,16 @@ func TestKittyViewerCommandWritesDirectProtocol(t *testing.T) {
 		t.Fatalf("viewer prompt or cleanup missing: %q", got)
 	}
 }
+
+func TestKittyViewerRestoresMouseTracking(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.loading, m.screen = true, AttachmentScreen
+	updated, cmd := m.Update(attachmentInlineClosedMsg{})
+	m = updated.(Model)
+	if cmd == nil || m.loading || m.err != nil {
+		t.Fatalf("mouse restore not scheduled: cmd=%v loading=%v err=%v", cmd, m.loading, m.err)
+	}
+	if msg := cmd(); reflect.TypeOf(msg) != reflect.TypeOf(tea.EnableMouseCellMotion()) {
+		t.Fatalf("restore command returned %T", msg)
+	}
+}

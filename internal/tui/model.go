@@ -300,6 +300,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case attachmentInlineClosedMsg:
 		if m.screen == AttachmentScreen {
 			m.loading, m.err = false, msg.err
+			// Bubble Tea v1.3 restores raw/alternate-screen state after tea.Exec,
+			// but does not restore mouse tracking. Re-enable both cell motion and
+			// SGR coordinates through its public command path.
+			return m, tea.EnableMouseCellMotion
 		}
 	}
 	return m, nil
