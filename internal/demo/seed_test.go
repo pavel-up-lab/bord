@@ -127,6 +127,67 @@ func TestResetRecreatesUnchangedFixtureWithoutDuplicates(t *testing.T) {
 	assertCounts(t, db, 4, 12, 60)
 }
 
+func TestReplayRejectsChangedOwnedRows(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate string
+	}{
+		{"delete token", `DELETE FROM post_delete_tokens WHERE post_id=93000001`},
+		{"extra outbox event", `INSERT INTO event_outbox(schema_version,event_type,board_id,thread_id,post_id,payload,created_at) VALUES(1,'post.updated',91000001,92000001,93000001,'{}','2026-01-15T09:00:00.000000000Z')`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, blobs := openDatabase(t)
+			if _, err := demo.Seed(context.Background(), demo.Config{DB: db, Blobs: blobs}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(test.mutate); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := demo.Seed(context.Background(), demo.Config{DB: db, Blobs: blobs}); err == nil {
+				t.Fatal("replay accepted a changed owned row")
+			}
+			assertCounts(t, db, 4, 12, 60)
+		})
+	}
+}
+
+func TestResetPreservesRequestSubjectAndRefusesReports(t *testing.T) {
+	db, blobs := openDatabase(t)
+	if _, err := demo.Seed(context.Background(), demo.Config{DB: db, Blobs: blobs}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO request_subjects(ip_lookup,created_at,expires_at,post_id) VALUES(?,?,?,?)`, []byte("synthetic-lookup"), "2026-01-16T00:00:00.000000000Z", "2026-01-17T00:00:00.000000000Z", 93000001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjectID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := demo.Seed(context.Background(), demo.Config{DB: db, Blobs: blobs, Reset: true}); err != nil {
+		t.Fatal(err)
+	}
+	var linked sql.NullInt64
+	if err := db.QueryRow(`SELECT post_id FROM request_subjects WHERE id=?`, subjectID).Scan(&linked); err != nil || linked.Valid {
+		t.Fatalf("request subject was not preserved and detached: post_id=%v err=%v", linked, err)
+	}
+
+	if _, err := db.Exec(`UPDATE request_subjects SET post_id=93000001 WHERE id=?`, subjectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO reports(post_id,subject_id,reason,created_at) VALUES(?,?,?,?)`, 93000001, subjectID, "spam", "2026-01-16T01:00:00.000000000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := demo.Seed(context.Background(), demo.Config{DB: db, Blobs: blobs, Reset: true}); err == nil {
+		t.Fatal("reset deleted a report instead of refusing external dependent data")
+	}
+	var reports int
+	if err := db.QueryRow(`SELECT count(*) FROM reports WHERE post_id=93000001 AND subject_id=?`, subjectID).Scan(&reports); err != nil || reports != 1 {
+		t.Fatalf("report count=%d err=%v", reports, err)
+	}
+	assertCounts(t, db, 4, 12, 60)
+}
+
 func openDatabase(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	root := t.TempDir()

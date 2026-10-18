@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	boardIDBase  int64 = 91_000_000
-	threadIDBase int64 = 92_000_000
-	postIDBase   int64 = 93_000_000
+	boardIDBase    int64 = 91_000_000
+	threadIDBase   int64 = 92_000_000
+	postIDBase     int64 = 93_000_000
+	deleteVerifier       = "demo-only-unusable-delete-verifier"
+	outboxPayload        = `{"source":"demo-seed"}`
 )
 
 var baseTime = time.Date(2026, time.January, 15, 9, 0, 0, 0, time.UTC)
@@ -232,7 +234,67 @@ func validateExisting(ctx context.Context, repo *storage.Repository, threads []t
 			}
 		}
 	}
+	if err := validateOwnedRows(ctx, repo, threads); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+func validateOwnedRows(ctx context.Context, repo *storage.Repository, threads []threadFixture) error {
+	var tokenCount int
+	postMax := postIDBase + int64(len(threads)*5)
+	if err := repo.QueryRowContext(ctx, `SELECT count(*) FROM post_delete_tokens WHERE post_id>? AND post_id<=?`, postIDBase, postMax).Scan(&tokenCount); err != nil {
+		return err
+	}
+	if tokenCount != len(threads)*5 {
+		return errors.New("demo seed: delete-token fixture conflicts with deterministic fixture")
+	}
+
+	expectedEvents := 0
+	for _, thread := range threads {
+		for postIndex, post := range thread.posts {
+			var verifier []byte
+			var params int
+			var tokenCreated string
+			if err := repo.QueryRowContext(ctx, `SELECT verifier,params_version,created_at FROM post_delete_tokens WHERE post_id=?`, post.id).Scan(&verifier, &params, &tokenCreated); err != nil || string(verifier) != deleteVerifier || params != 1 || tokenCreated != encodeTime(post.createdAt) {
+				return fmt.Errorf("demo seed: delete token for post %d conflicts with deterministic fixture", post.id)
+			}
+
+			eventType := "post.created"
+			if postIndex == 0 {
+				eventType = "thread.created"
+			}
+			if err := validateEvent(ctx, repo, thread, post, eventType, post.createdAt); err != nil {
+				return err
+			}
+			expectedEvents++
+			if post.status == domain.PostDeleted {
+				if err := validateEvent(ctx, repo, thread, post, "post.deleted", *post.deletedAt); err != nil {
+					return err
+				}
+				expectedEvents++
+			}
+		}
+	}
+	var eventCount int
+	if err := repo.QueryRowContext(ctx, `SELECT count(*) FROM event_outbox WHERE (board_id>? AND board_id<=?) OR (thread_id>? AND thread_id<=?) OR (post_id>? AND post_id<=?)`, boardIDBase, boardIDBase+int64(len(boards)), threadIDBase, threadIDBase+int64(len(threads)), postIDBase, postMax).Scan(&eventCount); err != nil {
+		return err
+	}
+	if eventCount != expectedEvents {
+		return errors.New("demo seed: outbox fixture conflicts with deterministic fixture")
+	}
+	return nil
+}
+
+func validateEvent(ctx context.Context, repo *storage.Repository, thread threadFixture, post postFixture, eventType string, createdAt time.Time) error {
+	var found int
+	if err := repo.QueryRowContext(ctx, `SELECT count(*) FROM event_outbox WHERE schema_version=1 AND event_type=? AND board_id=? AND thread_id=? AND post_id=? AND payload=? AND created_at=?`, eventType, thread.boardID, thread.id, post.id, []byte(outboxPayload), encodeTime(createdAt)).Scan(&found); err != nil {
+		return err
+	}
+	if found != 1 {
+		return fmt.Errorf("demo seed: %s event for post %d conflicts with deterministic fixture", eventType, post.id)
+	}
+	return nil
 }
 
 func insertFixture(ctx context.Context, repo *storage.Repository, threads []threadFixture) error {
@@ -267,18 +329,18 @@ func insertFixture(ctx context.Context, repo *storage.Repository, threads []thre
 			if err != nil {
 				return err
 			}
-			if err := repo.InsertPost(ctx, post, []byte("demo-only-unusable-delete-verifier")); err != nil {
+			if err := repo.InsertPost(ctx, post, []byte(deleteVerifier)); err != nil {
 				return err
 			}
 			eventType := "post.created"
 			if postIndex == 0 {
 				eventType = "thread.created"
 			}
-			if err := repo.AppendOutbox(ctx, boardapp.OutboxEvent{Version: 1, Type: eventType, BoardID: thread.BoardID, ThreadID: thread.ID, PostID: post.ID, Payload: []byte(`{"source":"demo-seed"}`), CreatedAt: post.CreatedAt}); err != nil {
+			if err := repo.AppendOutbox(ctx, boardapp.OutboxEvent{Version: 1, Type: eventType, BoardID: thread.BoardID, ThreadID: thread.ID, PostID: post.ID, Payload: []byte(outboxPayload), CreatedAt: post.CreatedAt}); err != nil {
 				return err
 			}
 			if post.Status == domain.PostDeleted {
-				if err := repo.AppendOutbox(ctx, boardapp.OutboxEvent{Version: 1, Type: "post.deleted", BoardID: thread.BoardID, ThreadID: thread.ID, PostID: post.ID, Payload: []byte(`{"source":"demo-seed"}`), CreatedAt: *post.DeletedAt}); err != nil {
+				if err := repo.AppendOutbox(ctx, boardapp.OutboxEvent{Version: 1, Type: "post.deleted", BoardID: thread.BoardID, ThreadID: thread.ID, PostID: post.ID, Payload: []byte(outboxPayload), CreatedAt: *post.DeletedAt}); err != nil {
 					return err
 				}
 			}
@@ -294,6 +356,13 @@ func insertFixture(ctx context.Context, repo *storage.Repository, threads []thre
 
 func removeFixture(ctx context.Context, repo *storage.Repository) error {
 	postMax := postIDBase + int64(len(fixtures())*5)
+	var reports int
+	if err := repo.QueryRowContext(ctx, `SELECT count(*) FROM reports WHERE post_id>? AND post_id<=?`, postIDBase, postMax).Scan(&reports); err != nil {
+		return fmt.Errorf("demo seed reset: %w", err)
+	}
+	if reports != 0 {
+		return errors.New("demo seed reset: demo posts have reports; refusing to delete operator or user data")
+	}
 	// SQLite's RESTRICT action is immediate, so unlink the fixture's internal
 	// reply graph before deleting it. Replies outside the reserved range remain
 	// linked and intentionally make reset fail rather than deleting user data.
@@ -301,8 +370,6 @@ func removeFixture(ctx context.Context, repo *storage.Repository) error {
 		return fmt.Errorf("demo seed reset: %w", err)
 	}
 	for _, query := range []string{
-		`DELETE FROM reports WHERE post_id>? AND post_id<=?`,
-		`DELETE FROM request_subjects WHERE post_id>? AND post_id<=?`,
 		`DELETE FROM event_outbox WHERE post_id>? AND post_id<=?`,
 		`DELETE FROM post_delete_tokens WHERE post_id>? AND post_id<=?`,
 		`DELETE FROM posts WHERE id>? AND id<=?`,
