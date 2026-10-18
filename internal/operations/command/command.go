@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"bord/internal/demo"
 	"bord/internal/operations/backup"
 	"bord/internal/operations/operator"
 	"bord/internal/operations/schema"
@@ -55,6 +56,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runRetention(ctx, args[1:], stdout, stderr)
 	case "ip-reencrypt":
 		return runReencrypt(ctx, args[1:], stdout, stderr)
+	case "demo-seed":
+		return runDemoSeed(ctx, args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "bord-server %s commit=%s built=%s\n", Version, Commit, BuildDate)
 		return ExitOK
@@ -63,6 +66,47 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return ExitUsage
 	}
+}
+
+func runDemoSeed(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("demo-seed", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	database := flags.String("database", "", "SQLite database path (required; no production default)")
+	blobs := flags.String("blobs", "", "blob directory (required; no production default)")
+	reset := flags.Bool("reset", false, "remove and recreate only the deterministic demo fixture")
+	force := flags.Bool("force", false, "required with --reset")
+	confirm := flags.String("confirm", "", "DEMO-SEED, or RESET-DEMO-SEED with --reset")
+	want := "DEMO-SEED"
+	if err := flags.Parse(args); err != nil {
+		return ExitUsage
+	}
+	if *reset {
+		want = "RESET-DEMO-SEED"
+	}
+	if flags.NArg() != 0 || *database == "" || *blobs == "" || *confirm != want || (*reset && !*force) || (!*reset && *force) {
+		fmt.Fprintln(stderr, "demo-seed requires explicit --database, --blobs, and --confirm DEMO-SEED; reset additionally requires --reset --force --confirm RESET-DEMO-SEED")
+		return ExitUsage
+	}
+	db, err := storesqlite.Open(*database)
+	if err != nil {
+		fmt.Fprintln(stderr, "demo-seed failed:", err)
+		return ExitFailure
+	}
+	defer db.Close()
+	if err := storesqlite.Migrate(ctx, db); err != nil {
+		fmt.Fprintln(stderr, "demo-seed failed:", err)
+		return ExitFailure
+	}
+	result, err := demo.Seed(ctx, demo.Config{DB: db, Blobs: *blobs, Reset: *reset})
+	if err != nil {
+		fmt.Fprintln(stderr, "demo-seed failed:", err)
+		return ExitFailure
+	}
+	if err := json.NewEncoder(stdout).Encode(result); err != nil {
+		fmt.Fprintln(stderr, "demo-seed failed:", err)
+		return ExitFailure
+	}
+	return ExitOK
 }
 
 func runSchema(ctx context.Context, args []string, stdout, stderr io.Writer, migrate bool) int {
@@ -410,5 +454,5 @@ func runReencrypt(ctx context.Context, args []string, stdout, stderr io.Writer) 
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: bord-server <migrate|status|backup|restore-verify|restore|admin|retention|ip-reencrypt|version> [options]")
+	fmt.Fprintln(w, "usage: bord-server <migrate|status|backup|restore-verify|restore|admin|retention|ip-reencrypt|demo-seed|version> [options]")
 }
