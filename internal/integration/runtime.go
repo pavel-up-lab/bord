@@ -224,7 +224,16 @@ func (p Public) ListThreads(ctx context.Context, slug, cursor string, limit int)
 	}
 	out := api.Page[api.Thread]{Items: make([]api.Thread, 0, len(page.Threads))}
 	for _, t := range page.Threads {
-		out.Items = append(out.Items, mapThread(t, nil))
+		posts, err := p.Runtime.Board.Posts(ctx, t.ID, "", 1)
+		if err != nil {
+			return api.Page[api.Thread]{}, err
+		}
+		var first *api.Post
+		if len(posts.Posts) > 0 {
+			mapped := p.mapPost(ctx, posts.Posts[0])
+			first = &mapped
+		}
+		out.Items = append(out.Items, mapThread(t, first))
 	}
 	if page.Next != nil {
 		out.NextCursor = page.Next.BumpedAt.Format(time.RFC3339Nano) + "|" + string(page.Next.ThreadID)

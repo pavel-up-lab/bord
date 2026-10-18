@@ -106,6 +106,20 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	}
 	var created api.CreateResult
 	decode(t, response, &created)
+	response = request(t, server, http.MethodGet, "/api/v1/boards/general/threads", "", nil, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("catalog status=%d body=%s", response.StatusCode, read(response))
+	}
+	var catalog struct {
+		Threads []api.Thread `json:"threads"`
+	}
+	decode(t, response, &catalog)
+	if len(catalog.Threads) != 1 || catalog.Threads[0].InitialPost == nil || catalog.Threads[0].InitialPost.Body == nil || *catalog.Threads[0].InitialPost.Body != "opening" {
+		t.Fatalf("catalog omitted opening post: %+v", catalog.Threads)
+	}
+	if catalog.Threads[0].InitialPost.Attachment == nil || catalog.Threads[0].InitialPost.Attachment.ID != uploaded.ID {
+		t.Fatalf("catalog omitted opening attachment: %+v", catalog.Threads[0].InitialPost)
+	}
 	response = request(t, server, http.MethodGet, "/api/v1/threads/"+created.ThreadID, "", nil, nil)
 	var thread api.Thread
 	decode(t, response, &thread)
