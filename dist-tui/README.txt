@@ -1,4 +1,4 @@
-Bord TUI v0.1.5-dev.0ad08f0
+Bord TUI v0.1.6-dev.e4039ce
 
 Choose the archive matching your operating system and CPU architecture.
 Extract it and run bord (bord.exe on Windows). The complete Russian
