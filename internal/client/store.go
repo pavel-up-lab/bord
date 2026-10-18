@@ -26,6 +26,10 @@ type State struct {
 	Theme         string            `json:"theme,omitempty"`
 	SessionSecret string            `json:"session_secret"`
 	DeleteSecrets map[string]string `json:"delete_secrets,omitempty"`
+	// PendingDeleteSecrets keeps a delete capability stable while an
+	// idempotent create has an unknown outcome. Keys contain only operation
+	// metadata and idempotency keys; values are covered by State's redaction.
+	PendingDeleteSecrets map[string]string `json:"pending_delete_secrets,omitempty"`
 }
 
 func (State) String() string       { return "<redacted client state>" }
@@ -49,7 +53,7 @@ func NewState(server string) (State, error) {
 	if _, err := rand.Read(secret); err != nil {
 		return State{}, errors.New("generate session secret")
 	}
-	return State{Version: stateVersion, Server: server, InlineMode: "auto", Theme: "classic", SessionSecret: base64.RawURLEncoding.EncodeToString(secret), DeleteSecrets: map[string]string{}}, nil
+	return State{Version: stateVersion, Server: server, InlineMode: "auto", Theme: "classic", SessionSecret: base64.RawURLEncoding.EncodeToString(secret), DeleteSecrets: map[string]string{}, PendingDeleteSecrets: map[string]string{}}, nil
 }
 
 func NewDeleteSecret() (string, error) {
@@ -94,6 +98,9 @@ func (s *Store) Load() (State, error) {
 	if state.DeleteSecrets == nil {
 		state.DeleteSecrets = map[string]string{}
 	}
+	if state.PendingDeleteSecrets == nil {
+		state.PendingDeleteSecrets = map[string]string{}
+	}
 	return state, nil
 }
 
@@ -101,6 +108,9 @@ func (s *Store) Save(state State) error {
 	state.Version = stateVersion
 	if state.DeleteSecrets == nil {
 		state.DeleteSecrets = map[string]string{}
+	}
+	if state.PendingDeleteSecrets == nil {
+		state.PendingDeleteSecrets = map[string]string{}
 	}
 	b, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {

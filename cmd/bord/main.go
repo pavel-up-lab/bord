@@ -112,7 +112,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	model := tui.NewModel(ctx, api).WithLastBoard(state.LastBoard).WithTheme(themeName)
+	postingAPI, err := client.NewPostingAPI(api, store, &state)
+	if err != nil {
+		return err
+	}
+	model := tui.NewModel(ctx, postingAPI).WithLastBoard(state.LastBoard).WithTheme(themeName)
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithOutput(stdout))
 	final, err := program.Run()
 	if err != nil {

@@ -299,6 +299,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			return m, nil
 		case matches(key, m.keys.Send):
+			if m.loading {
+				return m, nil
+			}
 			return m, m.sendDraft()
 		case matches(key, m.keys.PickAttachment):
 			m.attachmentPicking, m.attachmentPath, m.err = true, "", nil
@@ -617,12 +620,18 @@ func (m Model) statusText() string {
 		return " Поиск: " + SanitizeTerminalText(m.searchQuery) + "_  Enter применить • Esc отменить"
 	}
 	if m.loading {
+		if m.screen == ComposerScreen {
+			return " Отправка публикации…"
+		}
 		return " Загрузка…"
 	}
 	if m.err != nil {
 		var apiErr *client.APIError
 		if errorsAs(m.err, &apiErr) {
-			return " Ошибка: " + SanitizeTerminalText(string(apiErr.Code))
+			return " Ошибка отправки: " + SanitizeTerminalText(string(apiErr.Code)) + " • Ctrl+S повторить"
+		}
+		if m.screen == ComposerScreen {
+			return " Ошибка отправки • Ctrl+S повторить • Esc сохранить черновик"
 		}
 		return " Ошибка сети"
 	}
@@ -810,7 +819,13 @@ func (m Model) composerLines() []displayRow {
 		attachment = SanitizeTerminalText(m.draft.AttachmentID)
 	}
 	lines := strings.Split(m.editor.View(), "\n")
-	lines = append(lines, "", "Ctrl+S отправить • Ctrl+O вложение • Esc отменить", "Вложение: "+attachment)
+	action := "Ctrl+S ОТПРАВИТЬ • Ctrl+O вложение • Esc оставить черновик"
+	if m.loading {
+		action = "ОТПРАВКА… дождитесь результата • Esc отменить запрос"
+	} else if m.err != nil {
+		action = "ОШИБКА • Ctrl+S ПОВТОРИТЬ • Esc оставить черновик"
+	}
+	lines = append(lines, "", action, "Вложение: "+attachment)
 	return []displayRow{{lines: lines, trustedANSI: true}}
 }
 
@@ -828,6 +843,9 @@ func (m Model) statusLine(t theme, width int) string {
 
 func (m Model) commandBar(t theme, width int) string {
 	commands := []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New", "F10 Quit"}
+	if m.screen == ComposerScreen {
+		commands = []string{"Ctrl+S Send", "Ctrl+O Attach", "Esc Draft", "Ctrl+C Quit"}
+	}
 	plain := strings.Join(commands, " ")
 	if textWidth(plain)+len(commands)-1 > width {
 		return paint(t.barBackground, t.barForeground, plain, width)
