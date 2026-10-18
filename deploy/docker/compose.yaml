@@ -34,6 +34,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      # The official image marks /usr/bin/caddy with this file capability.
+      # Keep it in the bounding set even though this stack binds port 8088.
+      - NET_BIND_SERVICE
     ports:
       - "${BORD_PUBLIC_PORT:-8088}:8088"
     volumes:
