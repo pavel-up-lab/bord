@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"bord/api/generated"
 	"bord/internal/client"
@@ -48,6 +50,7 @@ type Service interface {
 	CreateThread(context.Context, string, string, generated.CreateThread) (generated.CreateResult, error)
 	CreatePost(context.Context, string, string, generated.CreatePost) (generated.CreateResult, error)
 	UploadAttachment(context.Context, string, io.Reader) (generated.Attachment, error)
+	Attachment(context.Context, string) ([]byte, string, error)
 	Subscribe(context.Context, client.StreamScope, client.StreamCallbacks, client.Backoff) error
 }
 
@@ -93,6 +96,11 @@ type Model struct {
 	catalogBoard                                         string
 	preferredBoard                                       string
 	theme                                                ThemeName
+	attachmentData                                       []byte
+	attachmentFile, attachmentID, attachmentWarning      string
+	attachmentRenderer                                   KittyRenderer
+	attachmentCache                                      *client.Cache
+	openExternal                                         func(context.Context, string) error
 }
 
 type Draft struct {
@@ -136,6 +144,14 @@ type AttachmentSelectedMsg struct {
 	requestID uint64
 }
 
+type attachmentLoadedMsg struct {
+	id, path, warning string
+	data              []byte
+	err               error
+}
+
+type attachmentOpenedMsg struct{ err error }
+
 func NewModel(ctx context.Context, api Service) Model {
 	if ctx == nil {
 		ctx = context.Background()
@@ -147,6 +163,15 @@ func NewModel(ctx context.Context, api Service) Model {
 	editor.SetWidth(60)
 	editor.SetHeight(8)
 	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic}
+}
+
+// WithAttachmentViewer wires verified downloads to Kitty inline graphics and
+// the platform opener fallback.
+func (m Model) WithAttachmentViewer(mode InlineMode, cache *client.Cache) Model {
+	m.attachmentRenderer = KittyRenderer{Capability: EnvironmentCapabilities{}, Mode: mode}
+	m.attachmentCache = cache
+	m.openExternal = client.OpenExternal
+	return m
 }
 
 // WithTheme selects a validated presentation theme.
@@ -256,6 +281,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.draft.AttachmentID = msg.ID
 			}
 		}
+	case attachmentLoadedMsg:
+		if m.screen != AttachmentScreen || msg.id != m.attachmentID {
+			return m, nil
+		}
+		m.loading, m.err = false, msg.err
+		if msg.err == nil {
+			m.attachmentData, m.attachmentFile, m.attachmentWarning = msg.data, msg.path, msg.warning
+		}
+	case attachmentOpenedMsg:
+		if m.screen == AttachmentScreen {
+			m.loading, m.err = false, msg.err
+		}
 	}
 	return m, nil
 }
@@ -355,7 +392,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case matches(key, m.keys.Back):
 		if m.screen == PostScreen {
 			m.screen, m.postScroll = ThreadScreen, 0
-		} else if m.screen == ThreadScreen || m.screen == AttachmentScreen {
+		} else if m.screen == AttachmentScreen {
+			m.screen = m.previous
+			m.clearAttachmentViewer()
+		} else if m.screen == ThreadScreen {
 			m.screen, m.activeThread, m.posts = CatalogScreen, "", nil
 		} else if m.isNarrow() && m.focus == FocusContent {
 			m.focus = FocusBoards
@@ -387,6 +427,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadThreads(false)
 	case matches(key, m.keys.Open):
+		if m.screen == AttachmentScreen {
+			if m.loading || m.attachmentFile == "" {
+				return m, nil
+			}
+			m.loading = true
+			return m, m.openAttachment()
+		}
 		return m.openSelection()
 	case matches(key, m.keys.NewThread) && len(m.boards) > 0 && m.screen == CatalogScreen:
 		m.beginComposer("")
@@ -396,8 +443,17 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		postID := m.posts[clamp(m.contentIndex, 0, len(m.posts)-1)].Id
 		m.beginReplyComposer(postID)
 	case matches(key, m.keys.Attachment):
-		if m.screen == ThreadScreen {
+		if m.screen == ThreadScreen || m.screen == PostScreen {
+			post, ok := m.currentPost()
+			if !ok || post.Attachment == nil {
+				m.err = errors.New("у поста нет вложения")
+				return m, nil
+			}
 			m.previous, m.screen = m.screen, AttachmentScreen
+			m.clearAttachmentViewer()
+			m.attachmentID = post.Attachment.Id
+			m.loading, m.err = true, nil
+			return m, m.loadAttachment(*post.Attachment)
 		}
 	case matches(key, m.keys.Search):
 		m.searching, m.searchQuery, m.err = true, "", nil
@@ -586,6 +642,64 @@ func (m *Model) uploadAttachment(path string) tea.Cmd {
 	}
 }
 
+func (m *Model) clearAttachmentViewer() {
+	m.attachmentData = nil
+	m.attachmentFile = ""
+	m.attachmentID = ""
+	m.attachmentWarning = ""
+	m.loading = false
+	m.err = nil
+}
+
+func (m Model) loadAttachment(meta generated.Attachment) tea.Cmd {
+	id := meta.Id
+	return func() tea.Msg {
+		body, responseType, err := m.api.Attachment(m.ctx, id)
+		if err != nil {
+			return attachmentLoadedMsg{id: id, err: err}
+		}
+		mediaType, _, err := mime.ParseMediaType(responseType)
+		if err != nil || mediaType != string(meta.MediaType) || (mediaType != "image/jpeg" && mediaType != "image/png") {
+			return attachmentLoadedMsg{id: id, err: errors.New("тип загруженного вложения не совпадает")}
+		}
+		if meta.Size < 0 || int64(len(body)) != meta.Size {
+			return attachmentLoadedMsg{id: id, err: errors.New("размер загруженного вложения не совпадает")}
+		}
+		if m.attachmentCache == nil {
+			return attachmentLoadedMsg{id: id, err: errors.New("кэш вложений недоступен")}
+		}
+		path, err := m.attachmentCache.PutImage(id, meta.Sha256, mediaType, body)
+		if err != nil {
+			return attachmentLoadedMsg{id: id, err: err}
+		}
+		var inline []byte
+		warning := ""
+		if m.attachmentRenderer.Available() {
+			inline, err = PrepareKittyImage(body, mediaType)
+			if err != nil {
+				warning = "Inline-показ недоступен: " + err.Error()
+			}
+		}
+		return attachmentLoadedMsg{id: id, path: path, data: inline, warning: warning}
+	}
+}
+
+func (m Model) openAttachment() tea.Cmd {
+	path := m.attachmentFile
+	opener := m.openExternal
+	return func() tea.Msg {
+		if opener == nil {
+			return attachmentOpenedMsg{err: errors.New("системный opener недоступен")}
+		}
+		ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+		defer cancel()
+		if err := opener(ctx, path); err != nil {
+			return attachmentOpenedMsg{err: errors.New("не удалось открыть вложение")}
+		}
+		return attachmentOpenedMsg{}
+	}
+}
+
 func (m *Model) watchEvents() tea.Cmd {
 	if m.streamCancel != nil {
 		m.streamCancel()
@@ -708,6 +822,9 @@ func (m Model) workspace(t theme, width, height int) []string {
 	if m.screen == PostScreen {
 		return m.singlePanel(t, width, height, m.contentTitle(), "ПОЛНЫЙ ТЕКСТ • ↑/↓ ПРОКРУТКА • ESC НАЗАД", m.postDetailRows(), true)
 	}
+	if m.screen == AttachmentScreen {
+		return m.singlePanel(t, width, height, "Вложение", "ИЗОБРАЖЕНИЕ • ENTER ВНЕШНИЙ ПРОСМОТР • ESC НАЗАД", m.attachmentRows(), true)
+	}
 	if m.isNarrow() {
 		if m.focus == FocusBoards {
 			return m.singlePanel(t, width, height, "Доски", "РАЗДЕЛ / НАЗВАНИЕ", m.boardRows(), true)
@@ -815,9 +932,6 @@ func (m Model) contentHint() string {
 }
 
 func (m Model) contentRows() []displayRow {
-	if m.screen == AttachmentScreen {
-		return []displayRow{{lines: []string{"Enter  открыть системным приложением", "Esc    вернуться к треду"}}}
-	}
 	rows := make([]displayRow, 0, m.visibleRows())
 	if m.screen == ThreadScreen {
 		end := minInt(len(m.posts), m.contentScroll+m.visibleRows())
@@ -858,6 +972,33 @@ func (m Model) contentRows() []displayRow {
 		rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
 	}
 	return rows
+}
+
+func (m Model) attachmentRows() []displayRow {
+	if m.loading {
+		return []displayRow{{lines: []string{"Загрузка и проверка вложения…"}}}
+	}
+	if m.err != nil {
+		return []displayRow{{lines: []string{"Ошибка: " + SanitizeTerminalText(m.err.Error()), "", "Esc  вернуться к посту"}}}
+	}
+	lines := []string{}
+	trusted := false
+	imageRows := max(1, minInt(12, m.height-9))
+	if rendered, ok := m.attachmentRenderer.Render(m.attachmentData, max(1, m.width-6), imageRows); ok {
+		trusted = true
+		lines = append(lines, rendered)
+		for range imageRows {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "Inline Kitty • Enter открыть системным приложением")
+	} else {
+		lines = append(lines, "Inline-графика недоступна в этом терминале.", "Enter  открыть системным приложением")
+	}
+	if m.attachmentWarning != "" {
+		lines = append(lines, "", SanitizeTerminalText(m.attachmentWarning))
+	}
+	lines = append(lines, "Esc    вернуться к посту")
+	return []displayRow{{lines: lines, trustedANSI: trusted}}
 }
 
 func (m Model) composerLines() []displayRow {
@@ -961,11 +1102,14 @@ func (m Model) commandLabels() []string {
 	if m.screen == HelpScreen {
 		return []string{"Esc Back", "F2 Theme", "F10 Quit"}
 	}
+	if m.screen == AttachmentScreen {
+		return []string{"Enter Open External", "Esc Back", "F10 Quit"}
+	}
 	if m.screen == ThreadScreen {
 		return []string{"F1 Help", "F5 Refresh", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
 	}
 	if m.screen == PostScreen {
-		return []string{"Esc Back", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
+		return []string{"Esc Back", "O Image", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
 	}
 	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New Thread", "F10 Quit"}
 }

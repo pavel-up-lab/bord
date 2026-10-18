@@ -104,6 +104,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if state.Theme == "" {
 		state.Theme = string(tui.ThemeClassic)
 	}
+	switch state.InlineMode {
+	case string(tui.InlineAuto), string(tui.InlineKitty), string(tui.InlineOff):
+	default:
+		state.InlineMode = string(tui.InlineAuto)
+	}
 	themeName, err := tui.ParseTheme(state.Theme)
 	if err != nil {
 		themeName = tui.ThemeClassic
@@ -116,7 +121,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	model := tui.NewModel(ctx, postingAPI).WithLastBoard(state.LastBoard).WithTheme(themeName)
+	cache, err := client.DefaultCache()
+	if err != nil {
+		return err
+	}
+	model := tui.NewModel(ctx, postingAPI).
+		WithLastBoard(state.LastBoard).
+		WithTheme(themeName).
+		WithAttachmentViewer(tui.InlineMode(state.InlineMode), cache)
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx), tea.WithOutput(stdout))
 	final, err := program.Run()
 	if err != nil {

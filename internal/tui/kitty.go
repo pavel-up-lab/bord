@@ -1,8 +1,13 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	"image/png"
 	"os"
 	"strings"
 )
@@ -27,6 +32,30 @@ func (EnvironmentCapabilities) KittyGraphics() bool {
 type KittyRenderer struct {
 	Capability Capabilities
 	Mode       InlineMode
+}
+
+// PrepareKittyImage validates bounded JPEG/PNG input and encodes it as PNG,
+// the compressed image format accepted by Kitty's f=100 transmission mode.
+func PrepareKittyImage(data []byte, mediaType string) ([]byte, error) {
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		return nil, errors.New("unsupported inline image type")
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 || config.Width > 6000 || config.Height > 6000 || int64(config.Width)*int64(config.Height) > 16_000_000 {
+		return nil, errors.New("invalid inline image dimensions")
+	}
+	if (mediaType == "image/jpeg" && format != "jpeg") || (mediaType == "image/png" && format != "png") {
+		return nil, errors.New("inline image type mismatch")
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, errors.New("decode inline image")
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, decoded); err != nil {
+		return nil, errors.New("encode inline image")
+	}
+	return encoded.Bytes(), nil
 }
 
 func (r KittyRenderer) Available() bool {

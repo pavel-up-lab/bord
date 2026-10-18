@@ -94,6 +94,9 @@ func (m Model) commandKeys() []tea.KeyMsg {
 	if m.screen == HelpScreen {
 		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyF2}, {Type: tea.KeyF10}}
 	}
+	if m.screen == AttachmentScreen {
+		return []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyEsc}, {Type: tea.KeyF10}}
+	}
 	if m.screen == ThreadScreen {
 		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
 	}

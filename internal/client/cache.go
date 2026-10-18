@@ -26,6 +26,26 @@ func DefaultCache() (*Cache, error) {
 }
 
 func (c *Cache) Put(id, expectedSHA256 string, body []byte) (string, error) {
+	return c.put(id, expectedSHA256, "", body)
+}
+
+// PutImage verifies and caches a normalized image with an extension suitable
+// for platform file associations. The bytes are still authoritative; the
+// extension is selected only from the server-verified media type.
+func (c *Cache) PutImage(id, expectedSHA256, mediaType string, body []byte) (string, error) {
+	extension := ""
+	switch mediaType {
+	case "image/jpeg":
+		extension = ".jpg"
+	case "image/png":
+		extension = ".png"
+	default:
+		return "", errors.New("unsupported attachment media type")
+	}
+	return c.put(id, expectedSHA256, extension, body)
+}
+
+func (c *Cache) put(id, expectedSHA256, extension string, body []byte) (string, error) {
 	if !cacheID.MatchString(id) {
 		return "", errors.New("invalid attachment cache ID")
 	}
@@ -44,7 +64,7 @@ func (c *Cache) Put(id, expectedSHA256 string, body []byte) (string, error) {
 	if err := secureDir(c.dir); err != nil {
 		return "", errors.New("secure attachment cache")
 	}
-	target := filepath.Join(c.dir, fmt.Sprintf("%s-%s", id, actual[:16]))
+	target := filepath.Join(c.dir, fmt.Sprintf("%s-%s%s", id, actual[:16], extension))
 	tmp, err := os.CreateTemp(c.dir, ".attachment-*")
 	if err != nil {
 		return "", errors.New("create cached attachment")

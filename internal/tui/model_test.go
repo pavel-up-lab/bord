@@ -3,8 +3,14 @@ package tui
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +40,9 @@ type fakeService struct {
 	createErr      error
 	keys           []string
 	subscribeEvent bool
+	attachmentBody []byte
+	attachmentType string
+	attachmentErr  error
 }
 
 func (f *fakeService) Boards(context.Context) ([]generated.Board, error) { return f.boards, nil }
@@ -53,6 +62,9 @@ func (f *fakeService) CreatePost(_ context.Context, _ string, key string, _ gene
 }
 func (f *fakeService) UploadAttachment(context.Context, string, io.Reader) (generated.Attachment, error) {
 	return generated.Attachment{Id: "attachment_1"}, nil
+}
+func (f *fakeService) Attachment(context.Context, string) ([]byte, string, error) {
+	return f.attachmentBody, f.attachmentType, f.attachmentErr
 }
 func (f *fakeService) Subscribe(ctx context.Context, _ client.StreamScope, callbacks client.StreamCallbacks, _ client.Backoff) error {
 	if f.subscribeEvent && callbacks.Event != nil {
@@ -889,5 +901,87 @@ func TestKittyRendererAndFallback(t *testing.T) {
 	}
 	if _, ok := r.Render([]byte("image"), 0, 4); ok {
 		t.Fatal("invalid dimensions rendered")
+	}
+}
+
+func TestAttachmentViewerVerifiesRendersAndOpens(t *testing.T) {
+	var source bytes.Buffer
+	imageData := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	imageData.Set(0, 0, color.RGBA{R: 255, A: 255})
+	if err := png.Encode(&source, imageData); err != nil {
+		t.Fatal(err)
+	}
+	body := source.Bytes()
+	sum := sha256.Sum256(body)
+	meta := generated.Attachment{Id: "attachment_1", MediaType: generated.AttachmentMediaType("image/png"), Size: int64(len(body)), Sha256: hex.EncodeToString(sum[:]), Width: 2, Height: 2}
+	f := &fakeService{attachmentBody: body, attachmentType: "image/png"}
+	m := NewModel(context.Background(), f)
+	m.width, m.height, m.loading = 80, 24, false
+	m.screen, m.previous, m.activeThread = PostScreen, ThreadScreen, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", State: generated.Visible, Attachment: &meta}}
+	m.attachmentCache = client.NewCache(t.TempDir())
+	m.attachmentRenderer = KittyRenderer{Capability: staticCapability(true), Mode: InlineAuto}
+	var opened string
+	m.openExternal = func(_ context.Context, path string) error { opened = path; return nil }
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(Model)
+	if m.screen != AttachmentScreen || !m.loading || cmd == nil {
+		t.Fatalf("attachment did not start: screen=%v loading=%v cmd=%v", m.screen, m.loading, cmd)
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.err != nil || m.attachmentFile == "" || filepath.Ext(m.attachmentFile) != ".png" || len(m.attachmentData) == 0 {
+		t.Fatalf("attachment load: err=%v file=%q inline=%d", m.err, m.attachmentFile, len(m.attachmentData))
+	}
+	if !strings.Contains(m.View(), "\x1b_G") {
+		t.Fatal("Kitty image sequence missing from attachment view")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd == nil || !m.loading {
+		t.Fatal("external opener did not start")
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.err != nil || opened != m.attachmentFile {
+		t.Fatalf("opened=%q file=%q err=%v", opened, m.attachmentFile, m.err)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.screen != PostScreen || m.attachmentFile != "" || len(m.attachmentData) != 0 {
+		t.Fatalf("attachment back did not restore post: screen=%v file=%q", m.screen, m.attachmentFile)
+	}
+}
+
+func TestAttachmentViewerRejectsChecksumMismatch(t *testing.T) {
+	body := []byte("not the expected image")
+	meta := generated.Attachment{Id: "attachment_1", MediaType: generated.AttachmentMediaType("image/png"), Size: int64(len(body)), Sha256: strings.Repeat("0", 64)}
+	f := &fakeService{attachmentBody: body, attachmentType: "image/png"}
+	m := NewModel(context.Background(), f)
+	m.screen, m.activeThread = ThreadScreen, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", Attachment: &meta}}
+	m.attachmentCache = client.NewCache(t.TempDir())
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.err == nil || m.attachmentFile != "" {
+		t.Fatalf("checksum mismatch accepted: file=%q err=%v", m.attachmentFile, m.err)
+	}
+}
+
+func TestPrepareKittyImageConvertsJPEGToPNG(t *testing.T) {
+	var jpegBody bytes.Buffer
+	if err := jpeg.Encode(&jpegBody, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := PrepareKittyImage(jpegBody.Bytes(), "image/jpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, format, err := image.Decode(bytes.NewReader(got)); err != nil || format != "png" {
+		t.Fatalf("format=%q err=%v", format, err)
 	}
 }
