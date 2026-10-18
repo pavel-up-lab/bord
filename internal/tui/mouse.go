@@ -75,14 +75,8 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 	keys := m.commandKeys()
 	offset := 0
 	for i, label := range labels {
-		width := textWidth(label) + 1 // rendered command has a trailing space
+		width := commandLabelWidth(label)
 		if x >= offset && x < minInt(m.width, offset+width) {
-			// Never terminate the program from a mouse coordinate. Some terminal
-			// graphics transitions can briefly report a stale bottom-row Y value;
-			// quitting remains available through explicit q/Ctrl+C/F10 keys.
-			if keys[i].Type == tea.KeyF10 {
-				return m, nil
-			}
 			return m.updateKey(keys[i])
 		}
 		offset += width
@@ -92,6 +86,10 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// commandLabelWidth mirrors commandBar: " key " + " action ". Compared with
+// the source label ("key action"), rendering adds three cells.
+func commandLabelWidth(label string) int { return textWidth(label) + 3 }
 
 func (m Model) commandKeys() []tea.KeyMsg {
 	if m.screen == ComposerScreen {

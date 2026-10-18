@@ -131,6 +131,16 @@ func TestSubscribeCancellationReleasesHandlers(t *testing.T) {
 		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Fatalf("Subscribe returned %v", err)
 		}
+		// Subscribe returning does not guarantee that httptest has already run
+		// the handler defer. Wait before the next iteration so a previous active
+		// handler cannot be mistaken for the newly started one.
+		deadline = time.Now().Add(time.Second)
+		for active.Load() != 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if got := active.Load(); got != 0 {
+			t.Fatalf("active SSE handlers between iterations=%d", got)
+		}
 	}
 	deadline := time.Now().Add(time.Second)
 	for active.Load() != 0 && time.Now().Before(deadline) {

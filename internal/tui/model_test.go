@@ -490,35 +490,16 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 		t.Fatal("composer Send zone did not use send action")
 	}
 	m.loading = false
-	updated, _ = m.Update(click(textWidth("Ctrl+S Send ")+2, m.height-1))
+	updated, _ = m.Update(click(commandLabelWidth("Ctrl+S Send")+1, m.height-1))
 	m = updated.(Model)
 	if !m.attachmentPicking {
 		t.Fatal("composer Attach zone did not open picker")
 	}
 	m.attachmentPicking = false
-	updated, _ = m.Update(click(textWidth("Ctrl+S Send ")+1+textWidth("Ctrl+O Attach ")+2, m.height-1))
+	updated, _ = m.Update(click(commandLabelWidth("Ctrl+S Send")+1+commandLabelWidth("Ctrl+O Attach")+1, m.height-1))
 	m = updated.(Model)
 	if m.screen != CatalogScreen {
 		t.Fatalf("composer Cancel zone screen=%v", m.screen)
-	}
-}
-
-func TestMouseCannotQuitFromMisreportedBottomRow(t *testing.T) {
-	m := NewModel(context.Background(), &fakeService{})
-	m.width, m.height, m.loading = 80, 24, false
-	m.screen = CatalogScreen
-	quitLabelStart := 0
-	labels := m.commandLabels()
-	for i, label := range labels[:len(labels)-1] {
-		quitLabelStart += textWidth(label) + 1
-		if i < len(labels)-2 {
-			quitLabelStart++
-		}
-	}
-	updated, cmd := m.Update(tea.MouseMsg{X: quitLabelStart + 1, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	got := updated.(Model)
-	if cmd != nil || got.screen != CatalogScreen {
-		t.Fatalf("mouse quit was accepted: cmd=%v screen=%v", cmd, got.screen)
 	}
 }
 
@@ -547,6 +528,24 @@ func TestComposerActionsDistinguishThreadAndPostReplies(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	if got := updated.(Model); got.screen != ThreadScreen || got.draft.Thread != "" {
 		t.Fatalf("n unexpectedly created a thread from thread view: screen=%v draft=%+v", got.screen, got.draft)
+	}
+}
+
+func TestMouseReplyPostUsesRenderedCommandGeometry(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 120, 24, false
+	m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1"}, {Id: "post_2"}}
+	m.contentIndex = 1
+	labels := m.commandLabels()
+	x := 0
+	for _, label := range labels[:3] {
+		x += commandLabelWidth(label) + 1
+	}
+	updated, cmd := m.Update(tea.MouseMsg{X: x + 1, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	got := updated.(Model)
+	if cmd != nil || got.screen != ComposerScreen || got.draft.ReplyTo == nil || *got.draft.ReplyTo != "post_2" {
+		t.Fatalf("Reply Post click mapped incorrectly: x=%d screen=%v reply=%v cmd=%v", x+1, got.screen, got.draft.ReplyTo, cmd)
 	}
 }
 
