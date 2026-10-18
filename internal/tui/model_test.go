@@ -929,13 +929,16 @@ func TestAttachmentViewerVerifiesRendersAndOpens(t *testing.T) {
 	if m.screen != AttachmentScreen || !m.loading || cmd == nil {
 		t.Fatalf("attachment did not start: screen=%v loading=%v cmd=%v", m.screen, m.loading, cmd)
 	}
-	updated, _ = m.Update(cmd())
+	updated, inlineCmd := m.Update(cmd())
 	m = updated.(Model)
 	if m.err != nil || m.attachmentFile == "" || filepath.Ext(m.attachmentFile) != ".png" || len(m.attachmentData) == 0 {
 		t.Fatalf("attachment load: err=%v file=%q inline=%d", m.err, m.attachmentFile, len(m.attachmentData))
 	}
-	if !strings.Contains(m.View(), "\x1b_G") {
-		t.Fatal("Kitty image sequence missing from attachment view")
+	if inlineCmd == nil {
+		t.Fatal("direct Kitty viewer did not start")
+	}
+	if strings.Contains(m.View(), "\x1b_G") {
+		t.Fatal("Kitty image sequence must not pass through Bubble Tea View")
 	}
 
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -983,5 +986,23 @@ func TestPrepareKittyImageConvertsJPEGToPNG(t *testing.T) {
 	}
 	if _, format, err := image.Decode(bytes.NewReader(got)); err != nil || format != "png" {
 		t.Fatalf("format=%q err=%v", format, err)
+	}
+}
+
+func TestKittyViewerCommandWritesDirectProtocol(t *testing.T) {
+	var output bytes.Buffer
+	command := &kittyViewerCommand{data: []byte("image"), columns: 10, rows: 4}
+	command.SetStdin(strings.NewReader("\n"))
+	command.SetStdout(&output)
+	command.SetStderr(io.Discard)
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if !strings.Contains(got, "\x1b_Ga=T,f=100,c=10,r=4,m=0;aW1hZ2U=\x1b\\") {
+		t.Fatalf("direct Kitty payload missing: %q", got)
+	}
+	if !strings.Contains(got, "Enter — вернуться в Bord") || !strings.HasSuffix(got, "\x1b[?25h") {
+		t.Fatalf("viewer prompt or cleanup missing: %q", got)
 	}
 }

@@ -360,8 +360,8 @@ $env:BORD_SERVER = "https://board.example.org"
 незащищённое облако: потеря файла означает потерю возможности удалить свои
 публикации, утечка — передачу этой возможности другому лицу.
 
-`--inline=auto` использует Kitty inline-графику в автоматически распознанном
-Kitty terminal,
+`--inline=auto` использует прямой Kitty image viewer в автоматически
+распознанном Kitty terminal и возвращается в TUI по `Enter`,
 `--inline=kitty` принудительно выбирает Kitty protocol, `--inline=off` оставляет
 текстовую карточку и внешний opener. Для внешнего открытия используются
 `xdg-open`, `open` или Windows file association без запуска shell. Для WezTerm

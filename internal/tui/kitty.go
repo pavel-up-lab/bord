@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
+	"io"
 	"os"
 	"strings"
 )
@@ -32,6 +33,41 @@ func (EnvironmentCapabilities) KittyGraphics() bool {
 type KittyRenderer struct {
 	Capability Capabilities
 	Mode       InlineMode
+}
+
+// kittyViewerCommand renders outside Bubble Tea's fullscreen renderer. Native
+// graphics APCs cannot be reliably embedded in a Bubble Tea View, so tea.Exec
+// temporarily releases the terminal while this command owns it.
+type kittyViewerCommand struct {
+	data          []byte
+	columns, rows int
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+}
+
+func (c *kittyViewerCommand) SetStdin(r io.Reader)  { c.stdin = r }
+func (c *kittyViewerCommand) SetStdout(w io.Writer) { c.stdout = w }
+func (c *kittyViewerCommand) SetStderr(w io.Writer) { c.stderr = w }
+
+func (c *kittyViewerCommand) Run() error {
+	if c.stdin == nil || c.stdout == nil {
+		return errors.New("terminal streams unavailable")
+	}
+	rendered, ok := (KittyRenderer{Mode: InlineKitty}).Render(c.data, c.columns, c.rows)
+	if !ok {
+		return errors.New("inline image unavailable")
+	}
+	// Delete stale placements, clear the normal screen and render directly at
+	// the top-left. Bubble Tea has released raw mode here, so Enter is enough to
+	// return to the board.
+	if _, err := fmt.Fprintf(c.stdout, "\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J\x1b[H\x1b[?25l%s\x1b[%d;1H\x1b[0mEnter — вернуться в Bord", rendered, c.rows+2); err != nil {
+		return err
+	}
+	defer fmt.Fprint(c.stdout, "\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J\x1b[H\x1b[?25h")
+	var input [1]byte
+	_, err := c.stdin.Read(input[:])
+	return err
 }
 
 // PrepareKittyImage validates bounded JPEG/PNG input and encodes it as PNG,

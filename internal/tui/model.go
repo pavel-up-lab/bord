@@ -151,6 +151,7 @@ type attachmentLoadedMsg struct {
 }
 
 type attachmentOpenedMsg struct{ err error }
+type attachmentInlineClosedMsg struct{ err error }
 
 func NewModel(ctx context.Context, api Service) Model {
 	if ctx == nil {
@@ -288,8 +289,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
 			m.attachmentData, m.attachmentFile, m.attachmentWarning = msg.data, msg.path, msg.warning
+			if len(msg.data) > 0 && m.attachmentRenderer.Available() {
+				return m, m.viewAttachmentInline()
+			}
 		}
 	case attachmentOpenedMsg:
+		if m.screen == AttachmentScreen {
+			m.loading, m.err = false, msg.err
+		}
+	case attachmentInlineClosedMsg:
 		if m.screen == AttachmentScreen {
 			m.loading, m.err = false, msg.err
 		}
@@ -443,6 +451,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		postID := m.posts[clamp(m.contentIndex, 0, len(m.posts)-1)].Id
 		m.beginReplyComposer(postID)
 	case matches(key, m.keys.Attachment):
+		if m.screen == AttachmentScreen && len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
+			return m, m.viewAttachmentInline()
+		}
 		if m.screen == ThreadScreen || m.screen == PostScreen {
 			post, ok := m.currentPost()
 			if !ok || post.Attachment == nil {
@@ -698,6 +709,20 @@ func (m Model) openAttachment() tea.Cmd {
 		}
 		return attachmentOpenedMsg{}
 	}
+}
+
+func (m Model) viewAttachmentInline() tea.Cmd {
+	viewer := &kittyViewerCommand{
+		data:    m.attachmentData,
+		columns: max(1, m.width-2),
+		rows:    max(1, m.height-4),
+	}
+	return tea.Exec(viewer, func(err error) tea.Msg {
+		if err != nil {
+			return attachmentInlineClosedMsg{err: errors.New("не удалось показать изображение в Kitty")}
+		}
+		return attachmentInlineClosedMsg{}
+	})
 }
 
 func (m *Model) watchEvents() tea.Cmd {
@@ -982,15 +1007,8 @@ func (m Model) attachmentRows() []displayRow {
 		return []displayRow{{lines: []string{"Ошибка: " + SanitizeTerminalText(m.err.Error()), "", "Esc  вернуться к посту"}}}
 	}
 	lines := []string{}
-	trusted := false
-	imageRows := max(1, minInt(12, m.height-9))
-	if rendered, ok := m.attachmentRenderer.Render(m.attachmentData, max(1, m.width-6), imageRows); ok {
-		trusted = true
-		lines = append(lines, rendered)
-		for range imageRows {
-			lines = append(lines, "")
-		}
-		lines = append(lines, "Inline Kitty • Enter открыть системным приложением")
+	if len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
+		lines = append(lines, "Kitty-просмотр закрыт.", "o      показать изображение снова", "Enter  открыть системным приложением")
 	} else {
 		lines = append(lines, "Inline-графика недоступна в этом терминале.", "Enter  открыть системным приложением")
 	}
@@ -998,7 +1016,7 @@ func (m Model) attachmentRows() []displayRow {
 		lines = append(lines, "", SanitizeTerminalText(m.attachmentWarning))
 	}
 	lines = append(lines, "Esc    вернуться к посту")
-	return []displayRow{{lines: lines, trustedANSI: trusted}}
+	return []displayRow{{lines: lines}}
 }
 
 func (m Model) composerLines() []displayRow {
