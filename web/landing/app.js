@@ -33,7 +33,10 @@
     if (!candidate) return "";
     try {
       const parsed = new URL(candidate);
-      if (parsed.protocol !== "https:") return "";
+      const secure = parsed.protocol === "https:";
+      const temporarySameOriginHTTP = parsed.protocol === "http:" &&
+        window.location.protocol === "http:" && parsed.host === window.location.host;
+      if (!secure && !temporarySameOriginHTTP) return "";
       return parsed.href.replace(/\/+$/, "");
     } catch (_) {
       return "";

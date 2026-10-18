@@ -1,0 +1,41 @@
+{
+	auto_https off
+}
+
+:8088 {
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	@events path /api/v1/events
+	handle @events {
+		reverse_proxy backend:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	@backend path /api/* /healthz /readyz
+	handle @backend {
+		reverse_proxy backend:8080
+	}
+
+	handle_path /downloads/* {
+		root * /srv/downloads
+		file_server
+	}
+
+	handle {
+		root * /srv/landing
+		file_server
+	}
+}

@@ -1,0 +1,9 @@
+http:
+  address: 0.0.0.0:8080
+  max_body_bytes: 16777216
+  body_read_timeout: 15s
+storage:
+  database: /var/lib/bord/bord.db
+  blobs: /var/lib/bord/blobs
+privacy:
+  store_raw_ip: false

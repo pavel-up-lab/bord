@@ -1,0 +1,63 @@
+services:
+  backend:
+    image: bord-server:${BORD_VERSION:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      BORD_IP_LOOKUP_KEY_FILE: /run/secrets/ip_lookup_key
+      BORD_TRUSTED_PROXIES: 172.30.83.2/32
+    secrets:
+      - ip_lookup_key
+    volumes:
+      - ./config.yaml:/etc/bord/config.yaml:ro
+      - ./data:/var/lib/bord
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks:
+      bord_private:
+        ipv4_address: 172.30.83.3
+    mem_limit: 512m
+
+  edge:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "${BORD_PUBLIC_PORT:-8088}:8088"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./landing:/srv/landing:ro
+      - ./downloads:/srv/downloads:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      bord_private:
+        ipv4_address: 172.30.83.2
+    mem_limit: 128m
+
+secrets:
+  ip_lookup_key:
+    file: ./secrets/ip_lookup_key
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  bord_private:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.83.0/24
