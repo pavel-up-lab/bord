@@ -142,6 +142,19 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	}
 	var replied api.CreateResult
 	decode(t, response, &replied)
+	response = request(t, server, http.MethodGet, "/api/v1/boards", "", nil, nil)
+	var boardList struct {
+		Boards []api.Board `json:"boards"`
+	}
+	decode(t, response, &boardList)
+	if len(boardList.Boards) != 1 || boardList.Boards[0].ThreadCount != 1 {
+		t.Fatalf("board thread count: %+v", boardList.Boards)
+	}
+	response = request(t, server, http.MethodGet, "/api/v1/boards/general/threads", "", nil, nil)
+	decode(t, response, &catalog)
+	if len(catalog.Threads) != 1 || catalog.Threads[0].ReplyCount != 1 {
+		t.Fatalf("thread reply count: %+v", catalog.Threads)
+	}
 	// A moderation mutation must not commit if its mandatory audit append fails.
 	if _, err = runtime.DB.Exec(`CREATE TRIGGER reject_test_audit BEFORE INSERT ON moderation_actions WHEN NEW.action='post.visibility' BEGIN SELECT RAISE(ABORT, 'test audit failure'); END`); err != nil {
 		t.Fatal(err)

@@ -201,7 +201,11 @@ func (p Public) ListBoards(ctx context.Context) ([]api.Board, error) {
 	}
 	out := make([]api.Board, 0, len(items))
 	for _, b := range items {
-		out = append(out, api.Board{ID: string(b.ID), Slug: b.Slug, Title: b.Title})
+		var count int64
+		if err := p.Runtime.DB.QueryRowContext(ctx, `SELECT count(*) FROM threads WHERE board_id=?`, string(b.ID)).Scan(&count); err != nil {
+			return nil, err
+		}
+		out = append(out, api.Board{ID: string(b.ID), Slug: b.Slug, Title: b.Title, ThreadCount: count})
 	}
 	return out, nil
 }
@@ -233,7 +237,12 @@ func (p Public) ListThreads(ctx context.Context, slug, cursor string, limit int)
 			mapped := p.mapPost(ctx, posts.Posts[0])
 			first = &mapped
 		}
-		out.Items = append(out.Items, mapThread(t, first))
+		mappedThread := mapThread(t, first)
+		mappedThread.ReplyCount, err = p.replyCount(ctx, t.ID)
+		if err != nil {
+			return api.Page[api.Thread]{}, err
+		}
+		out.Items = append(out.Items, mappedThread)
 	}
 	if page.Next != nil {
 		out.NextCursor = page.Next.BumpedAt.Format(time.RFC3339Nano) + "|" + string(page.Next.ThreadID)
@@ -254,7 +263,9 @@ func (p Public) GetThread(ctx context.Context, id string) (api.Thread, error) {
 		x := p.mapPost(ctx, posts.Posts[0])
 		first = &x
 	}
-	return mapThread(t, first), nil
+	mapped := mapThread(t, first)
+	mapped.ReplyCount, e = p.replyCount(ctx, t.ID)
+	return mapped, e
 }
 func (p Public) ListPosts(ctx context.Context, id, cursor string, limit int) (api.Page[api.Post], error) {
 	page, e := p.Runtime.Board.Posts(ctx, domain.ThreadID(id), domain.PostID(cursor), limit)
@@ -354,6 +365,12 @@ func (p Public) ReportPost(ctx context.Context, id string, request api.ReportReq
 
 func mapThread(t domain.Thread, first *api.Post) api.Thread {
 	return api.Thread{ID: string(t.ID), BoardID: string(t.BoardID), CreatedAt: t.CreatedAt, UpdatedAt: t.BumpedAt, Closed: t.Status != domain.ThreadOpen, InitialPost: first}
+}
+
+func (p Public) replyCount(ctx context.Context, threadID domain.ThreadID) (int64, error) {
+	var count int64
+	err := p.Runtime.DB.QueryRowContext(ctx, `SELECT max(count(*) - 1, 0) FROM posts WHERE thread_id=?`, string(threadID)).Scan(&count)
+	return count, err
 }
 func mapPost(p domain.Post) api.Post {
 	out := api.Post{ID: string(p.ID), ThreadID: string(p.ThreadID), AuthorID: string(p.AuthorID), State: string(p.Status), CreatedAt: p.CreatedAt, DeletedAt: p.DeletedAt}

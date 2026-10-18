@@ -107,9 +107,10 @@ type Ban struct {
 
 // Board defines model for Board.
 type Board struct {
-	Id    ResourceID `json:"id"`
-	Slug  string     `json:"slug"`
-	Title string     `json:"title"`
+	Id          ResourceID `json:"id"`
+	Slug        string     `json:"slug"`
+	ThreadCount int64      `json:"thread_count"`
+	Title       string     `json:"title"`
 }
 
 // Challenge defines model for Challenge.
@@ -260,6 +261,7 @@ type Thread struct {
 	CreatedAt   Timestamp  `json:"created_at"`
 	Id          ThreadID   `json:"id"`
 	InitialPost *Post      `json:"initial_post,omitempty"`
+	ReplyCount  int64      `json:"reply_count"`
 	UpdatedAt   Timestamp  `json:"updated_at"`
 }
 

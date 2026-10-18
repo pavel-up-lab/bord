@@ -9,9 +9,10 @@ import (
 )
 
 type Board struct {
-	ID    string `json:"id"`
-	Slug  string `json:"slug"`
-	Title string `json:"title"`
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	ThreadCount int64  `json:"thread_count"`
 }
 
 type Attachment struct {
@@ -42,6 +43,7 @@ type Thread struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Closed      bool      `json:"closed"`
+	ReplyCount  int64     `json:"reply_count"`
 	InitialPost *Post     `json:"initial_post,omitempty"`
 }
 

@@ -315,11 +315,11 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 		check func(*testing.T, Model, []tea.Cmd)
 	}{
 		{
-			name:  "80x24 board select and repeated click open",
+			name:  "80x24 board single click opens",
 			model: newModel(80, 24),
-			msgs:  []tea.MouseMsg{click(5, 4), click(5, 4)},
+			msgs:  []tea.MouseMsg{click(5, 4)},
 			check: func(t *testing.T, m Model, cmds []tea.Cmd) {
-				if m.boardIndex != 1 || m.focus != FocusContent || cmds[1] == nil {
+				if m.boardIndex != 1 || m.focus != FocusContent || cmds[0] == nil {
 					t.Fatalf("board=%d focus=%v commands=%v", m.boardIndex, m.focus, cmds)
 				}
 			},
@@ -372,7 +372,7 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 				wheel(80, 10, tea.MouseButtonWheelUp),
 			},
 			check: func(t *testing.T, m Model, _ []tea.Cmd) {
-				if m.boardIndex != 3 || m.contentIndex != 0 || m.focus != FocusContent {
+				if m.boardIndex != 1 || m.contentIndex != 0 || m.focus != FocusContent {
 					t.Fatalf("board=%d content=%d focus=%v", m.boardIndex, m.contentIndex, m.focus)
 				}
 			},
@@ -404,6 +404,37 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 			}
 			tc.check(t, m, cmds)
 		})
+	}
+}
+
+func TestClickReplyNumberSelectsTargetPost(t *testing.T) {
+	target := "post_1"
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 120, 24, false
+	m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: target}, {Id: "post_2", ReplyToId: &target}, {Id: "post_3"}}
+	m.contentIndex = 1
+	meta := postMeta(m.posts[1], true)
+	needle := ">>" + target
+	byteOffset := strings.LastIndex(meta, needle)
+	x := m.leftPanelWidth() + 2 + textWidth(meta[:byteOffset]) + 1
+	updated, cmd := m.Update(tea.MouseMsg{X: x, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	got := updated.(Model)
+	if cmd != nil || got.screen != ThreadScreen || got.contentIndex != 0 {
+		t.Fatalf("reply target click: x=%d screen=%v index=%d cmd=%v", x, got.screen, got.contentIndex, cmd)
+	}
+}
+
+func TestRowsShowBoardAndReplyCounts(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.boards = []generated.Board{{Slug: "general", Title: "Общение", ThreadCount: 12}}
+	if got := m.boardRows()[0].lines[0]; !strings.Contains(got, "/general/ [12]") {
+		t.Fatalf("board count missing: %q", got)
+	}
+	m.screen = CatalogScreen
+	m.threads = []generated.Thread{{Id: "thread_1", ReplyCount: 7}}
+	if got := m.contentRows()[0].lines[0]; !strings.Contains(got, "thread_1           [7]") {
+		t.Fatalf("reply count missing: %q", got)
 	}
 }
 

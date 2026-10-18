@@ -3,10 +3,12 @@ package tui
 import (
 	"strings"
 
+	"bord/api/generated"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const mouseWheelStep = 3
+const mouseWheelStep = 1
 
 // updateMouse deliberately uses the same model operations as the keyboard.
 // Bubble Tea reports zero-based cell coordinates, which map directly onto the
@@ -164,13 +166,9 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 		if index < 0 || index >= len(m.boards) {
 			return m, nil
 		}
-		wasSelected := m.focus == FocusBoards && m.boardIndex == index
-		m.focus, m.boardIndex, m.screen = FocusBoards, index, CatalogScreen
-		if wasSelected {
-			m.focus = FocusContent
-			return m, m.loadThreads(false)
-		}
-		return m, nil
+		m.focus, m.boardIndex, m.screen = FocusContent, index, CatalogScreen
+		m.activeThread, m.posts = "", nil
+		return m, m.loadThreads(false)
 	}
 	if m.screen == AttachmentScreen {
 		m.focus = FocusContent
@@ -190,6 +188,16 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 	if index < 0 || index >= length {
 		return m, nil
 	}
+	if m.screen == ThreadScreen && localY%2 == 0 {
+		post := m.posts[index]
+		if post.ReplyToId != nil && m.clicksReplyTarget(x, post, index) {
+			if target := indexPost(m.posts, *post.ReplyToId); target >= 0 {
+				m.focus, m.contentIndex = FocusContent, target
+				m.ensurePostVisible(target)
+			}
+			return m, nil
+		}
+	}
 	m.focus, m.contentIndex = FocusContent, index
 	if m.screen == CatalogScreen {
 		return m.openSelection()
@@ -198,6 +206,42 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 		m.screen, m.postScroll = PostScreen, 0
 	}
 	return m, nil
+}
+
+func (m Model) clicksReplyTarget(x int, post generated.Post, index int) bool {
+	if post.ReplyToId == nil {
+		return false
+	}
+	panelStart := 0
+	if !m.isNarrow() {
+		panelStart = m.leftPanelWidth()
+	}
+	meta := postMeta(post, index == m.contentIndex)
+	target := ">>" + SanitizeTerminalText(*post.ReplyToId)
+	byteOffset := strings.LastIndex(meta, target)
+	if byteOffset < 0 {
+		return false
+	}
+	start := panelStart + 2 + textWidth(meta[:byteOffset]) // border + row padding
+	return x >= start && x < start+textWidth(target)
+}
+
+func (m *Model) ensurePostVisible(index int) {
+	visible := max(1, m.visibleRows()/2)
+	if index < m.contentScroll {
+		m.contentScroll = index
+	} else if index >= m.contentScroll+visible {
+		m.contentScroll = index - visible + 1
+	}
+}
+
+func indexPost(posts []generated.Post, id string) int {
+	for i := range posts {
+		if posts[i].Id == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m Model) insidePanelCell(panel Focus, x int) bool {

@@ -856,13 +856,13 @@ func (m Model) workspace(t theme, width, height int) []string {
 	}
 	if m.isNarrow() {
 		if m.focus == FocusBoards {
-			return m.singlePanel(t, width, height, "Доски", "РАЗДЕЛ / НАЗВАНИЕ", m.boardRows(), true)
+			return m.singlePanel(t, width, height, "Доски", "РАЗДЕЛ / THREADS / НАЗВАНИЕ", m.boardRows(), true)
 		}
 		return m.singlePanel(t, width, height, m.contentTitle(), m.contentHint(), m.contentRows(), true)
 	}
 	leftWidth := m.leftPanelWidth()
 	rightWidth := width - leftWidth
-	left := m.singlePanel(t, leftWidth, height, "Доски", "РАЗДЕЛ / НАЗВАНИЕ", m.boardRows(), m.focus == FocusBoards)
+	left := m.singlePanel(t, leftWidth, height, "Доски", "РАЗДЕЛ / THREADS / НАЗВАНИЕ", m.boardRows(), m.focus == FocusBoards)
 	right := m.singlePanel(t, rightWidth, height, m.contentTitle(), m.contentHint(), m.contentRows(), m.focus == FocusContent)
 	joined := make([]string, height)
 	for i := range joined {
@@ -945,7 +945,7 @@ func (m Model) boardRows() []displayRow {
 		if i == m.boardIndex {
 			marker = "> "
 		}
-		rows = append(rows, displayRow{lines: []string{fmt.Sprintf("%s/%s/  %s", marker, SanitizeTerminalText(board.Slug), SanitizeTerminalText(board.Title))}, active: i == m.boardIndex})
+		rows = append(rows, displayRow{lines: []string{fmt.Sprintf("%s/%s/ [%d] %s", marker, SanitizeTerminalText(board.Slug), board.ThreadCount, SanitizeTerminalText(board.Title))}, active: i == m.boardIndex})
 	}
 	return rows
 }
@@ -957,7 +957,7 @@ func (m Model) contentHint() string {
 	if m.screen == AttachmentScreen {
 		return "ВЛОЖЕНИЕ"
 	}
-	return "THREAD / UPDATED / PREVIEW"
+	return "THREAD / REPLIES / UPDATED / PREVIEW"
 }
 
 func (m Model) contentRows() []displayRow {
@@ -966,14 +966,7 @@ func (m Model) contentRows() []displayRow {
 		end := minInt(len(m.posts), m.contentScroll+m.visibleRows())
 		for i := m.contentScroll; i < end; i++ {
 			p := m.posts[i]
-			marker := "  "
-			if i == m.contentIndex {
-				marker = "> "
-			}
-			meta := fmt.Sprintf("%s>>%s  %-12s  %s", marker, SanitizeTerminalText(p.Id), SanitizeTerminalText(p.AuthorId), p.CreatedAt.Format("2006-01-02 15:04"))
-			if p.ReplyToId != nil {
-				meta += "  → >>" + SanitizeTerminalText(*p.ReplyToId)
-			}
+			meta := postMeta(p, i == m.contentIndex)
 			body := "[" + SanitizeTerminalText(string(p.State)) + "]"
 			if p.State == generated.Visible && p.Body != nil {
 				body = preview(*p.Body)
@@ -993,7 +986,7 @@ func (m Model) contentRows() []displayRow {
 		if t.Closed {
 			state = "×"
 		}
-		meta := fmt.Sprintf("%s%s %-18s  %s", marker, state, SanitizeTerminalText(t.Id), t.UpdatedAt.Format("2006-01-02 15:04"))
+		meta := fmt.Sprintf("%s%s %-18s [%d] %s", marker, state, SanitizeTerminalText(t.Id), t.ReplyCount, t.UpdatedAt.Format("2006-01-02 15:04"))
 		body := "(нет текста)"
 		if t.InitialPost != nil && t.InitialPost.Body != nil {
 			body = preview(*t.InitialPost.Body)
@@ -1001,6 +994,18 @@ func (m Model) contentRows() []displayRow {
 		rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
 	}
 	return rows
+}
+
+func postMeta(p generated.Post, active bool) string {
+	marker := "  "
+	if active {
+		marker = "> "
+	}
+	meta := fmt.Sprintf("%s>>%s  %-12s  %s", marker, SanitizeTerminalText(p.Id), SanitizeTerminalText(p.AuthorId), p.CreatedAt.Format("2006-01-02 15:04"))
+	if p.ReplyToId != nil {
+		meta += "  → >>" + SanitizeTerminalText(*p.ReplyToId)
+	}
+	return meta
 }
 
 func (m Model) attachmentRows() []displayRow {
