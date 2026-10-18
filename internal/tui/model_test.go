@@ -260,6 +260,72 @@ func TestWindowResizeConsumesExactTerminalAndThemeCycles(t *testing.T) {
 	}
 }
 
+func TestFitPreservesGraphemeWidth(t *testing.T) {
+	setColorProfile(3)
+	for _, tc := range []struct {
+		value string
+		width int
+	}{
+		{"👍🏽", 4},
+		{"👨‍👩‍👧‍👦", 4},
+		{"e\u0301", 3},
+		{"🇺🇦", 3},
+		{"1️⃣", 3},
+	} {
+		got := fit(tc.value, tc.width, ' ')
+		if width := lipgloss.Width(got); width != tc.width {
+			t.Fatalf("fit(%q, %d) width=%d: %q", tc.value, tc.width, width, got)
+		}
+		if !strings.HasPrefix(got, tc.value) {
+			t.Fatalf("fit(%q, %d) split grapheme: %q", tc.value, tc.width, got)
+		}
+	}
+}
+
+func TestResponsiveScreensAndUnicodeUseExactTerminal(t *testing.T) {
+	setColorProfile(1)
+	defer setColorProfile(3)
+	body := strings.Repeat("👍🏽👨‍👩‍👧‍👦e\u0301", 20) + "\x1b]52;c;c2VjcmV0\a"
+	m := NewModel(context.Background(), &fakeService{})
+	m.loading = false
+	m.boards = []generated.Board{{Slug: body, Title: body}}
+	m.threads = []generated.Thread{{Id: body, InitialPost: &generated.Post{Body: &body}}}
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 120, Height: 30}, {Width: 80, Height: 40}, {Width: 48, Height: 18}} {
+		updated, _ := m.Update(size)
+		m = updated.(Model)
+		for _, screen := range []Screen{CatalogScreen, HelpScreen, ComposerScreen} {
+			m.screen = screen
+			if screen == ComposerScreen {
+				m.editor.SetValue(body)
+				m.editor.Focus()
+			}
+			view := m.View()
+			assertDimensions(t, view, size.Width, size.Height)
+			if strings.Contains(view, "\x1b]52") {
+				t.Fatalf("untrusted escape survived in %v view", screen)
+			}
+			if screen == ComposerScreen && !strings.Contains(view, "\x1b[") {
+				t.Fatal("textarea ANSI styling was stripped instead of width-aware rendering")
+			}
+			if screen == ComposerScreen && strings.Contains(view, "\uFFFD[") {
+				t.Fatal("textarea ANSI styling was rendered as visible replacement text")
+			}
+		}
+	}
+}
+
+func TestFocusedAndInactiveSelectionsHaveDistinctContrast(t *testing.T) {
+	setColorProfile(1)
+	defer setColorProfile(3)
+	m := NewModel(context.Background(), &fakeService{})
+	rows := []displayRow{{lines: []string{"selected"}, active: true}}
+	active := m.singlePanel(palette(ThemeClassic), 20, 4, "Active", "ITEM", rows, true)
+	inactive := m.singlePanel(palette(ThemeClassic), 20, 4, "Inactive", "ITEM", rows, false)
+	if active[2] == inactive[2] {
+		t.Fatal("focused and inactive selections use identical styling")
+	}
+}
+
 func TestUntrustedTerminalControlsAreNeutralized(t *testing.T) {
 	setColorProfile(3)
 	malicious := "x\x1b[31m\x1b]52;c;YXR0YWNr\a\x00\u009bred"

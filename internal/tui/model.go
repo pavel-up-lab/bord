@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type Screen uint8
@@ -666,8 +667,9 @@ func (m Model) workspace(t theme, width, height int) []string {
 }
 
 type displayRow struct {
-	lines  []string
-	active bool
+	lines       []string
+	active      bool
+	trustedANSI bool
 }
 
 func (m Model) singlePanel(t theme, width, height int, title, hint string, rows []displayRow, active bool) []string {
@@ -708,10 +710,14 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 				if active {
 					bg, fg = t.selectionBackground, t.selection
 				} else {
-					bg, fg = t.barBackground, t.barForeground
+					bg, fg = t.background, t.accent
 				}
 			}
-			lines = append(lines, paint(t.background, border, "║", 1)+paint(bg, fg, " "+text, inner)+paint(t.background, border, "║", 1))
+			rowPaint := paint
+			if row.trustedANSI {
+				rowPaint = paintANSI
+			}
+			lines = append(lines, paint(t.background, border, "║", 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.background, border, "║", 1))
 			available--
 		}
 		if available <= 0 {
@@ -734,7 +740,7 @@ func (m Model) boardRows() []displayRow {
 		if i == m.boardIndex {
 			marker = "> "
 		}
-		rows = append(rows, displayRow{[]string{fmt.Sprintf("%s/%s/  %s", marker, SanitizeTerminalText(board.Slug), SanitizeTerminalText(board.Title))}, i == m.boardIndex})
+		rows = append(rows, displayRow{lines: []string{fmt.Sprintf("%s/%s/  %s", marker, SanitizeTerminalText(board.Slug), SanitizeTerminalText(board.Title))}, active: i == m.boardIndex})
 	}
 	return rows
 }
@@ -770,7 +776,7 @@ func (m Model) contentRows() []displayRow {
 			if p.State == generated.Visible && p.Body != nil {
 				body = preview(*p.Body)
 			}
-			rows = append(rows, displayRow{[]string{meta, "  " + body}, i == m.contentIndex})
+			rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
 		}
 		return rows
 	}
@@ -790,7 +796,7 @@ func (m Model) contentRows() []displayRow {
 		if t.InitialPost != nil && t.InitialPost.Body != nil {
 			body = preview(*t.InitialPost.Body)
 		}
-		rows = append(rows, displayRow{[]string{meta, "  " + body}, i == m.contentIndex})
+		rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
 	}
 	return rows
 }
@@ -805,7 +811,7 @@ func (m Model) composerLines() []displayRow {
 	}
 	lines := strings.Split(m.editor.View(), "\n")
 	lines = append(lines, "", "Ctrl+S отправить • Ctrl+O вложение • Esc отменить", "Вложение: "+attachment)
-	return []displayRow{{lines: lines}}
+	return []displayRow{{lines: lines, trustedANSI: true}}
 }
 
 func (m Model) helpLines() []displayRow {
@@ -866,40 +872,31 @@ func preview(value string) string {
 func textWidth(value string) int { return lipgloss.Width(value) }
 
 func fit(value string, width int, fill rune) string {
+	return fitWidth(SanitizeTerminalText(value), width, fill)
+}
+
+func fitANSI(value string, width int, fill rune) string {
+	return fitWidth(value, width, fill)
+}
+
+func fitWidth(value string, width int, fill rune) string {
 	if width <= 0 {
 		return ""
 	}
-	value = SanitizeTerminalText(value)
-	truncated := textWidth(value) > width
-	limit := width
-	if truncated {
-		limit--
-	}
-	var b strings.Builder
-	used := 0
-	for _, r := range value {
-		rw := lipgloss.Width(string(r))
-		if rw < 1 {
-			continue
-		}
-		if used+rw > limit {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	if truncated {
-		b.WriteRune('…')
-		used++
-	}
+	value = ansi.Truncate(value, width, "…")
+	used := textWidth(value)
 	if used < width {
-		b.WriteString(strings.Repeat(string(fill), width-used))
+		value += strings.Repeat(string(fill), width-used)
 	}
-	return b.String()
+	return value
 }
 
 func paint(background, foreground lipgloss.Color, value string, width int) string {
 	return lipgloss.NewStyle().Background(background).Foreground(foreground).Render(fit(value, width, ' '))
+}
+
+func paintANSI(background, foreground lipgloss.Color, value string, width int) string {
+	return lipgloss.NewStyle().Background(background).Foreground(foreground).Render(fitANSI(value, width, ' '))
 }
 func mergePosts(old, incoming []generated.Post, appendPage bool) []generated.Post {
 	if !appendPage {
