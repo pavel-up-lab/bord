@@ -28,6 +28,7 @@ const (
 	BoardsScreen Screen = iota
 	CatalogScreen
 	ThreadScreen
+	PostScreen
 	ComposerScreen
 	HelpScreen
 	AttachmentScreen
@@ -74,6 +75,7 @@ type Model struct {
 	threads                                              []generated.Thread
 	posts                                                []generated.Post
 	boardIndex, contentIndex, boardScroll, contentScroll int
+	postScroll                                           int
 	activeThread                                         string
 	nextThreadCursor, nextPostCursor                     *string
 	loading                                              bool
@@ -351,14 +353,24 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = FocusBoards
 		}
 	case matches(key, m.keys.Back):
-		if m.screen == ThreadScreen || m.screen == AttachmentScreen {
+		if m.screen == PostScreen {
+			m.screen, m.postScroll = ThreadScreen, 0
+		} else if m.screen == ThreadScreen || m.screen == AttachmentScreen {
 			m.screen, m.activeThread, m.posts = CatalogScreen, "", nil
 		} else if m.isNarrow() && m.focus == FocusContent {
 			m.focus = FocusBoards
 		}
 	case matches(key, m.keys.Up):
-		m.move(-1)
+		if m.screen == PostScreen {
+			m.scrollPost(-1)
+		} else {
+			m.move(-1)
+		}
 	case matches(key, m.keys.Down):
+		if m.screen == PostScreen {
+			m.scrollPost(1)
+			return m, nil
+		}
 		wasLast := (m.screen == ThreadScreen && m.contentIndex == len(m.posts)-1) || (m.screen == CatalogScreen && m.contentIndex == len(m.threads)-1)
 		m.move(1)
 		if wasLast && m.focus == FocusContent {
@@ -433,6 +445,9 @@ func (m Model) openSelection() (tea.Model, tea.Cmd) {
 		m.contentIndex, m.contentScroll = 0, 0
 		return m, m.loadPosts(false)
 	}
+	if m.screen == ThreadScreen && len(m.posts) > 0 {
+		m.screen, m.postScroll = PostScreen, 0
+	}
 	return m, nil
 }
 
@@ -449,6 +464,12 @@ func (m *Model) move(delta int) {
 	}
 	m.contentIndex = clamp(m.contentIndex+delta, 0, length-1)
 	m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, m.visibleRows())
+}
+
+func (m *Model) scrollPost(delta int) {
+	lines := m.postDetailLines()
+	visible := max(1, m.height-6)
+	m.postScroll = clamp(m.postScroll+delta, 0, max(0, len(lines)-visible))
 }
 
 func (m *Model) nextRequest() (uint64, context.Context, context.CancelFunc) {
@@ -624,6 +645,12 @@ func (m Model) contentTitle() string {
 	if m.screen == ThreadScreen {
 		return "Тред " + SanitizeTerminalText(m.activeThread)
 	}
+	if m.screen == PostScreen {
+		if post, ok := m.currentPost(); ok {
+			return "Пост >>" + SanitizeTerminalText(post.Id)
+		}
+		return "Пост"
+	}
 	if m.screen == AttachmentScreen {
 		return "Вложение"
 	}
@@ -677,6 +704,9 @@ func (m Model) workspace(t theme, width, height int) []string {
 	}
 	if m.screen == HelpScreen {
 		return m.singlePanel(t, width, height, "Справка", "КЛАВИША  ДЕЙСТВИЕ", m.helpLines(), true)
+	}
+	if m.screen == PostScreen {
+		return m.singlePanel(t, width, height, m.contentTitle(), "ПОЛНЫЙ ТЕКСТ • ↑/↓ ПРОКРУТКА • ESC НАЗАД", m.postDetailRows(), true)
 	}
 	if m.isNarrow() {
 		if m.focus == FocusBoards {
@@ -852,11 +882,52 @@ func (m Model) composerLines() []displayRow {
 
 func (m Model) helpLines() []displayRow {
 	return []displayRow{{lines: []string{
-		"↑/k ↓/j   навигация и дозагрузка", "Tab        сменить панель", "Enter      открыть", "Esc        назад / закрыть",
+		"↑/k ↓/j   навигация / прокрутка полного поста", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
 		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост",
 		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t          следующая тема", "?          эта справка", "q Ctrl+C   выход",
-		"Мышь       повторный клик по треду открывает его", "Мышь       повторный клик по посту отвечает на него", "Колесо     прокрутка панели под указателем",
+		"Мышь       один клик открывает тред или полный пост", "F8         ответить на выделенный/открытый пост", "Колесо     навигация или прокрутка полного поста",
 	}}}
+}
+
+func (m Model) currentPost() (generated.Post, bool) {
+	if len(m.posts) == 0 {
+		return generated.Post{}, false
+	}
+	return m.posts[clamp(m.contentIndex, 0, len(m.posts)-1)], true
+}
+
+func (m Model) postDetailLines() []string {
+	post, ok := m.currentPost()
+	if !ok {
+		return []string{"Пост не найден"}
+	}
+	lines := []string{
+		fmt.Sprintf(">>%s  %s  %s", SanitizeTerminalText(post.Id), SanitizeTerminalText(post.AuthorId), post.CreatedAt.Format("2006-01-02 15:04")),
+	}
+	if post.ReplyToId != nil {
+		lines = append(lines, "Ответ на >>"+SanitizeTerminalText(*post.ReplyToId))
+	}
+	lines = append(lines, "")
+	body := "[" + SanitizeTerminalText(string(post.State)) + "]"
+	if post.State == generated.Visible && post.Body != nil {
+		body = sanitizeMultilineTerminalText(*post.Body)
+		if strings.TrimSpace(body) == "" {
+			body = "(пусто)"
+		}
+	}
+	wrapWidth := max(1, m.width-5)
+	wrapped := ansi.Hardwrap(ansi.Wordwrap(body, wrapWidth, " "), wrapWidth, true)
+	lines = append(lines, strings.Split(wrapped, "\n")...)
+	if post.Attachment != nil {
+		lines = append(lines, "", "Вложение: "+SanitizeTerminalText(post.Attachment.Id))
+	}
+	return lines
+}
+
+func (m Model) postDetailRows() []displayRow {
+	lines := m.postDetailLines()
+	start := clamp(m.postScroll, 0, max(0, len(lines)-1))
+	return []displayRow{{lines: lines[start:]}}
 }
 
 func (m Model) statusLine(t theme, width int) string {
@@ -892,6 +963,9 @@ func (m Model) commandLabels() []string {
 	}
 	if m.screen == ThreadScreen {
 		return []string{"F1 Help", "F5 Refresh", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
+	}
+	if m.screen == PostScreen {
+		return []string{"Esc Back", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
 	}
 	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New Thread", "F10 Quit"}
 }
@@ -931,6 +1005,10 @@ func (m Model) location() string {
 }
 
 func (m Model) selectionCount() string {
+	if m.screen == PostScreen {
+		lines := m.postDetailLines()
+		return fmt.Sprintf("строка %d/%d", minInt(m.postScroll+1, len(lines)), len(lines))
+	}
 	if m.screen == ThreadScreen {
 		return fmt.Sprintf("%d posts", len(m.posts))
 	}

@@ -313,11 +313,11 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 			},
 		},
 		{
-			name:  "wide content row click and open",
+			name:  "wide content row single click opens thread",
 			model: newModel(120, 30),
-			msgs:  []tea.MouseMsg{click(70, 5), click(70, 6)},
+			msgs:  []tea.MouseMsg{click(70, 5)},
 			check: func(t *testing.T, m Model, cmds []tea.Cmd) {
-				if m.contentIndex != 0 || m.screen != ThreadScreen || m.activeThread != "thread_2" || cmds[1] == nil {
+				if m.contentIndex != 0 || m.screen != ThreadScreen || m.activeThread != "thread_2" || cmds[0] == nil {
 					t.Fatalf("index=%d screen=%v thread=%q", m.contentIndex, m.screen, m.activeThread)
 				}
 			},
@@ -331,23 +331,23 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 			}(),
 			msgs: []tea.MouseMsg{click(20, 7)},
 			check: func(t *testing.T, m Model, _ []tea.Cmd) {
-				if m.contentIndex != 2 || m.focus != FocusContent {
-					t.Fatalf("index=%d focus=%v", m.contentIndex, m.focus)
+				if m.screen != ThreadScreen || m.activeThread != "thread_3" || m.focus != FocusContent {
+					t.Fatalf("screen=%v thread=%q focus=%v", m.screen, m.activeThread, m.focus)
 				}
 			},
 		},
 		{
-			name: "post row selection and repeated click reply",
+			name: "post row single click opens full post",
 			model: func() Model {
 				m := newModel(80, 24)
 				m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
 				m.posts = []generated.Post{{Id: "post_1"}, {Id: "post_2"}, {Id: "post_3"}}
 				return m
 			}(),
-			msgs: []tea.MouseMsg{click(60, 6), click(60, 6)},
+			msgs: []tea.MouseMsg{click(60, 6)},
 			check: func(t *testing.T, m Model, _ []tea.Cmd) {
-				if m.contentIndex != 1 || m.screen != ComposerScreen || m.draft.Thread != "thread_1" || m.draft.ReplyTo == nil || *m.draft.ReplyTo != "post_2" {
-					t.Fatalf("index=%d screen=%v draft=%+v", m.contentIndex, m.screen, m.draft)
+				if m.contentIndex != 1 || m.screen != PostScreen {
+					t.Fatalf("index=%d screen=%v", m.contentIndex, m.screen)
 				}
 			},
 		},
@@ -392,6 +392,45 @@ func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 			}
 			tc.check(t, m, cmds)
 		})
+	}
+}
+
+func TestOpenFullPostWrapScrollBackAndReply(t *testing.T) {
+	body := strings.Repeat("длинный текст публикации ", 30) + "\nпоследняя строка"
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 42, 12, false
+	m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", AuthorId: "anon_1", State: generated.Visible, Body: &body}}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.screen != PostScreen || !strings.Contains(m.View(), "ПОЛНЫЙ ТЕКСТ") || !strings.Contains(m.View(), "длинный") {
+		t.Fatalf("full post was not opened:\n%s", m.View())
+	}
+	for range 100 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+	}
+	if m.postScroll == 0 || !strings.Contains(m.View(), "последняя строка") {
+		t.Fatalf("full post did not scroll to the end: scroll=%d\n%s", m.postScroll, m.View())
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF8})
+	reply := updated.(Model)
+	if reply.screen != ComposerScreen || reply.draft.ReplyTo == nil || *reply.draft.ReplyTo != "post_1" {
+		t.Fatalf("reply target=%+v screen=%v", reply.draft, reply.screen)
+	}
+
+	m = reply
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.screen != PostScreen {
+		t.Fatalf("composer returned to screen=%v", m.screen)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.screen != ThreadScreen || m.postScroll != 0 {
+		t.Fatalf("back screen=%v scroll=%d", m.screen, m.postScroll)
 	}
 }
 

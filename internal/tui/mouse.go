@@ -67,7 +67,7 @@ func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) canGoBack() bool {
-	return m.screen == ThreadScreen || m.screen == AttachmentScreen || m.screen == ComposerScreen || m.screen == HelpScreen || (m.isNarrow() && m.focus == FocusContent)
+	return m.screen == ThreadScreen || m.screen == PostScreen || m.screen == AttachmentScreen || m.screen == ComposerScreen || m.screen == HelpScreen || (m.isNarrow() && m.focus == FocusContent)
 }
 
 func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
@@ -96,6 +96,9 @@ func (m Model) commandKeys() []tea.KeyMsg {
 	}
 	if m.screen == ThreadScreen {
 		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
+	}
+	if m.screen == PostScreen {
+		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
 	}
 	return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF2}, {Type: tea.KeyF4}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF10}}
 }
@@ -149,6 +152,9 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 		m.focus = FocusContent
 		return m, nil
 	}
+	if m.screen == PostScreen {
+		return m, nil
+	}
 	if localY/2 >= m.visibleRows() || !m.insidePanelCell(panel, x) {
 		return m, nil
 	}
@@ -160,13 +166,12 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 	if index < 0 || index >= length {
 		return m, nil
 	}
-	wasSelected := m.focus == FocusContent && m.contentIndex == index
 	m.focus, m.contentIndex = FocusContent, index
-	if wasSelected && m.screen == CatalogScreen {
+	if m.screen == CatalogScreen {
 		return m.openSelection()
 	}
-	if wasSelected && m.screen == ThreadScreen {
-		m.beginReplyComposer(m.posts[index].Id)
+	if m.screen == ThreadScreen {
+		m.screen, m.postScroll = PostScreen, 0
 	}
 	return m, nil
 }
@@ -188,6 +193,10 @@ func (m Model) wheelAt(x, y, delta int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.focus = panel
+	if m.screen == PostScreen {
+		m.scrollPost(delta)
+		return m, nil
+	}
 	if panel == FocusBoards {
 		m.move(delta)
 		return m, nil
