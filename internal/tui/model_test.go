@@ -503,6 +503,25 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 	}
 }
 
+func TestMouseCannotQuitFromMisreportedBottomRow(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 80, 24, false
+	m.screen = CatalogScreen
+	quitLabelStart := 0
+	labels := m.commandLabels()
+	for i, label := range labels[:len(labels)-1] {
+		quitLabelStart += textWidth(label) + 1
+		if i < len(labels)-2 {
+			quitLabelStart++
+		}
+	}
+	updated, cmd := m.Update(tea.MouseMsg{X: quitLabelStart + 1, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	got := updated.(Model)
+	if cmd != nil || got.screen != CatalogScreen {
+		t.Fatalf("mouse quit was accepted: cmd=%v screen=%v", cmd, got.screen)
+	}
+}
+
 func TestComposerActionsDistinguishThreadAndPostReplies(t *testing.T) {
 	m := NewModel(context.Background(), &fakeService{})
 	m.loading = false
