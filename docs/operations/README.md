@@ -8,6 +8,7 @@
 - [Выпуск, checksums, SBOM и scanning](release.md)
 - [MVP capacity, load profile и alerts](../performance/README.md)
 - [MVP release checklist](release-checklist.md)
+- [Демо-данные для ручного тестирования](demo-data.md)
 - [Локальное evidence operations/release](evidence/local-staging-2026-10-17.md)
 
 Публичный запуск запрещен до успешных staging-проверок Caddy/SSE,

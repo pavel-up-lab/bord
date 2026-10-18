@@ -99,3 +99,33 @@ func TestAdminCommandRequiresConfirmationAndKeepsSecretOffOutput(t *testing.T) {
 		t.Fatalf("missing confirmation exit=%d", code)
 	}
 }
+
+func TestDemoSeedCommandRequiresExplicitPathsAndConfirmation(t *testing.T) {
+	root := t.TempDir()
+	database := filepath.Join(root, "demo.db")
+	blobs := filepath.Join(root, "blobs")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"demo-seed", "--database", database, "--blobs", blobs}, &stdout, &stderr); code != ExitUsage {
+		t.Fatalf("unconfirmed seed exit=%d", code)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	args := []string{"demo-seed", "--database", database, "--blobs", blobs, "--confirm", "DEMO-SEED"}
+	if code := Run(context.Background(), args, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("seed exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"boards":4`) || !strings.Contains(stdout.String(), `"replayed":false`) {
+		t.Fatalf("seed output=%s", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), args, &stdout, &stderr); code != ExitOK || !strings.Contains(stdout.String(), `"replayed":true`) {
+		t.Fatalf("repeat exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	reset := []string{"demo-seed", "--database", database, "--blobs", blobs, "--reset", "--confirm", "RESET-DEMO-SEED"}
+	if code := Run(context.Background(), reset, &stdout, &stderr); code != ExitUsage {
+		t.Fatalf("unforced reset exit=%d", code)
+	}
+}
