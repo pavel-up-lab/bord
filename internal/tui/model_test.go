@@ -17,7 +17,11 @@ import (
 	"time"
 
 	"bord/api/generated"
+	serverapi "bord/internal/api"
 	"bord/internal/client"
+	"bord/internal/events"
+	"bord/internal/integration"
+	storage "bord/internal/storage/sqlite"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -104,6 +108,16 @@ func TestComposerRetryReusesIdempotencyAndPreservesDraft(t *testing.T) {
 	if m.editor.Value() != "draft survives" || m.screen != ComposerScreen {
 		t.Fatal("failed send lost draft")
 	}
+	if !strings.Contains(m.statusText(), "Ctrl+S повторить") || !strings.Contains(m.composerLines()[0].lines[len(m.composerLines()[0].lines)-2], "ОШИБКА") {
+		t.Fatal("composer did not expose retry status and key")
+	}
+	m.loading = true
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if cmd != nil || len(f.keys) != 1 {
+		t.Fatal("composer accepted a duplicate send while a request was active")
+	}
+	m.loading = false
 	second := m.sendDraft()().(sentMsg)
 	if len(f.keys) != 2 || f.keys[0] == "" || f.keys[0] != f.keys[1] || second.err == nil {
 		t.Fatalf("keys=%#v second=%#v", f.keys, second)
@@ -114,7 +128,7 @@ func TestComposerRetryReusesIdempotencyAndPreservesDraft(t *testing.T) {
 		t.Fatalf("changed payload reused key: keys=%#v third=%#v", f.keys, third)
 	}
 	f.createErr = nil
-	updated, cmd := m.Update(sentMsg{id: m.requestID, result: generated.CreateResult{ThreadId: "thread_1", PostId: "post_1"}})
+	updated, cmd = m.Update(sentMsg{id: m.requestID, result: generated.CreateResult{ThreadId: "thread_1", PostId: "post_1"}})
 	m = updated.(Model)
 	if m.editor.Value() != "" || m.draft.IdempotencyKey != "" || m.screen != ThreadScreen || cmd == nil {
 		t.Fatal("successful send did not clear draft")
@@ -649,6 +663,127 @@ func TestScriptedFlowAgainstMockServer(t *testing.T) {
 	m = updated.(Model)
 	if len(m.boards) != 1 || len(m.threads) != 1 || m.screen != CatalogScreen {
 		t.Fatalf("model=%#v", m)
+	}
+}
+
+func TestComposerPostsThreadAndReplyThroughProductionRuntime(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "bord.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := integration.New(integration.Config{DB: db, Blobs: t.TempDir(), LookupKey: bytes.Repeat([]byte{1}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	if err := runtime.SeedBoard(ctx, "general", "General"); err != nil {
+		t.Fatal(err)
+	}
+	hub := events.NewHub(32, 8)
+	t.Cleanup(func() { _ = hub.Close() })
+	go func() {
+		_ = (&events.Dispatcher{Outbox: runtime.Outbox, Hub: hub, Interval: time.Millisecond, Batch: 20}).Run(ctx)
+	}()
+	cursors, err := serverapi.NewCursorCodec(bytes.Repeat([]byte{2}, 32), func() time.Time { return time.Now().UTC() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := serverapi.NewRouter(serverapi.Config{
+		Public: integration.Public{Runtime: runtime}, Abuse: runtime.Abuse, Events: hub,
+		CursorCodec: cursors, HeartbeatPeriod: 5 * time.Millisecond,
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	state, err := client.NewState(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := client.NewStore(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	transport, err := client.New(server.URL, server.Client(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posting, err := client.NewPostingAPI(transport, store, &state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(ctx, posting)
+	m.loading = false
+	m.boards = []generated.Board{{Id: "board_1", Slug: "general", Title: "General"}}
+	m.beginComposer("")
+	m.editor.SetValue("created by composer")
+	created := m.sendDraft()().(sentMsg)
+	if created.err != nil || created.result.ThreadId == "" || created.result.PostId == "" {
+		t.Fatalf("thread create=%#v", created)
+	}
+	updated, refresh := m.Update(created)
+	m = updated.(Model)
+	updated, watch := m.Update(refresh())
+	m = updated.(Model)
+	if len(m.posts) != 1 || watch == nil {
+		t.Fatalf("thread not visible after refresh: %#v", m.posts)
+	}
+
+	streamReady := make(chan struct{}, 1)
+	streamEvent := make(chan client.Event, 1)
+	streamCtx, stopStream := context.WithCancel(ctx)
+	defer stopStream()
+	go func() {
+		_ = posting.Subscribe(streamCtx, client.StreamScope{Thread: created.result.ThreadId}, client.StreamCallbacks{
+			Heartbeat: func() {
+				select {
+				case streamReady <- struct{}{}:
+				default:
+				}
+			},
+			Event: func(event client.Event) {
+				select {
+				case streamEvent <- event:
+				default:
+				}
+			},
+		}, client.Backoff{Min: time.Millisecond, Max: time.Millisecond})
+	}()
+	select {
+	case <-streamReady:
+	case <-time.After(time.Second):
+		t.Fatal("SSE stream did not become ready")
+	}
+
+	m.loading = false
+	m.beginComposer(created.result.ThreadId)
+	m.editor.SetValue("reply from composer")
+	replied := m.sendDraft()().(sentMsg)
+	if replied.err != nil || replied.result.PostId == "" {
+		t.Fatalf("reply create=%#v", replied)
+	}
+	select {
+	case event := <-streamEvent:
+		if event.Type != "post.created" {
+			t.Fatalf("SSE event=%#v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reply was not visible through SSE")
+	}
+	page, err := posting.Posts(ctx, created.result.ThreadId, nil, 100)
+	if err != nil || len(page.Posts) != 2 {
+		t.Fatalf("reply not visible after refresh: posts=%#v err=%v", page.Posts, err)
+	}
+	loaded, err := store.Load()
+	if err != nil || loaded.DeleteSecrets[created.result.PostId] == "" || loaded.DeleteSecrets[replied.result.PostId] == "" || len(loaded.PendingDeleteSecrets) != 0 {
+		t.Fatalf("resource credentials not atomically mapped: err=%v state=%#v", err, loaded)
+	}
+	if loaded.DeleteSecrets[created.result.PostId] == loaded.DeleteSecrets[replied.result.PostId] {
+		t.Fatal("thread and reply reused one delete secret")
 	}
 }
 
