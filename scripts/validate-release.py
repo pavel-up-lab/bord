@@ -13,15 +13,21 @@ import zipfile
 
 TARGETS = (
     ("bord", "linux", "amd64", ".tar.gz", "bord"),
+    ("bord", "linux", "arm64", ".tar.gz", "bord"),
     ("bord", "darwin", "amd64", ".tar.gz", "bord"),
+    ("bord", "darwin", "arm64", ".tar.gz", "bord"),
     ("bord", "windows", "amd64", ".zip", "bord.exe"),
+    ("bord", "windows", "arm64", ".zip", "bord.exe"),
     ("bord-server", "linux", "amd64", ".tar.gz", "bord-server"),
 )
-SUPPORT_FILES = {"LICENSE", "THIRD_PARTY_NOTICES"}
+COMMON_SUPPORT_FILES = {"LICENSE", "THIRD_PARTY_NOTICES"}
 
 
 def safe_members(names: list[str], root: str) -> None:
-    expected = {f"{root}/{name}" for name in SUPPORT_FILES}
+    support_files = set(COMMON_SUPPORT_FILES)
+    if root.startswith("bord_"):
+        support_files.add("README.md")
+    expected = {f"{root}/{name}" for name in support_files}
     expected.add(f"{root}/{root.split('_', 1)[0]}" + (".exe" if "_windows_" in root else ""))
     if set(names) != expected:
         raise SystemExit(f"unexpected archive members for {root}: {sorted(names)}")
@@ -36,18 +42,20 @@ def main() -> None:
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--extract", type=Path)
+    parser.add_argument("--tui-only", action="store_true")
     options = parser.parse_args()
+    targets = tuple(target for target in TARGETS if not options.tui_only or target[0] == "bord")
     checksums = {}
     for line in (options.directory / "SHA256SUMS").read_text(encoding="ascii").splitlines():
         digest, name = line.split("  ", 1)
         checksums[name] = digest
-    if len(checksums) != len(TARGETS):
-        raise SystemExit("SHA256SUMS must describe exactly four release archives")
+    if len(checksums) != len(targets):
+        raise SystemExit(f"SHA256SUMS must describe exactly {len(targets)} release archives")
     if options.extract:
         if options.extract.exists():
             shutil.rmtree(options.extract)
         options.extract.mkdir()
-    for command, goos, goarch, suffix, binary in TARGETS:
+    for command, goos, goarch, suffix, binary in targets:
         root = f"{command}_{options.version}_{goos}_{goarch}"
         name = root + suffix
         archive = options.directory / name

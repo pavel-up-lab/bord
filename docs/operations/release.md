@@ -2,7 +2,9 @@
 
 Tag `v*` запускает `.github/workflows/release.yml`. Workflow выполняет нативный
 smoke клиента на Linux, macOS и Windows, затем на Linux создает детерминированные
-архивы `bord` для трех ОС и `bord-server` для Linux amd64. Версия, commit и UTC
+архивы `bord` для Linux, macOS и Windows на amd64/arm64 и `bord-server` для
+Linux amd64. Каждый TUI-архив содержит исполняемый файл, лицензионные notices и
+гайд по установке. Версия, commit и UTC
 build date встраиваются через ldflags; `SOURCE_DATE_EPOCH` равен времени commit.
 
 `SHA256SUMS`, CycloneDX JSON SBOM исходников и распакованных release-бинарников,
@@ -29,7 +31,7 @@ SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" ./scripts/test-release.sh v
 ```
 
 Скрипт сам собирает набор дважды, сравнивает `SHA256SUMS`, безопасно проверяет
-состав и встроенную версию всех четырех архивов и исполняет оба Linux-бинарника.
+состав и встроенную версию всех семи архивов и исполняет оба Linux-бинарника.
 Чужие форматы проверяются без исполнения; официальный workflow дополнительно
 выполняет нативный client smoke на трех runner ОС. До публикации tag проверьте
 SBOM, license report и отсутствие High/Critical findings.

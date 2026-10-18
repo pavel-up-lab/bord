@@ -20,8 +20,11 @@ import zipfile
 
 TARGETS = (
     ("bord", "linux", "amd64"),
+    ("bord", "linux", "arm64"),
     ("bord", "darwin", "amd64"),
+    ("bord", "darwin", "arm64"),
     ("bord", "windows", "amd64"),
+    ("bord", "windows", "arm64"),
     ("bord-server", "linux", "amd64"),
 )
 
@@ -59,6 +62,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", default="dist")
+    parser.add_argument("--tui-only", action="store_true", help="package only cross-platform bord clients")
     options = parser.parse_args()
     if not options.version.startswith("v"):
         parser.error("version must start with v")
@@ -78,7 +82,8 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="bord-release-") as temporary:
         temp = Path(temporary)
-        for command, goos, goarch in TARGETS:
+        targets = tuple(target for target in TARGETS if not options.tui_only or target[0] == "bord")
+        for command, goos, goarch in targets:
             name = f"{command}_{options.version}_{goos}_{goarch}"
             stage = temp / name
             stage.mkdir()
@@ -98,6 +103,8 @@ def main() -> None:
             )
             shutil.copy2(root / "LICENSE", stage / "LICENSE")
             shutil.copy2(root / "THIRD_PARTY_NOTICES", stage / "THIRD_PARTY_NOTICES")
+            if command == "bord":
+                shutil.copy2(root / "docs" / "tui.md", stage / "README.md")
             archive = output / (name + (".zip" if goos == "windows" else ".tar.gz"))
             (archive_zip if goos == "windows" else archive_tar)(stage, archive, epoch)
 
@@ -106,6 +113,15 @@ def main() -> None:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         checksums.append(f"{digest}  {path.name}\n")
     (output / "SHA256SUMS").write_text("".join(checksums), encoding="ascii")
+    if options.tui_only:
+        (output / "README.txt").write_text(
+            "Bord TUI " + options.version + "\n\n"
+            "Choose the archive matching your operating system and CPU architecture.\n"
+            "Extract it and run bord (bord.exe on Windows). The complete Russian\n"
+            "installation and usage guide is included as README.md in every archive.\n\n"
+            "Verify the downloaded archive against SHA256SUMS before extraction.\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

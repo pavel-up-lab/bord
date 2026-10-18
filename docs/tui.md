@@ -29,6 +29,18 @@ shell внутри Windows Terminal.
 | macOS Intel | `bord-darwin-amd64` |
 | macOS Apple Silicon | `bord-darwin-arm64` |
 | Windows x86-64 | `bord-windows-amd64.exe` |
+| Windows ARM64 | `bord-windows-arm64.exe` |
+
+Репозиторий умеет сформировать отдельную папку с шестью готовыми TUI-архивами:
+
+```sh
+python3 scripts/release.py --version v0.1.0 --output dist-tui --tui-only
+python3 scripts/validate-release.py \
+  --directory dist-tui --version v0.1.0 --tui-only
+```
+
+В `dist-tui/` появятся по одному архиву для каждой пары ОС/архитектуры,
+`SHA256SUMS` и краткий `README.txt`. Полный этот гайд вложен в каждый архив.
 
 Если рядом с release опубликованы checksums, проверьте SHA-256 до установки.
 
