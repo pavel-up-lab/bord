@@ -8,6 +8,7 @@ REPEAT=${REPEAT:-5}
 
 go test ./...
 go test -race ./...
+python3 scripts/validate-landing.py
 
 # Re-run the concurrency- and boundary-sensitive paths under the race detector.
 go test -race ./internal/api ./internal/events ./internal/media ./internal/client ./internal/server \

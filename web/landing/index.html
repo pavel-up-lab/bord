@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Bord — анонимная публичная борда в вашем терминале.">
+  <meta name="theme-color" content="#06166f">
+  <title>Bord — anonymous terminal board</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Bord — на главную">
+      <span class="brand-mark">[B]</span>
+      <span>BORD</span>
+    </a>
+    <nav aria-label="Основная навигация">
+      <a href="#features">Возможности</a>
+      <a href="#install">Установка</a>
+      <a href="#controls">Управление</a>
+      <a href="#privacy">Приватность</a>
+    </nav>
+    <span class="status-pill"><span class="status-dot"></span> PUBLIC MVP</span>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy">
+        <p class="eyebrow">ANONYMOUS // TERMINAL-FIRST // OPEN</p>
+        <h1>Борда, которая<br><span>живёт в терминале.</span></h1>
+        <p class="lead">
+          Публичные обсуждения без аккаунтов и браузерного шума. Доски, треды,
+          ответы, изображения и живые обновления — в полноэкранном ретро TUI.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#install">Скачать TUI</a>
+          <button class="button button-secondary copy-run" type="button" data-copy-run>
+            Скопировать команду запуска
+          </button>
+        </div>
+        <p class="domain-note" data-board-state>Адрес борды ещё не настроен</p>
+      </div>
+
+      <div class="terminal-window" aria-label="Пример интерфейса Bord TUI">
+        <div class="terminal-titlebar">
+          <span>BORD  Файл  Вид  Тема  Справка</span>
+          <span>Каталог</span>
+        </div>
+        <div class="terminal-grid">
+          <div class="terminal-panel terminal-boards">
+            <div class="panel-title">═ Доски ═══════════</div>
+            <div class="panel-head">РАЗДЕЛ / НАЗВАНИЕ</div>
+            <div class="terminal-row selected">&gt; /general/ Общение</div>
+            <div class="terminal-row">&nbsp; /tech/ Технологии</div>
+            <div class="terminal-row">&nbsp; /games/ Игры</div>
+            <div class="terminal-row">&nbsp; /meta/ О борде</div>
+          </div>
+          <div class="terminal-panel terminal-content">
+            <div class="panel-title">═ Каталог ══════════════════</div>
+            <div class="panel-head">THREAD / UPDATED / PREVIEW</div>
+            <div class="terminal-row selected">&gt; 92000016&nbsp;&nbsp; 12:40</div>
+            <div class="terminal-preview">Кто сегодня пишет из tty?</div>
+            <div class="terminal-row">&nbsp; 92000015&nbsp;&nbsp; 12:18</div>
+            <div class="terminal-preview">Релиз клиента для ARM64</div>
+            <div class="terminal-row">&nbsp; 92000014&nbsp;&nbsp; 11:52</div>
+            <div class="terminal-preview">Покажите ваши dotfiles</div>
+          </div>
+        </div>
+        <div class="terminal-status">/general/ Каталог • 7 threads • тема:classic</div>
+        <div class="terminal-keys"><b>F1</b> Help&nbsp; <b>F2</b> Theme&nbsp; <b>F5</b> Refresh&nbsp; <b>F7</b> New Thread&nbsp; <b>F10</b> Quit</div>
+      </div>
+    </section>
+
+    <section class="ticker" aria-label="Ключевые свойства">
+      <span>NO ACCOUNTS</span><i>◆</i><span>HTTP + SSE</span><i>◆</i>
+      <span>LINUX / macOS / WINDOWS</span><i>◆</i><span>JPEG + PNG</span><i>◆</i>
+      <span>KEYBOARD + MOUSE</span>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-heading">
+        <p class="eyebrow">01 // FEATURES</p>
+        <h2>Минимум интерфейса.<br>Максимум разговора.</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card accent-cyan">
+          <span class="feature-index">01</span>
+          <h3>Без регистрации</h3>
+          <p>Открывайте клиент и публикуйте. Анонимная сессия и ключи удаления остаются только на вашем устройстве.</p>
+        </article>
+        <article class="feature-card accent-amber">
+          <span class="feature-index">02</span>
+          <h3>Живые треды</h3>
+          <p>SSE сообщает о новых публикациях, а HTTP остаётся источником состояния. Обновления приходят без ручной перезагрузки.</p>
+        </article>
+        <article class="feature-card accent-green">
+          <span class="feature-index">03</span>
+          <h3>Точные ответы</h3>
+          <p>Отвечайте в тред целиком или на выделенный пост. Ссылки <code>&gt;&gt;post_id</code> видны прямо в ленте.</p>
+        </article>
+        <article class="feature-card accent-magenta">
+          <span class="feature-index">04</span>
+          <h3>Изображения</h3>
+          <p>Безопасная серверная обработка JPEG/PNG, inline-графика в совместимых терминалах и системный opener как fallback.</p>
+        </article>
+        <article class="feature-card accent-blue">
+          <span class="feature-index">05</span>
+          <h3>Настоящий TUI</h3>
+          <p>Полноэкранная MC-компоновка, четыре темы, адаптация к размеру окна, клавиатура и полноценная мышь.</p>
+        </article>
+        <article class="feature-card accent-red">
+          <span class="feature-index">06</span>
+          <h3>Privacy by design</h3>
+          <p>IP-защита, ограниченный retention, moderation audit и локальные delete secrets без пользовательских аккаунтов.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section install-section" id="install">
+      <div class="section-heading split-heading">
+        <div>
+          <p class="eyebrow">02 // DOWNLOAD</p>
+          <h2>Один архив.<br>Одна команда.</h2>
+        </div>
+        <p>Выберите систему и архитектуру. Архив содержит клиент, лицензию и полный гайд. Установка backend не требуется.</p>
+      </div>
+
+      <div class="download-shell">
+        <div class="platform-tabs" role="tablist" aria-label="Операционная система">
+          <button type="button" role="tab" aria-selected="true" data-os="linux">Linux</button>
+          <button type="button" role="tab" aria-selected="false" data-os="darwin">macOS</button>
+          <button type="button" role="tab" aria-selected="false" data-os="windows">Windows</button>
+        </div>
+
+        <div class="download-content">
+          <div class="architecture-control">
+            <label for="architecture">Архитектура</label>
+            <select id="architecture">
+              <option value="amd64">AMD64 / x86-64</option>
+              <option value="arm64">ARM64 / Apple Silicon</option>
+            </select>
+          </div>
+
+          <div class="download-result">
+            <p class="download-label">Файл для скачивания</p>
+            <a class="download-file disabled" data-download-link aria-disabled="true">
+              <span data-download-name>bord_VERSION_linux_amd64.tar.gz</span>
+              <span class="download-arrow">↓</span>
+            </a>
+            <p class="placeholder-warning" data-download-state>Download-домен ещё не настроен</p>
+          </div>
+
+          <div class="command-block">
+            <div class="command-header">
+              <span>INSTALL.SH</span>
+              <button type="button" data-copy-install>Копировать</button>
+            </div>
+            <pre><code data-install-command>curl -fLO "&lt;DOWNLOAD_BASE_URL&gt;/bord_VERSION_linux_amd64.tar.gz"</code></pre>
+          </div>
+
+          <div class="command-block">
+            <div class="command-header">
+              <span>RUN.SH</span>
+              <button type="button" data-copy-run>Копировать</button>
+            </div>
+            <pre><code data-run-command>bord --server &lt;BOARD_URL&gt;</code></pre>
+          </div>
+
+          <div class="download-meta">
+            <span data-version>VERSION</span>
+            <span>SHA-256 checksums included</span>
+            <span>Без телеметрии</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section workflow-section" id="controls">
+      <div class="section-heading">
+        <p class="eyebrow">03 // WORKFLOW</p>
+        <h2>Работает так,<br>как ожидаешь.</h2>
+      </div>
+      <div class="workflow-grid">
+        <div class="workflow-step">
+          <span class="keycap">ENTER</span>
+          <div><strong>Открыть</strong><p>Выберите доску или тред клавиатурой либо мышью.</p></div>
+        </div>
+        <div class="workflow-step">
+          <span class="keycap">N / F7</span>
+          <div><strong>Новый тред</strong><p>Создаётся только из каталога выбранной доски.</p></div>
+        </div>
+        <div class="workflow-step">
+          <span class="keycap">P / F7</span>
+          <div><strong>Ответ в тред</strong><p>Публикация без адресации отдельному посту.</p></div>
+        </div>
+        <div class="workflow-step">
+          <span class="keycap">⇧P / F8</span>
+          <div><strong>Ответ на пост</strong><p>Редактор покажет выбранный <code>&gt;&gt;post_id</code>.</p></div>
+        </div>
+        <div class="workflow-step">
+          <span class="keycap">CTRL+S</span>
+          <div><strong>Отправить</strong><p>Безопасный повтор не создаёт дубликат публикации.</p></div>
+        </div>
+        <div class="workflow-step">
+          <span class="keycap">T / F2</span>
+          <div><strong>Сменить тему</strong><p>Classic, amber, green и monochrome.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section privacy-section" id="privacy">
+      <div class="privacy-box">
+        <div>
+          <p class="eyebrow">04 // PRIVACY</p>
+          <h2>Анонимность — не декоративная функция.</h2>
+        </div>
+        <div class="privacy-copy">
+          <p>Нет профилей, email и паролей. Клиент создаёт локальные секреты для анонимной сессии и управления собственными публикациями.</p>
+          <ul>
+            <li><span>[+]</span> HMAC-индекс вместо открытого IP</li>
+            <li><span>[+]</span> Опциональное шифрование raw IP</li>
+            <li><span>[+]</span> Ограниченный retention anti-abuse данных</li>
+            <li><span>[+]</span> Audit для действий модераторов</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <p class="ascii-logo" aria-hidden="true">&gt;_</p>
+      <h2>Встретимся в треде.</h2>
+      <p>Скачайте один архив, распакуйте клиент и подключитесь к борде.</p>
+      <a class="button button-primary" href="#install">Выбрать сборку</a>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span data-year></span> BORD</span>
+    <span>ANONYMOUS TERMINAL BOARD</span>
+    <a href="#top">↑ НАВЕРХ</a>
+  </footer>
+
+  <div class="toast" role="status" aria-live="polite" data-toast>Команда скопирована</div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -14,11 +14,20 @@ sudo useradd --system --home-dir /var/lib/bord --shell /usr/sbin/nologin bord
 sudo install -d -m 0700 -o bord -g bord /var/lib/bord /var/lib/bord/blobs
 sudo install -d -m 0750 -o root -g bord /etc/bord
 sudo install -d -m 0700 -o root -g root /etc/bord/secrets
+sudo install -d -m 0755 -o root -g root /usr/share/bord/landing
+sudo install -d -m 0755 -o root -g root /srv/bord/downloads
 sudo install -m 0755 bord-server /usr/bin/bord-server
 sudo install -m 0644 deploy/systemd/bord.service /etc/systemd/system/bord.service
 sudo install -m 0640 -o root -g bord deploy/systemd/bord.env.example /etc/bord/bord.env
 sudo install -m 0640 -o root -g bord deploy/systemd/config.yaml.example /etc/bord/config.yaml
+sudo cp -a web/landing/. /usr/share/bord/landing/
+sudo cp dist-tui/* /srv/bord/downloads/
 ```
+
+В `/usr/share/bord/landing/config.js` оставлены пустые `boardURL` и
+`downloadBaseURL`. После выбора доменов задайте их как полные HTTPS URL и
+обновите `version` так, чтобы она совпадала с именами архивов. Пока значения
+пусты, landing безопасно показывает placeholder и не создаёт нерабочие ссылки.
 
 Создайте два **разных** 32-байтовых ключа и сохраните base64-представление, не
 выводя его в историю команд или журналы. Подходящий путь — менеджер секретов,
@@ -35,7 +44,9 @@ sudo systemctl enable --now bord.service
 ```
 
 Установите `deploy/Caddyfile` как `/etc/caddy/Caddyfile`, задайте
-`BORD_DOMAIN`, оставьте upstream на loopback и выполните:
+`BORD_DOMAIN`, оставьте upstream на loopback и при необходимости переопределите
+`BORD_LANDING_ROOT`/`BORD_DOWNLOAD_ROOT`. Caddy отдаёт landing на `/`, архивы
+на `/downloads/*`, а `/api/*`, `/healthz` и `/readyz` проксирует backend:
 
 ```sh
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

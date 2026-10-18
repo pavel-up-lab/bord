@@ -1,4 +1,4 @@
-.PHONY: fmt lint test test-race generate contract build terminal-smoke quality
+.PHONY: fmt lint test test-race generate contract build landing-check terminal-smoke quality
 
 fmt:
 	gofmt -w $$(find . -name '*.go')
@@ -23,6 +23,9 @@ contract: generate
 
 build:
 	go build ./...
+
+landing-check:
+	python3 scripts/validate-landing.py
 
 terminal-smoke:
 	./scripts/terminal-smoke.sh

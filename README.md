@@ -20,6 +20,7 @@ IP без явного включения этой функции.
 - [Конфигурация backend](#конфигурация-backend)
 - [Production: systemd и Caddy](#production-systemd-и-caddy)
 - [Запуск TUI](#запуск-tui)
+- [Ретро landing](#ретро-landing)
 - [Управление TUI](#управление-tui)
 - [Обновление и резервное копирование](#обновление-и-резервное-копирование)
 - [Диагностика](#диагностика)
@@ -345,6 +346,21 @@ $env:BORD_SERVER = "https://board.example.org"
 `--inline=kitty` принудительно выбирает Kitty protocol, `--inline=off` оставляет
 текстовую карточку и внешний opener. Для внешнего открытия используются
 `xdg-open`, `open` или Windows file association без запуска shell.
+
+## Ретро landing
+
+Статический landing находится в [`web/landing`](web/landing). Он не требует
+Node.js, frontend framework или внешних CDN. В `web/landing/config.js` намеренно
+оставлены пустыми `boardURL` и `downloadBaseURL`; после выбора доменов укажите
+полные HTTPS URL и актуальную версию TUI.
+
+Caddy отдаёт landing на `/`, release-архивы из `/srv/bord/downloads` на
+`/downloads/*`, а API и health probes проксирует `bord-server`. Локальная
+проверка файлов:
+
+```sh
+python3 scripts/validate-landing.py
+```
 
 ## Управление TUI
 

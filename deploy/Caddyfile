@@ -15,6 +15,7 @@
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
@@ -30,22 +31,40 @@
 
 	# Caddy must flush every SSE event and must not impose a response timeout.
 	@events path /api/v1/events
-	reverse_proxy @events {$BORD_UPSTREAM:127.0.0.1:8080} {
-		flush_interval -1
-		transport http {
-			dial_timeout 5s
-			response_header_timeout 15s
-			read_timeout 0
-			write_timeout 0
+	handle @events {
+		reverse_proxy {$BORD_UPSTREAM:127.0.0.1:8080} {
+			flush_interval -1
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 15s
+				read_timeout 0
+				write_timeout 0
+			}
 		}
 	}
 
-	reverse_proxy {$BORD_UPSTREAM:127.0.0.1:8080} {
-		transport http {
-			dial_timeout 5s
-			response_header_timeout 30s
-			read_timeout 30s
-			write_timeout 30s
+	# Public API and probes go to bord-server; management API is never exposed here.
+	@backend path /api/* /healthz /readyz
+	handle @backend {
+		reverse_proxy {$BORD_UPSTREAM:127.0.0.1:8080} {
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+				read_timeout 30s
+				write_timeout 30s
+			}
 		}
+	}
+
+	# Release archives are copied here separately from application state.
+	handle_path /downloads/* {
+		root * {$BORD_DOWNLOAD_ROOT:/srv/bord/downloads}
+		file_server
+	}
+
+	# Static retro landing. There is no framework or runtime dependency.
+	handle {
+		root * {$BORD_LANDING_ROOT:/usr/share/bord/landing}
+		file_server
 	}
 }
