@@ -25,6 +25,14 @@ func TestRejectsUnknownInlineModeBeforeStartingTUI(t *testing.T) {
 	}
 }
 
+func TestRejectsUnknownThemeBeforeStartingTUI(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"--config", t.TempDir() + "/state.json", "--theme", "ultraviolet"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "--theme") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestFlagErrorsAreTerminalSafe(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := run(context.Background(), []string{"--bad\x1b]52;c;c2VjcmV0\a\u009b"}, &stdout, &stderr)

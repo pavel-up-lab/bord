@@ -23,6 +23,7 @@ type State struct {
 	Server        string            `json:"server"`
 	LastBoard     string            `json:"last_board,omitempty"`
 	InlineMode    string            `json:"inline_mode,omitempty"`
+	Theme         string            `json:"theme,omitempty"`
 	SessionSecret string            `json:"session_secret"`
 	DeleteSecrets map[string]string `json:"delete_secrets,omitempty"`
 }
@@ -48,7 +49,7 @@ func NewState(server string) (State, error) {
 	if _, err := rand.Read(secret); err != nil {
 		return State{}, errors.New("generate session secret")
 	}
-	return State{Version: stateVersion, Server: server, InlineMode: "auto", SessionSecret: base64.RawURLEncoding.EncodeToString(secret), DeleteSecrets: map[string]string{}}, nil
+	return State{Version: stateVersion, Server: server, InlineMode: "auto", Theme: "classic", SessionSecret: base64.RawURLEncoding.EncodeToString(secret), DeleteSecrets: map[string]string{}}, nil
 }
 
 func NewDeleteSecret() (string, error) {

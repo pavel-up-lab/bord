@@ -21,11 +21,12 @@ func TestStoreRoundTripPermissionsAndCorruptRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.DeleteSecrets["post_1"] = "do-not-leak"
+	state.Theme = "amber"
 	if err := store.Save(state); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.Load()
-	if err != nil || loaded.SessionSecret != state.SessionSecret || loaded.DeleteSecrets["post_1"] != "do-not-leak" {
+	if err != nil || loaded.SessionSecret != state.SessionSecret || loaded.DeleteSecrets["post_1"] != "do-not-leak" || loaded.Theme != "amber" {
 		t.Fatalf("state=%#v err=%v", loaded, err)
 	}
 	if runtime.GOOS != "windows" {

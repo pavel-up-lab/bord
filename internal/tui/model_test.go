@@ -212,20 +212,52 @@ func TestKeyboardSearchAndAttachmentSelection(t *testing.T) {
 func TestLayoutGolden(t *testing.T) {
 	setColorProfile(3) // termenv.Ascii, without promoting the transitive module to a direct dependency.
 	defer setColorProfile(3)
+	previewBody := "Initial post preview with useful catalog metadata"
 	m := NewModel(context.Background(), &fakeService{})
 	m.loading = false
 	m.boards = []generated.Board{{Slug: "b", Title: "Random"}, {Slug: "tech", Title: "Technology"}}
-	m.threads = []generated.Thread{{Id: "thread_0001", UpdatedAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)}}
+	m.threads = []generated.Thread{{Id: "thread_0001", UpdatedAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC), InitialPost: &generated.Post{Body: &previewBody}}}
 	m.screen = CatalogScreen
 	for _, tc := range []struct {
-		name  string
-		width int
-	}{{"wide", 100}, {"narrow", 60}} {
-		t.Run(tc.name, func(t *testing.T) { m.width = tc.width; m.height = 20; assertGolden(t, tc.name+".golden", m.View()) })
+		name          string
+		width, height int
+	}{{"classic-80x24", 80, 24}, {"wide-120x30", 120, 30}, {"tall-80x40", 80, 40}, {"narrow-48x18", 48, 18}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m.width, m.height = tc.width, tc.height
+			view := m.View()
+			assertDimensions(t, view, tc.width, tc.height)
+			assertGolden(t, tc.name+".golden", view)
+		})
 	}
 	setColorProfile(1) // termenv.ANSI256
-	m.width = 100
-	assertGolden(t, "wide-ansi256.golden", m.View())
+	m.width, m.height = 80, 24
+	view := m.View()
+	assertDimensions(t, view, 80, 24)
+	for i, line := range strings.Split(view, "\n") {
+		if !strings.Contains(line, "48;5;") {
+			t.Fatalf("line %d has no ANSI background fill: %q", i, line)
+		}
+	}
+	assertGolden(t, "classic-ansi256-80x24.golden", view)
+}
+
+func TestWindowResizeConsumesExactTerminalAndThemeCycles(t *testing.T) {
+	setColorProfile(3)
+	m := NewModel(context.Background(), &fakeService{})
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 132, Height: 31}, {Width: 42, Height: 13}, {Width: 1, Height: 1}} {
+		updated, _ := m.Update(size)
+		m = updated.(Model)
+		assertDimensions(t, m.View(), max(1, size.Width), max(1, size.Height))
+	}
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(Model)
+	for _, want := range []ThemeName{ThemeAmber, ThemeGreen, ThemeMono, ThemeClassic} {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+		m = updated.(Model)
+		if m.Theme() != want {
+			t.Fatalf("theme=%q want=%q", m.Theme(), want)
+		}
+	}
 }
 
 func TestUntrustedTerminalControlsAreNeutralized(t *testing.T) {
@@ -281,6 +313,19 @@ func assertGolden(t *testing.T, name, got string) {
 	}
 	if string(want) != got {
 		t.Fatalf("golden mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func assertDimensions(t *testing.T, view string, width, height int) {
+	t.Helper()
+	lines := strings.Split(view, "\n")
+	if len(lines) != height {
+		t.Fatalf("height=%d want=%d", len(lines), height)
+	}
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got != width {
+			t.Fatalf("line %d width=%d want=%d: %q", i, got, width, line)
+		}
 	}
 }
 
