@@ -10,6 +10,7 @@ import re
 
 ROOT = Path(__file__).resolve().parent.parent
 LANDING = ROOT / "web" / "landing"
+GITHUB_URL = "https://github.com/pavel-up-lab/bord"
 
 
 class LandingParser(HTMLParser):
@@ -64,6 +65,8 @@ def main() -> None:
         "interactive download markers missing",
     )
     for reference in parser.references:
+        if reference == GITHUB_URL:
+            continue
         require("://" not in reference, f"external landing dependency is forbidden: {reference}")
         target = LANDING / reference
         require(target.is_file(), f"missing local landing asset: {reference}")
@@ -71,7 +74,12 @@ def main() -> None:
     for key in ("boardURL", "downloadBaseURL"):
         match = re.search(rf"\b{key}:\s*\"([^\"]*)\"", config)
         require(match is not None and match.group(1) == "", f"{key} must remain an empty deployment placeholder")
-    require("http://" not in html + css + app and "https://" not in html + css + app, "landing source contains a fixed domain")
+    html_without_github = html.replace(GITHUB_URL, "")
+    require(
+        "http://" not in html_without_github + css + app and "https://" not in html_without_github + css + app,
+        "landing source contains an unapproved fixed domain",
+    )
+    require(html.count(GITHUB_URL) == 2, "GitHub links must be present in navigation and hero actions")
     require("prefers-reduced-motion" in css, "reduced-motion fallback missing")
     require("@media (max-width:" in css, "responsive layout rules missing")
     require("navigator.clipboard" in app and "document.execCommand" in app, "clipboard primary/fallback paths missing")
