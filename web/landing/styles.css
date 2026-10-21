@@ -130,20 +130,35 @@ h1 span { color: var(--cyan); text-shadow: 5px 5px 0 #0b287e; }
 .button-secondary { color: var(--cyan); background: transparent; }
 .domain-note { min-height: 1.5em; margin-top: 1rem; color: var(--muted); font-size: .78rem; }
 
-.terminal-window { border: 3px double var(--cyan); background: #06156d; box-shadow: 16px 16px 0 rgba(0, 0, 0, .3); font-size: clamp(.62rem, 1vw, .84rem); overflow: hidden; }
-.terminal-titlebar, .terminal-status, .terminal-keys { padding: .4rem .6rem; color: #03104c; background: #62efff; font-weight: 800; }
-.terminal-titlebar { display: flex; justify-content: space-between; }
-.terminal-grid { display: grid; grid-template-columns: .72fr 1.28fr; min-height: 330px; }
-.terminal-panel { padding: .25rem .45rem; border-right: 1px solid var(--cyan); overflow: hidden; }
-.terminal-panel:last-child { border-right: 0; }
-.panel-title { color: var(--cyan); white-space: nowrap; }
-.panel-head { margin: .3rem -.45rem .5rem; padding: .2rem .45rem; color: var(--navy); background: #37c5e4; white-space: nowrap; }
-.terminal-row, .terminal-preview { padding: .12rem .25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.terminal-row.selected { color: var(--navy); background: var(--cyan); }
-.terminal-preview { padding-left: 1rem; color: var(--cyan-soft); }
-.terminal-status { color: var(--white); background: #07175e; border-top: 1px solid var(--cyan); }
-.terminal-keys { color: #07175e; background: #39cbe5; white-space: nowrap; overflow: hidden; }
-.terminal-keys b { color: var(--amber); background: #07175e; padding: 0 .2rem; }
+.terminal-window {
+  min-width: 0;
+  border: 1px solid #000064;
+  color: #e5e5e5;
+  background: #0000a8;
+  box-shadow: 16px 16px 0 rgba(0, 0, 0, .3);
+  font-size: clamp(.58rem, .85vw, .76rem);
+  line-height: 1.35;
+  overflow: hidden;
+}
+.terminal-titlebar { display: flex; justify-content: space-between; padding: .32rem .45rem; color: #000; background: #00a8a8; white-space: nowrap; }
+.terminal-grid { display: grid; grid-template-columns: minmax(175px, .72fr) minmax(0, 1.28fr); min-height: 330px; }
+.terminal-panel { display: flex; min-width: 0; color: #55ffff; flex-direction: column; overflow: hidden; }
+.panel-inactive { color: #a8a8a8; }
+.panel-border { display: flex; align-items: center; height: 1.35em; flex: 0 0 auto; white-space: nowrap; }
+.panel-border i { height: 1px; min-width: .35rem; background: currentColor; flex: 1; }
+.panel-border-top span:first-child { color: inherit; }
+.panel-border-bottom i { height: 1px; }
+.terminal-panel-body { display: flex; min-height: 0; border-inline: 1px solid currentColor; color: #e5e5e5; flex: 1; flex-direction: column; overflow: hidden; }
+.panel-head { padding: .18rem .4rem; color: #000; background: #00a8a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.terminal-row, .terminal-preview { padding: .1rem .42rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.terminal-item.selected { color: #000; background: #00a8a8; }
+.terminal-preview { color: inherit; }
+.board-current { color: #55ffff; }
+.terminal-spacer { flex: 1; }
+.terminal-status { padding: .28rem .45rem; color: #e5e5e5; background: #0000a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.terminal-keys { display: flex; align-items: stretch; gap: .42rem; color: #000; background: #0000a8; white-space: nowrap; overflow: hidden; }
+.terminal-keys span { background: #00a8a8; padding-right: .35rem; }
+.terminal-keys b { display: inline-block; padding: .18rem .28rem; color: #000; background: #55ffff; }
 
 .ticker { display: flex; justify-content: center; flex-wrap: wrap; gap: 1.2rem; padding: .85rem 1.5rem; border-block: 2px solid var(--amber); color: var(--navy); background: var(--amber); font-size: .75rem; font-weight: 900; letter-spacing: .08em; }
 .ticker i { color: #8d5b00; font-style: normal; }
@@ -233,8 +248,8 @@ footer a { color: var(--cyan); text-decoration: none; }
   h1 { font-size: 2.55rem; }
   .hero-actions { flex-direction: column; }
   .button { width: 100%; }
-  .terminal-grid { grid-template-columns: 1fr; min-height: 430px; }
-  .terminal-boards { border-right: 0; border-bottom: 1px solid var(--cyan); }
+  .terminal-grid { grid-template-columns: 1fr; min-height: 330px; }
+  .terminal-boards { display: none; }
   .feature-grid, .workflow-grid { grid-template-columns: 1fr; }
   .feature-card { min-height: 210px; }
   .install-section { padding-inline: 14px; }

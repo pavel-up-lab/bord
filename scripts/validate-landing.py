@@ -80,6 +80,13 @@ def main() -> None:
         "landing source contains an unapproved fixed domain",
     )
     require(html.count(GITHUB_URL) == 2, "GitHub links must be present in navigation and hero actions")
+    for fragment in (
+        "РАЗДЕЛ / THREADS / НАЗВАНИЕ",
+        "THREAD / REPLIES / UPDATED / PREVIEW",
+        "тема:classic • Tab панели • ? справка",
+        "F4</b> Search",
+    ):
+        require(fragment in html, f"current TUI preview fragment missing: {fragment}")
     require("prefers-reduced-motion" in css, "reduced-motion fallback missing")
     require("@media (max-width:" in css, "responsive layout rules missing")
     require("navigator.clipboard" in app and "document.execCommand" in app, "clipboard primary/fallback paths missing")

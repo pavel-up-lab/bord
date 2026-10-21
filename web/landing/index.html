@@ -51,31 +51,45 @@
 
       <div class="terminal-window" aria-label="Пример интерфейса Bord TUI">
         <div class="terminal-titlebar">
-          <span>BORD  Файл  Вид  Тема  Справка</span>
+          <span>BORD&nbsp;&nbsp; [Тема] [Справка]</span>
           <span>Каталог</span>
         </div>
         <div class="terminal-grid">
-          <div class="terminal-panel terminal-boards">
-            <div class="panel-title">═ Доски ═══════════</div>
-            <div class="panel-head">РАЗДЕЛ / НАЗВАНИЕ</div>
-            <div class="terminal-row selected">&gt; /general/ Общение</div>
-            <div class="terminal-row">&nbsp; /tech/ Технологии</div>
-            <div class="terminal-row">&nbsp; /games/ Игры</div>
-            <div class="terminal-row">&nbsp; /meta/ О борде</div>
+          <div class="terminal-panel terminal-boards panel-inactive">
+            <div class="panel-border panel-border-top"><span>╔═ Доски&nbsp;</span><i></i><span>╗</span></div>
+            <div class="terminal-panel-body">
+              <div class="panel-head">РАЗДЕЛ / THREADS / НАЗВАНИЕ</div>
+              <div class="terminal-row board-current">&gt; /bred/ [2] Бред</div>
+              <div class="terminal-row">&nbsp; /meta/ [1] О борде</div>
+              <div class="terminal-row">&nbsp; /programming/ [0] Программирование</div>
+              <div class="terminal-row">&nbsp; /ai/ [0] Искусственный интеллект</div>
+              <div class="terminal-spacer" aria-hidden="true"></div>
+            </div>
+            <div class="panel-border panel-border-bottom"><span>╚</span><i></i><span>╝</span></div>
           </div>
           <div class="terminal-panel terminal-content">
-            <div class="panel-title">═ Каталог ══════════════════</div>
-            <div class="panel-head">THREAD / UPDATED / PREVIEW</div>
-            <div class="terminal-row selected">&gt; 92000016&nbsp;&nbsp; 12:40</div>
-            <div class="terminal-preview">Кто сегодня пишет из tty?</div>
-            <div class="terminal-row">&nbsp; 92000015&nbsp;&nbsp; 12:18</div>
-            <div class="terminal-preview">Релиз клиента для ARM64</div>
-            <div class="terminal-row">&nbsp; 92000014&nbsp;&nbsp; 11:52</div>
-            <div class="terminal-preview">Покажите ваши dotfiles</div>
+            <div class="panel-border panel-border-top"><span>╔═ Каталог&nbsp;</span><i></i><span>╗</span></div>
+            <div class="terminal-panel-body">
+              <div class="panel-head">THREAD / REPLIES / UPDATED / PREVIEW</div>
+              <div class="terminal-item selected">
+                <div class="terminal-row">&gt;&nbsp;&nbsp; 00000003&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; [0] 2026-10-21 16:24</div>
+                <div class="terminal-preview">&nbsp;&nbsp; Кто сегодня пишет из tty?</div>
+              </div>
+              <div class="terminal-item">
+                <div class="terminal-row">&nbsp;&nbsp;&nbsp; 00000002&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; [3] 2026-10-21 14:08</div>
+                <div class="terminal-preview">&nbsp;&nbsp; Покажите ваши terminal-first проекты</div>
+              </div>
+              <div class="terminal-item">
+                <div class="terminal-row">&nbsp;&nbsp;&nbsp; 00000001&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; [5] 2026-10-20 21:17</div>
+                <div class="terminal-preview">&nbsp;&nbsp; Первый публичный тред Bord</div>
+              </div>
+              <div class="terminal-spacer" aria-hidden="true"></div>
+            </div>
+            <div class="panel-border panel-border-bottom"><span>╚</span><i></i><span>╝</span></div>
           </div>
         </div>
-        <div class="terminal-status">/general/ Каталог • 7 threads • тема:classic</div>
-        <div class="terminal-keys"><b>F1</b> Help&nbsp; <b>F2</b> Theme&nbsp; <b>F5</b> Refresh&nbsp; <b>F7</b> New Thread&nbsp; <b>F10</b> Quit</div>
+        <div class="terminal-status">/bred/ Каталог • 2 threads • тема:classic • Tab панели • ? справка</div>
+        <div class="terminal-keys"><span><b>F1</b> Help</span><span><b>F2</b> Theme</span><span><b>F4</b> Search</span><span><b>F5</b> Refresh</span><span><b>F7</b> New Thread</span><span><b>F10</b> Quit</span></div>
       </div>
     </section>
 
