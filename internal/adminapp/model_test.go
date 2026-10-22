@@ -80,6 +80,7 @@ func (*publicService) UploadAttachment(context.Context, string, io.Reader) (gene
 func (*publicService) Attachment(context.Context, string) ([]byte, string, error) {
 	return nil, "", nil
 }
+func (*publicService) Report(context.Context, string, generated.CreateReport) error { return nil }
 func (*publicService) Subscribe(ctx context.Context, _ client.StreamScope, _ client.StreamCallbacks, _ client.Backoff) error {
 	<-ctx.Done()
 	return ctx.Err()

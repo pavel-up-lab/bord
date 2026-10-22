@@ -44,6 +44,9 @@ type fakeService struct {
 	attachmentBody []byte
 	attachmentType string
 	attachmentErr  error
+	reportCalls    int
+	reportPostID   string
+	reportRequest  generated.CreateReport
 }
 
 func (f *fakeService) Boards(context.Context) ([]generated.Board, error) { return f.boards, nil }
@@ -70,6 +73,12 @@ func (f *fakeService) UploadAttachment(context.Context, string, io.Reader) (gene
 }
 func (f *fakeService) Attachment(context.Context, string) ([]byte, string, error) {
 	return f.attachmentBody, f.attachmentType, f.attachmentErr
+}
+func (f *fakeService) Report(_ context.Context, postID string, request generated.CreateReport) error {
+	f.reportCalls++
+	f.reportPostID = postID
+	f.reportRequest = request
+	return f.createErr
 }
 func (f *fakeService) Subscribe(ctx context.Context, _ client.StreamScope, callbacks client.StreamCallbacks, _ client.Backoff) error {
 	if f.subscribeEvent && callbacks.Event != nil {
@@ -559,6 +568,109 @@ func TestOpenFullPostWrapScrollBackAndReply(t *testing.T) {
 	m = updated.(Model)
 	if m.screen != ThreadScreen || m.postScroll != 0 {
 		t.Fatalf("back screen=%v scroll=%d", m.screen, m.postScroll)
+	}
+}
+
+func TestPostViewPageKeysMoveBetweenPostsWithoutLeavingView(t *testing.T) {
+	bodies := []string{"first", "second", "third"}
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 80, 24, false
+	m.screen, m.focus, m.activeThread, m.contentIndex = PostScreen, FocusContent, "thread_1", 1
+	for index, body := range bodies {
+		value := body
+		m.posts = append(m.posts, generated.Post{Id: fmt.Sprintf("post_%d", index+1), State: generated.Visible, Body: &value})
+	}
+	m.postScroll = 4
+
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m = updated.(Model)
+	if command != nil || m.screen != PostScreen || m.contentIndex != 2 || m.postScroll != 0 || !strings.Contains(m.View(), "Пост >>post_3") {
+		t.Fatalf("PgDown screen=%v index=%d scroll=%d cmd=%v", m.screen, m.contentIndex, m.postScroll, command)
+	}
+	updated, command = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m = updated.(Model)
+	if command != nil || m.screen != PostScreen || m.contentIndex != 1 || !strings.Contains(m.View(), "Пост >>post_2") {
+		t.Fatalf("PgUp screen=%v index=%d cmd=%v", m.screen, m.contentIndex, command)
+	}
+}
+
+func TestPostViewPageDownLoadsNextPageAndKeepsView(t *testing.T) {
+	body, nextBody := "current", "next"
+	next := "next-cursor"
+	service := &fakeService{posts: generated.PostPage{Posts: []generated.Post{{Id: "post_2", State: generated.Visible, Body: &nextBody}}}}
+	m := NewModel(context.Background(), service)
+	m.width, m.height, m.loading = 80, 24, false
+	m.screen, m.focus, m.activeThread = PostScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", State: generated.Visible, Body: &body}}
+	m.nextPostCursor = &next
+
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m = updated.(Model)
+	if command == nil || m.screen != PostScreen {
+		t.Fatal("next page was not requested")
+	}
+	updated, _ = m.Update(command())
+	m = updated.(Model)
+	if m.screen != PostScreen || m.contentIndex != 1 || len(m.posts) != 2 || !strings.Contains(m.View(), "Пост >>post_2") {
+		t.Fatalf("screen=%v index=%d posts=%d", m.screen, m.contentIndex, len(m.posts))
+	}
+}
+
+func TestReportButtonOpensFormForActivePostAndSubmits(t *testing.T) {
+	body1, body2 := "not selected", "reported post text"
+	service := &fakeService{}
+	m := NewModel(context.Background(), service)
+	m.width, m.height, m.loading = 80, 24, false
+	m.screen, m.focus, m.activeThread, m.contentIndex = PostScreen, FocusContent, "thread_1", 1
+	m.posts = []generated.Post{{Id: "post_1", Body: &body1}, {Id: "post_2", AuthorId: "anon", Body: &body2}}
+	if !strings.Contains(m.topBarLeft(), "[Пожаловаться]") {
+		t.Fatal("top report button missing")
+	}
+
+	x := textWidth(" BORD  [← Назад] ")
+	updated, command := m.Update(tea.MouseMsg{X: x, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = updated.(Model)
+	if command != nil || m.report == nil || m.report.post.Id != "post_2" {
+		t.Fatalf("report=%#v cmd=%v", m.report, command)
+	}
+	view := m.View()
+	assertDimensions(t, view, 80, 24)
+	if !strings.Contains(view, "Пожаловаться на пост") || !strings.Contains(view, "reported post text") || strings.Contains(view, "not selected") {
+		t.Fatalf("report form does not show active post:\n%s", view)
+	}
+
+	m.report.editor.SetValue("details")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	updated, command = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if command == nil || !m.report.pending {
+		t.Fatal("report was not submitted")
+	}
+	blocked, blockedCommand := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if blockedCommand != nil || blocked.(Model).report == nil {
+		t.Fatal("pending form accepted cancel")
+	}
+	updated, _ = m.Update(command())
+	m = updated.(Model)
+	if m.report != nil || m.notice != "Жалоба отправлена" || service.reportCalls != 1 || service.reportPostID != "post_2" || service.reportRequest.Reason != generated.Harassment || service.reportRequest.Detail == nil || *service.reportRequest.Detail != "details" {
+		t.Fatalf("notice=%q calls=%d post=%q request=%#v", m.notice, service.reportCalls, service.reportPostID, service.reportRequest)
+	}
+}
+
+func TestReportFormCanBeCancelledByButton(t *testing.T) {
+	body := "post"
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading, m.screen = 80, 24, false, PostScreen
+	m.posts = []generated.Post{{Id: "post_1", Body: &body}}
+	m.openReportForm()
+	x, _, height := m.reportGeometry()
+	y := (m.height-height)/2 + height - 2
+	cancelX := x + 2 + textWidth("[Пожаловаться]   ")
+
+	updated, command := m.Update(tea.MouseMsg{X: cancelX, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if command != nil || updated.(Model).report != nil {
+		t.Fatal("cancel button did not close report form")
 	}
 }
 

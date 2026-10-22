@@ -22,6 +22,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.themePicker.IsOpen() {
 		return m.activateThemeMenuMouse(msg)
 	}
+	if m.report != nil {
+		return m.updateReportMouse(msg)
+	}
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 		if zone == terminalui.MouseTopBar {
 			return m.activateTop(msg.X)
@@ -66,6 +69,14 @@ func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
 		label := "[← Назад] "
 		if x >= offset && x < offset+textWidth(label) {
 			return m.updateKey(tea.KeyMsg{Type: tea.KeyEsc})
+		}
+		offset += textWidth(label)
+	}
+	if m.screen == PostScreen {
+		label := "[Пожаловаться] "
+		if x >= offset && x < minInt(m.width, offset+textWidth(label)) {
+			m.openReportForm()
+			return m, nil
 		}
 		offset += textWidth(label)
 	}
@@ -155,7 +166,7 @@ func (m Model) commandKeys() []tea.KeyMsg {
 		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyRunes, Runes: []rune{'d'}}, {Type: tea.KeyF10}}
 	}
 	if m.screen == PostScreen {
-		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyRunes, Runes: []rune{'o'}}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyRunes, Runes: []rune{'d'}}, {Type: tea.KeyF10}}
+		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyRunes, Runes: []rune{'o'}}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyRunes, Runes: []rune{'d'}}, {Type: tea.KeyRunes, Runes: []rune{'R'}}, {Type: tea.KeyF10}}
 	}
 	return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF2}, {Type: tea.KeyF4}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF10}}
 }

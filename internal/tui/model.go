@@ -58,17 +58,18 @@ type Service interface {
 	CreatePost(context.Context, string, string, generated.CreatePost) (generated.CreateResult, error)
 	UploadAttachment(context.Context, string, io.Reader) (generated.Attachment, error)
 	Attachment(context.Context, string) ([]byte, string, error)
+	Report(context.Context, string, generated.CreateReport) error
 	Subscribe(context.Context, client.StreamScope, client.StreamCallbacks, client.Backoff) error
 }
 
 type KeyMap struct {
-	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, DeletePost, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
+	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, DeletePost, Report, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
 }
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up: "up,k", Down: "down,j", PageUp: "pgup", PageDown: "pgdown", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
-		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", DeletePost: "d,delete", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
+		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", DeletePost: "d,delete", Report: "R,shift+r", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
 		Theme: "t,f2",
 	}
 }
@@ -86,6 +87,7 @@ type Model struct {
 	posts                                                []generated.Post
 	boardIndex, contentIndex, boardScroll, contentScroll int
 	postScroll                                           int
+	postAdvance                                          int
 	activeThread                                         string
 	nextThreadCursor, nextPostCursor                     *string
 	loading                                              bool
@@ -115,6 +117,8 @@ type Model struct {
 	attachmentRenderer                                   KittyRenderer
 	attachmentCache                                      *client.Cache
 	openExternal                                         func(context.Context, string) error
+	report                                               *reportForm
+	notice                                               string
 }
 
 type Draft struct {
@@ -152,6 +156,10 @@ type sentMsg struct {
 }
 type deletedMsg struct {
 	id     uint64
+	postID string
+	err    error
+}
+type reportSentMsg struct {
 	postID string
 	err    error
 }
@@ -227,6 +235,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = max(1, msg.Width), max(1, msg.Height)
 		m.configureEditorWidth()
 		m.editor.SetHeight(max(1, msg.Height-10))
+		m.resizeReportEditor()
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -282,10 +291,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			selected, top := selectedPost(m.posts, m.contentIndex), selectedPost(m.posts, m.contentScroll)
 			m.posts = mergePosts(m.posts, msg.page.Posts, msg.append)
 			m.contentIndex, m.contentScroll = restorePostPosition(m.posts, selected, top, m.contentIndex, m.contentScroll)
+			if m.postAdvance != 0 {
+				m.contentIndex = clamp(m.contentIndex+m.postAdvance, 0, max(0, len(m.posts)-1))
+				m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, m.visibleRows())
+				m.postScroll, m.postAdvance = 0, 0
+			}
 			m.nextPostCursor = msg.page.NextCursor
 			cmd := m.watchEvents()
 			return m, cmd
 		}
+		m.postAdvance = 0
 	case sentMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -315,6 +330,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == PostScreen {
 				m.screen = ThreadScreen
 			}
+		}
+	case reportSentMsg:
+		if m.report == nil || msg.postID != m.report.post.Id {
+			return m, nil
+		}
+		m.report.pending, m.report.err = false, msg.err
+		if msg.err == nil {
+			m.report = nil
+			m.notice = "Жалоба отправлена"
 		}
 	case ReconcileMsg:
 		if msg.Thread != "" && msg.Thread == m.activeThread {
@@ -365,6 +389,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.report != nil {
+		return m.updateReportKey(msg)
+	}
+	m.notice = ""
 	if m.themePicker.IsOpen() {
 		return m.updateThemeMenuKey(key)
 	}
@@ -503,13 +531,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case matches(key, m.keys.PageUp):
 		if m.screen == PostScreen {
-			m.scrollPost(-max(1, m.height-6))
+			return m, m.moveViewedPost(-1)
 		} else if m.focus == FocusContent {
 			m.movePage(-1)
 		}
 	case matches(key, m.keys.PageDown):
 		if m.screen == PostScreen {
-			m.scrollPost(max(1, m.height-6))
+			return m, m.moveViewedPost(1)
 		} else if m.focus == FocusContent {
 			atEnd := m.contentIndex == m.contentLength()-1
 			m.movePage(1)
@@ -559,6 +587,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return deletedMsg{id: id, postID: post.Id, err: owner.DeleteOwnPost(ctx, post.Id)}
 		}
+	case matches(key, m.keys.Report) && m.screen == PostScreen:
+		m.openReportForm()
 	case matches(key, m.keys.Attachment):
 		if m.screen == AttachmentScreen && len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
 			return m, m.viewAttachmentInline()
@@ -666,6 +696,20 @@ func (m *Model) scrollPost(delta int) {
 	lines := m.postDetailLines()
 	visible := max(1, m.height-6)
 	m.postScroll = clamp(m.postScroll+delta, 0, max(0, len(lines)-visible))
+}
+
+func (m *Model) moveViewedPost(delta int) tea.Cmd {
+	if len(m.posts) == 0 || delta == 0 {
+		return nil
+	}
+	if delta > 0 && m.contentIndex >= len(m.posts)-1 && m.nextPostCursor != nil {
+		m.postAdvance = 1
+		return m.loadPosts(true)
+	}
+	m.contentIndex = clamp(m.contentIndex+delta, 0, len(m.posts)-1)
+	m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, m.visibleRows())
+	m.postScroll = 0
+	return nil
 }
 
 func (m *Model) nextRequest() (uint64, context.Context, context.CancelFunc) {
@@ -891,6 +935,9 @@ func (m Model) View() string {
 	if m.themePicker.IsOpen() {
 		lines = m.themePicker.Overlay(lines, m.themes, colors, m.width, m.height, textWidth(" BORD  "))
 	}
+	if m.report != nil {
+		lines = m.overlayReport(lines, colors)
+	}
 	if m.clipboardOSC != "" && len(lines) > 0 {
 		lines[0] = m.clipboardOSC + lines[0]
 	}
@@ -919,6 +966,9 @@ func (m Model) contentTitle() string {
 }
 
 func (m Model) statusText() string {
+	if m.notice != "" {
+		return " " + SanitizeTerminalText(m.notice)
+	}
 	if m.clipboardCopied {
 		return " Выделенный текст скопирован • Tab вернуться к ответу"
 	}
@@ -954,6 +1004,9 @@ func (m Model) topBarLeft() string {
 	left := " BORD  "
 	if m.canGoBack() {
 		left += "[← Назад] "
+	}
+	if m.screen == PostScreen {
+		left += "[Пожаловаться] "
 	}
 	return left + m.themeControlLabel() + "[Справка]"
 }
@@ -1130,8 +1183,8 @@ func (m Model) composerLines() []displayRow {
 
 func (m Model) helpLines() []displayRow {
 	return []displayRow{{Lines: []string{
-		"↑/k ↓/j   навигация / прокрутка полного поста", "PgUp/PgDn  переход на страницу тредов или постов", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
-		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост", "d / Delete удалить свой пост",
+		"↑/k ↓/j   навигация / прокрутка полного поста", "PgUp/PgDn  страницы списков / соседний полный пост", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
+		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост", "d / Delete удалить свой пост", "R          пожаловаться на открытый пост",
 		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t / F2     список встроенных и MC-тем", "?          эта справка", "q Ctrl+C   выход",
 		"Ответ      Tab — исходный пост; Shift+стрелки — выделить; Ctrl+C — копировать", "Мышь       один клик открывает; drag выделяет текст исходного поста", "F8         ответить на выделенный/открытый пост", "Колесо     навигация или прокрутка",
 	}}}
@@ -1210,7 +1263,7 @@ func (m Model) commandLabels() []string {
 		return []string{"F1 Help", "F5 Refresh", "F7 Reply Thread", "F8 Reply Post", "D Delete Own", "F10 Quit"}
 	}
 	if m.screen == PostScreen {
-		return []string{"Esc Back", "O Image", "F7 Reply Thread", "F8 Reply Post", "D Delete Own", "F10 Quit"}
+		return []string{"Esc Back", "O Image", "F7 Reply Thread", "F8 Reply Post", "D Delete Own", "R Report", "F10 Quit"}
 	}
 	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New Thread", "F10 Quit"}
 }
