@@ -23,6 +23,11 @@
 		-Server
 	}
 
+	# Release metadata changes independently of the fingerprinted archives.
+	# Never let browsers retain an old download version across deployments.
+	@landing_runtime path / /index.html /config.js
+	header @landing_runtime Cache-Control "no-store, max-age=0"
+
 	@events path /api/v1/events
 	handle @events {
 		reverse_proxy backend:8080 {
