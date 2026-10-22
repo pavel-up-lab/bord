@@ -211,6 +211,28 @@ func TestSSEEventTriggersScopedReconciliation(t *testing.T) {
 	}
 }
 
+func TestCatalogRefreshAlsoRefreshesBoardThreadCounts(t *testing.T) {
+	f := &fakeService{
+		boards:  []generated.Board{{Slug: "b", ThreadCount: 4}},
+		threads: generated.ThreadPage{Threads: []generated.Thread{{Id: "thread_1"}}},
+	}
+	m := NewModel(context.Background(), f)
+	m.loading, m.screen, m.focus = false, CatalogScreen, FocusContent
+	m.boards = []generated.Board{{Slug: "b", ThreadCount: 1}}
+	cmd := m.loadThreads(false)
+	updated, _ := m.Update(cmd())
+	m = updated.(Model)
+	if got := m.boards[0].ThreadCount; got != 4 {
+		t.Fatalf("thread count stayed stale: %d", got)
+	}
+	m.screen, m.activeThread = ThreadScreen, "thread_1"
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if cmd == nil || m.screen != CatalogScreen || m.activeThread != "" {
+		t.Fatalf("return from thread did not schedule catalog refresh: screen=%v thread=%q cmd=%v", m.screen, m.activeThread, cmd)
+	}
+}
+
 func TestKeyboardSearchAndAttachmentSelection(t *testing.T) {
 	body := "find this text"
 	m := NewModel(context.Background(), &fakeService{})
@@ -232,6 +254,31 @@ func TestKeyboardSearchAndAttachmentSelection(t *testing.T) {
 	m = updated.(Model)
 	if m.draft.AttachmentID != "attachment_1" {
 		t.Fatal("attachment selection lost")
+	}
+}
+
+func TestPageKeysNavigateThreadsAndPosts(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 100, 24, false
+	m.screen, m.focus = CatalogScreen, FocusContent
+	for i := range 30 {
+		m.threads = append(m.threads, generated.Thread{Id: fmt.Sprintf("thread_%02d", i)})
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m = updated.(Model)
+	if m.contentIndex != m.visibleRows() {
+		t.Fatalf("thread page down index=%d step=%d", m.contentIndex, m.visibleRows())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m = updated.(Model)
+	if m.contentIndex != 0 {
+		t.Fatalf("thread page up index=%d", m.contentIndex)
+	}
+	m.screen = ThreadScreen
+	m.posts = make([]generated.Post, 30)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if got := updated.(Model).contentIndex; got != m.visibleRows() {
+		t.Fatalf("post page down index=%d", got)
 	}
 }
 
@@ -267,7 +314,7 @@ func TestLayoutGolden(t *testing.T) {
 	assertGolden(t, "classic-ansi256-80x24.golden", view)
 }
 
-func TestWindowResizeConsumesExactTerminalAndThemeCycles(t *testing.T) {
+func TestWindowResizeConsumesExactTerminalAndThemeMenu(t *testing.T) {
 	setColorProfile(3)
 	m := NewModel(context.Background(), &fakeService{})
 	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 132, Height: 31}, {Width: 42, Height: 13}, {Width: 1, Height: 1}} {
@@ -277,8 +324,16 @@ func TestWindowResizeConsumesExactTerminalAndThemeCycles(t *testing.T) {
 	}
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
-	for _, want := range []ThemeName{ThemeAmber, ThemeGreen, ThemeMono, ThemeClassic} {
+	for _, want := range []ThemeName{ThemeAmber, ThemeGreen, ThemeMono} {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+		m = updated.(Model)
+		if !m.themeMenu {
+			t.Fatal("theme menu did not open")
+		}
+		assertDimensions(t, m.View(), 80, 24)
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = updated.(Model)
 		if m.Theme() != want {
 			t.Fatalf("theme=%q want=%q", m.Theme(), want)
@@ -499,10 +554,15 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 
 	updated, _ = m.Update(click(textWidth(" BORD  ")+1, 0))
 	m = updated.(Model)
+	if !m.themeMenu {
+		t.Fatal("top theme click did not open menu")
+	}
+	updated, _ = m.Update(click(textWidth(" BORD  ")+1, 3))
+	m = updated.(Model)
 	if m.theme != ThemeAmber {
 		t.Fatalf("top theme click selected %q", m.theme)
 	}
-	updated, _ = m.Update(click(textWidth(" BORD  [Тема] ")+1, 0))
+	updated, _ = m.Update(click(textWidth(" BORD  "+m.themeControlLabel())+1, 0))
 	m = updated.(Model)
 	if m.screen != HelpScreen {
 		t.Fatalf("top help click screen=%v", m.screen)
@@ -562,6 +622,59 @@ func TestComposerActionsDistinguishThreadAndPostReplies(t *testing.T) {
 	}
 }
 
+func TestReplyComposerSplitsSourceAndSupportsKeyboardCopy(t *testing.T) {
+	body := "alpha beta\ngamma"
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 100, 24, false
+	m.boards = []generated.Board{{Slug: "general"}}
+	m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", AuthorId: "anon", Body: &body, State: generated.Visible}}
+	m.beginReplyComposer("post_1")
+	view := m.View()
+	assertDimensions(t, view, 100, 24)
+	if !strings.Contains(view, "Ответ на пост >>post_1") || !strings.Contains(view, "Пост >>post_1") || !strings.Contains(view, "alpha beta") {
+		t.Fatalf("split reply composer missing source or editor: %q", view)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if m.replyPane != replySourcePane || m.editor.Focused() {
+		t.Fatal("Tab did not focus source post")
+	}
+	for range 5 {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+		m = updated.(Model)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if cmd == nil || !m.clipboardCopied || !strings.Contains(m.clipboardOSC, "YWxwaGE=") {
+		t.Fatalf("selection was not copied through OSC52: copied=%v osc=%q cmd=%v", m.clipboardCopied, m.clipboardOSC, cmd)
+	}
+	m.width = 48
+	m.configureEditorWidth()
+	assertDimensions(t, m.View(), 48, 24)
+}
+
+func TestReplyComposerMouseDragSelectsSourceText(t *testing.T) {
+	body := "select this text"
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.loading = 100, 24, false
+	m.boards = []generated.Board{{Slug: "general"}}
+	m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", Body: &body, State: generated.Visible}}
+	m.beginReplyComposer("post_1")
+	panelX, _ := m.replySourcePanelGeometry()
+	updated, _ := m.Update(tea.MouseMsg{X: panelX + 2, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.MouseMsg{X: panelX + 8, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.MouseMsg{X: panelX + 8, Y: 3, Button: tea.MouseButtonNone, Action: tea.MouseActionRelease})
+	m = updated.(Model)
+	start, end := m.replySelection()
+	if start != 0 || end != 6 || m.replyPostDragging {
+		t.Fatalf("mouse selection=[%d,%d] dragging=%v", start, end, m.replyPostDragging)
+	}
+}
+
 func TestMouseReplyPostUsesRenderedCommandGeometry(t *testing.T) {
 	m := NewModel(context.Background(), &fakeService{})
 	m.width, m.height, m.loading = 120, 24, false
@@ -613,6 +726,14 @@ func TestCommandLabelsAndKeysStayAligned(t *testing.T) {
 		m.screen = screen
 		if labels, keys := m.commandLabels(), m.commandKeys(); len(labels) != len(keys) {
 			t.Fatalf("screen=%v labels=%d keys=%d", screen, len(labels), len(keys))
+		}
+	}
+	reply := "post_1"
+	m.screen, m.draft = ComposerScreen, Draft{ReplyTo: &reply}
+	for _, pane := range []replyPane{replyEditorPane, replySourcePane} {
+		m.replyPane = pane
+		if labels, keys := m.commandLabels(), m.commandKeys(); len(labels) != len(keys) {
+			t.Fatalf("reply pane=%v labels=%d keys=%d", pane, len(labels), len(keys))
 		}
 	}
 }

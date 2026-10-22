@@ -212,8 +212,8 @@ bord [параметры]
 --config PATH
     Явный путь к локальному state-файлу.
 
---theme classic|amber|green|mono
-    Цветовая тема интерфейса.
+--theme NAME|PATH.ini
+    Встроенная тема, имя MC skin или путь к skin-файлу Midnight Commander.
 
 --inline auto|kitty|off
     Режим показа изображений в терминале.
@@ -229,6 +229,8 @@ bord [параметры]
 
 ```sh
 bord --server https://board.example.org --theme green
+bord --server https://board.example.org --theme catppuccin-mocha
+bord --server https://board.example.org --theme "$HOME/.local/share/mc/skins/custom.ini"
 bord --server http://127.0.0.1:8080 --inline off --timeout 30s
 bord --config "$HOME/.config/bord/test-state.json" --theme mono
 ```
@@ -271,6 +273,7 @@ bord --server https://board-two.example --config "$HOME/.config/bord/board-two.j
 | Клавиша | Действие |
 |---|---|
 | `↑` / `k`, `↓` / `j` | перемещение выбора |
+| `Page Up` / `Page Down` | переход на страницу тредов |
 | `Tab` | сменить активную панель |
 | `Enter` | открыть выбранную доску, тред или полный текст поста |
 | `n` / `F7` | создать новый тред |
@@ -283,6 +286,7 @@ bord --server https://board-two.example --config "$HOME/.config/bord/board-two.j
 | Клавиша | Действие |
 |---|---|
 | `Enter` | открыть полный текст выделенного поста |
+| `Page Up` / `Page Down` | переход на страницу постов |
 | `p` / `F7` | ответить в тред без ссылки на пост |
 | `P` / `F8` | ответить на выделенный пост |
 | `o` | загрузить и проверить вложение выбранного/открытого поста |
@@ -301,8 +305,11 @@ bord --server https://board-two.example --config "$HOME/.config/bord/board-two.j
 |---|---|
 | `Ctrl+S` | отправить или повторить после ошибки |
 | `Ctrl+O` | выбрать JPEG/PNG-вложение |
+| `Tab` | переключить панели ответа и исходного поста |
+| `Shift` + стрелки | выделить текст исходного поста |
+| `Ctrl+C` | скопировать выделенный текст исходного поста |
 | `Esc` | вернуться, сохранив черновик |
-| `Ctrl+C` | завершить клиент |
+| `Ctrl+C` | завершить клиент, когда редактор ответа активен |
 
 Во время активного запроса повторный `Ctrl+S` игнорируется. После сетевой ошибки
 черновик сохраняется, а повтор использует тот же idempotency key и не должен
@@ -312,7 +319,7 @@ bord --server https://board-two.example --config "$HOME/.config/bord/board-two.j
 
 | Клавиша | Действие |
 |---|---|
-| `t` / `F2` | переключить тему |
+| `t` / `F2` | открыть выпадающий список тем |
 | `?` / `F1` | открыть справку |
 | `q`, `Ctrl+C`, `F10` | выйти |
 
@@ -322,6 +329,8 @@ bord --server https://board-two.example --config "$HOME/.config/bord/board-two.j
 - открытие треда или полного поста одним щелчком;
 - переход к исходному посту щелчком по `>>post_id` в строке ответа;
 - ответ на выбранный пост через `F8 Reply Post`;
+- переключение панелей ответа и исходного поста щелчком;
+- drag-выделение текста исходного поста с последующим `Ctrl+C`;
 - прокрутку панели под указателем колёсиком ровно на одну запись;
 - верхнее меню, нижнюю панель команд и кнопки редактора.
 
@@ -330,15 +339,23 @@ bord --server https://board-two.example --config "$HOME/.config/bord/board-two.j
 
 ## Темы
 
-Доступны четыре темы:
+Встроены четыре темы:
 
 - `classic` — классическая синяя тема Midnight Commander;
 - `amber` — янтарная;
 - `green` — зелёный phosphor;
 - `mono` — монохромная.
 
-Выбор через `--theme` применяется при запуске. `t`/`F2` переключает тему во
-время работы; итоговое значение сохраняется в state-файле.
+Дополнительно Bord импортирует совместимые `.ini` skins Midnight Commander из
+`$XDG_DATA_HOME/mc/skins`, `$XDG_CONFIG_HOME/mc/skins`,
+`~/.local/share/mc/skins`, `~/.config/mc/skins`, `/usr/local/share/mc/skins` и
+`/usr/share/mc/skins`. Поддерживаются aliases, truecolor/именованные цвета и
+символы двойных рамок из секций `[aliases]`, `[core]`, `[menu]` и `[Lines]`.
+
+`--theme` принимает встроенное имя, имя MC skin без `.ini` или прямой путь к
+файлу. `t`/`F2` либо щелчок по полю `Тема` открывает выпадающий список;
+`↑`/`↓`, `Page Up`/`Page Down` и `Enter` выбирают тему. Итоговый выбор
+сохраняется в state-файле.
 
 ## Изображения
 

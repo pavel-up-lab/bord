@@ -17,6 +17,11 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.width <= 0 || m.height <= 0 || msg.X < 0 || msg.Y < 0 || msg.X >= m.width || msg.Y >= m.height {
 		return m, nil
 	}
+	if m.screen == ComposerScreen && m.draft.ReplyTo != nil {
+		if updated, cmd, handled := m.selectReplyPostMouse(msg); handled {
+			return updated, cmd
+		}
+	}
 	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
 		if msg.Action != tea.MouseActionPress {
 			return m, nil
@@ -26,6 +31,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			delta = mouseWheelStep
 		}
 		return m.wheelAt(msg.X, msg.Y, delta)
+	}
+	if m.themeMenu {
+		return m.activateThemeMenuMouse(msg)
 	}
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
 		return m, nil
@@ -61,7 +69,7 @@ func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
 		label string
 		key   tea.KeyMsg
 	}{
-		{"[Тема] ", tea.KeyMsg{Type: tea.KeyF2}},
+		{m.themeControlLabel(), tea.KeyMsg{Type: tea.KeyF2}},
 		{"[Справка]", tea.KeyMsg{Type: tea.KeyF1}},
 	} {
 		if x >= offset && x < minInt(m.width, offset+textWidth(item.label)) {
@@ -69,6 +77,28 @@ func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
 		}
 		offset += textWidth(item.label)
 	}
+	return m, nil
+}
+
+func (m Model) activateThemeMenuMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	x, width, visible := m.themeMenuGeometry()
+	if msg.Y == 0 {
+		m.themeMenu = false
+		return m.activateTop(msg.X)
+	}
+	if msg.X < x || msg.X >= x+width || msg.Y < 2 || msg.Y >= 2+visible {
+		m.themeMenu = false
+		return m, nil
+	}
+	options := m.themes.Options()
+	index := m.themeScroll + msg.Y - 2
+	if index >= 0 && index < len(options) {
+		m.themeIndex, m.theme = index, options[index].Name
+	}
+	m.themeMenu = false
 	return m, nil
 }
 
@@ -112,6 +142,12 @@ func commandLabelWidth(label string, compact bool) int {
 
 func (m Model) commandKeys() []tea.KeyMsg {
 	if m.screen == ComposerScreen {
+		if m.draft.ReplyTo != nil && m.replyPane == replySourcePane {
+			return []tea.KeyMsg{{Type: tea.KeyCtrlC}, {Type: tea.KeyTab}, {Type: tea.KeyEsc}}
+		}
+		if m.draft.ReplyTo != nil {
+			return []tea.KeyMsg{{Type: tea.KeyCtrlS}, {Type: tea.KeyCtrlO}, {Type: tea.KeyTab}, {Type: tea.KeyEsc}}
+		}
 		return []tea.KeyMsg{{Type: tea.KeyCtrlS}, {Type: tea.KeyCtrlO}, {Type: tea.KeyEsc}}
 	}
 	if m.screen == HelpScreen {

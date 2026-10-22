@@ -43,6 +43,13 @@ const (
 	FocusContent
 )
 
+type replyPane uint8
+
+const (
+	replyEditorPane replyPane = iota
+	replySourcePane
+)
+
 type Service interface {
 	Boards(context.Context) ([]generated.Board, error)
 	Threads(context.Context, string, *string, int) (generated.ThreadPage, error)
@@ -55,12 +62,12 @@ type Service interface {
 }
 
 type KeyMap struct {
-	Up, Down, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
+	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
 }
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		Up: "up,k", Down: "down,j", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
+		Up: "up,k", Down: "down,j", PageUp: "pgup", PageDown: "pgdown", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
 		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
 		Theme: "t,f2",
 	}
@@ -96,6 +103,14 @@ type Model struct {
 	catalogBoard                                         string
 	preferredBoard                                       string
 	theme                                                ThemeName
+	themes                                               ThemeCatalog
+	themeMenu                                            bool
+	themeIndex, themeScroll                              int
+	replyPane                                            replyPane
+	replyPostCursor, replyPostAnchor, replyPostScroll    int
+	replyPostDragging                                    bool
+	clipboardOSC                                         string
+	clipboardCopied                                      bool
 	attachmentData                                       []byte
 	attachmentFile, attachmentID, attachmentWarning      string
 	attachmentRenderer                                   KittyRenderer
@@ -118,11 +133,12 @@ type boardsMsg struct {
 	err    error
 }
 type threadsMsg struct {
-	id     uint64
-	board  string
-	page   generated.ThreadPage
-	append bool
-	err    error
+	id             uint64
+	board          string
+	page           generated.ThreadPage
+	boards         []generated.Board
+	append         bool
+	err, boardsErr error
 }
 type postsMsg struct {
 	id     uint64
@@ -152,6 +168,7 @@ type attachmentLoadedMsg struct {
 
 type attachmentOpenedMsg struct{ err error }
 type attachmentInlineClosedMsg struct{ err error }
+type clearClipboardOSCMsg struct{}
 
 func NewModel(ctx context.Context, api Service) Model {
 	if ctx == nil {
@@ -163,7 +180,7 @@ func NewModel(ctx context.Context, api Service) Model {
 	editor.CharLimit = 10000
 	editor.SetWidth(60)
 	editor.SetHeight(8)
-	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic}
+	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), replyPostAnchor: -1}
 }
 
 // WithAttachmentViewer wires verified downloads to Kitty inline graphics and
@@ -177,10 +194,19 @@ func (m Model) WithAttachmentViewer(mode InlineMode, cache *client.Cache) Model 
 
 // WithTheme selects a validated presentation theme.
 func (m Model) WithTheme(name ThemeName) Model {
-	if _, err := ParseTheme(string(name)); err == nil {
+	if _, ok := m.themes.palettes[name]; ok {
 		m.theme = name
 	}
 	return m
+}
+
+// WithThemes installs the discovered theme catalog and selects one palette.
+func (m Model) WithThemes(catalog ThemeCatalog, name ThemeName) Model {
+	if len(catalog.palettes) == 0 {
+		catalog = DiscoverThemes()
+	}
+	m.themes = catalog
+	return m.WithTheme(name)
 }
 
 // WithLastBoard selects the persisted board when it is present in the first response.
@@ -195,7 +221,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = max(1, msg.Width), max(1, msg.Height)
-		m.editor.SetWidth(max(1, msg.Width-6))
+		m.configureEditorWidth()
 		m.editor.SetHeight(max(1, msg.Height-10))
 		return m, nil
 	case tea.KeyMsg:
@@ -225,6 +251,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
+			if !msg.append && msg.boardsErr == nil && msg.boards != nil {
+				selectedBoardSlug := selectedBoard(m.boards, m.boardIndex)
+				m.boards = msg.boards
+				m.boardIndex = indexBoard(m.boards, selectedBoardSlug, clamp(m.boardIndex, 0, len(m.boards)-1))
+			}
 			selected, top := selectedThread(m.threads, m.contentIndex), selectedThread(m.threads, m.contentScroll)
 			preserve := msg.board == m.catalogBoard
 			m.threads = mergeThreads(m.threads, msg.page.Threads, msg.append)
@@ -305,12 +336,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// SGR coordinates through its public command path.
 			return m, tea.EnableMouseCellMotion
 		}
+	case clearClipboardOSCMsg:
+		m.clipboardOSC = ""
 	}
 	return m, nil
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.themeMenu {
+		return m.updateThemeMenuKey(key)
+	}
+	if m.screen == ComposerScreen && m.draft.ReplyTo != nil && m.replyPane == replySourcePane && key == "ctrl+c" {
+		return m.copyReplySelection()
+	}
 	if matches(key, m.keys.Quit) && (m.screen != ComposerScreen || key == "ctrl+c" || key == "f10") {
 		m.cancel()
 		if m.streamCancel != nil {
@@ -322,7 +361,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if matches(key, m.keys.Theme) && (m.screen != ComposerScreen || key == "f2") {
-		m.theme = nextTheme(m.theme)
+		m.openThemeMenu()
 		return m, nil
 	}
 	if m.screen == ComposerScreen {
@@ -344,6 +383,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		}
+		if m.draft.ReplyTo != nil && key == "tab" {
+			m.toggleReplyPane()
+			return m, nil
+		}
+		if m.draft.ReplyTo != nil && m.replyPane == replySourcePane {
+			return m.updateReplySourceKey(key)
 		}
 		switch {
 		case key == "f1":
@@ -409,6 +455,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearAttachmentViewer()
 		} else if m.screen == ThreadScreen {
 			m.screen, m.activeThread, m.posts = CatalogScreen, "", nil
+			return m, m.loadThreads(false)
 		} else if m.isNarrow() && m.focus == FocusContent {
 			m.focus = FocusBoards
 		}
@@ -431,6 +478,27 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.screen == CatalogScreen && m.nextThreadCursor != nil {
 				return m, m.loadThreads(true)
+			}
+		}
+	case matches(key, m.keys.PageUp):
+		if m.screen == PostScreen {
+			m.scrollPost(-max(1, m.height-6))
+		} else if m.focus == FocusContent {
+			m.movePage(-1)
+		}
+	case matches(key, m.keys.PageDown):
+		if m.screen == PostScreen {
+			m.scrollPost(max(1, m.height-6))
+		} else if m.focus == FocusContent {
+			atEnd := m.contentIndex == m.contentLength()-1
+			m.movePage(1)
+			if atEnd || m.contentIndex == m.contentLength()-1 {
+				if m.screen == ThreadScreen && m.nextPostCursor != nil {
+					return m, m.loadPosts(true)
+				}
+				if m.screen == CatalogScreen && m.nextThreadCursor != nil {
+					return m, m.loadThreads(true)
+				}
 			}
 		}
 	case matches(key, m.keys.Refresh):
@@ -495,6 +563,9 @@ func (m *Model) beginComposerTarget(thread string, replyTo *string) {
 		m.submitted = nil
 	}
 	m.previous, m.screen = m.screen, ComposerScreen
+	m.replyPane, m.replyPostCursor, m.replyPostAnchor, m.replyPostScroll = replyEditorPane, 0, -1, 0
+	m.replyPostDragging, m.clipboardCopied = false, false
+	m.configureEditorWidth()
 	if m.draft.IdempotencyKey == "" {
 		key, err := newKey()
 		if err != nil {
@@ -535,6 +606,23 @@ func (m *Model) move(delta int) {
 	}
 	m.contentIndex = clamp(m.contentIndex+delta, 0, length-1)
 	m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, m.visibleRows())
+}
+
+func (m Model) contentLength() int {
+	if m.screen == ThreadScreen {
+		return len(m.posts)
+	}
+	return len(m.threads)
+}
+
+func (m *Model) movePage(direction int) {
+	length := m.contentLength()
+	if length == 0 {
+		return
+	}
+	step := max(1, m.visibleRows())
+	m.contentIndex = clamp(m.contentIndex+direction*step, 0, length-1)
+	m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, step)
 }
 
 func (m *Model) scrollPost(delta int) {
@@ -584,7 +672,12 @@ func (m *Model) loadThreads(appendPage bool) tea.Cmd {
 	return func() tea.Msg {
 		defer cancel()
 		v, err := m.api.Threads(ctx, board, cursor, 50)
-		return threadsMsg{id, board, v, appendPage, err}
+		var boards []generated.Board
+		var boardsErr error
+		if !appendPage && err == nil {
+			boards, boardsErr = m.api.Boards(ctx)
+		}
+		return threadsMsg{id: id, board: board, page: v, boards: boards, append: appendPage, err: err, boardsErr: boardsErr}
 	}
 }
 func (m *Model) loadPosts(appendPage bool) tea.Cmd {
@@ -760,7 +853,7 @@ func (m *Model) watchEvents() tea.Cmd {
 
 func (m Model) View() string {
 	w, h := max(1, m.width), max(1, m.height)
-	colors := palette(m.theme)
+	colors := m.themes.palette(m.theme)
 	lines := make([]string, 0, h)
 	lines = append(lines, m.topBar(colors, w))
 	workspaceHeight := max(0, h-3)
@@ -775,6 +868,12 @@ func (m Model) View() string {
 	}
 	for len(lines) < h {
 		lines = append(lines, paint(colors.background, colors.foreground, "", w))
+	}
+	if m.themeMenu {
+		lines = m.overlayThemeMenu(lines, colors)
+	}
+	if m.clipboardOSC != "" && len(lines) > 0 {
+		lines[0] = m.clipboardOSC + lines[0]
 	}
 	return strings.Join(lines[:h], "\n")
 }
@@ -801,6 +900,9 @@ func (m Model) contentTitle() string {
 }
 
 func (m Model) statusText() string {
+	if m.clipboardCopied {
+		return " Выделенный текст скопирован • Tab вернуться к ответу"
+	}
 	if m.searching {
 		return " Поиск: " + SanitizeTerminalText(m.searchQuery) + "_  Enter применить • Esc отменить"
 	}
@@ -838,11 +940,121 @@ func (m Model) topBarLeft() string {
 	if m.canGoBack() {
 		left += "[← Назад] "
 	}
-	return left + "[Тема] [Справка]"
+	return left + m.themeControlLabel() + "[Справка]"
+}
+
+func (m Model) themeControlLabel() string {
+	label := m.themes.labels[m.theme]
+	if label == "" {
+		label = string(m.theme)
+	}
+	label = ansi.Truncate(SanitizeTerminalText(label), 18, "…")
+	return "[Тема: " + label + " ▾] "
+}
+
+func (m *Model) openThemeMenu() {
+	options := m.themes.Options()
+	if len(options) == 0 {
+		return
+	}
+	m.themeMenu = true
+	m.themeIndex = 0
+	for i := range options {
+		if options[i].Name == m.theme {
+			m.themeIndex = i
+			break
+		}
+	}
+	m.ensureThemeVisible()
+}
+
+func (m *Model) ensureThemeVisible() {
+	visible := m.themeMenuVisible()
+	if m.themeIndex < m.themeScroll {
+		m.themeScroll = m.themeIndex
+	} else if m.themeIndex >= m.themeScroll+visible {
+		m.themeScroll = m.themeIndex - visible + 1
+	}
+	m.themeScroll = max(0, m.themeScroll)
+}
+
+func (m Model) themeMenuVisible() int {
+	return max(1, minInt(10, max(1, m.height-4)))
+}
+
+func (m Model) updateThemeMenuKey(key string) (tea.Model, tea.Cmd) {
+	options := m.themes.Options()
+	if len(options) == 0 {
+		m.themeMenu = false
+		return m, nil
+	}
+	switch key {
+	case "esc", "f2", "t":
+		m.themeMenu = false
+	case "up", "k":
+		m.themeIndex = clamp(m.themeIndex-1, 0, len(options)-1)
+		m.ensureThemeVisible()
+	case "down", "j":
+		m.themeIndex = clamp(m.themeIndex+1, 0, len(options)-1)
+		m.ensureThemeVisible()
+	case "pgup":
+		m.themeIndex = clamp(m.themeIndex-m.themeMenuVisible(), 0, len(options)-1)
+		m.ensureThemeVisible()
+	case "pgdown":
+		m.themeIndex = clamp(m.themeIndex+m.themeMenuVisible(), 0, len(options)-1)
+		m.ensureThemeVisible()
+	case "enter":
+		m.theme = options[m.themeIndex].Name
+		m.themeMenu = false
+	}
+	return m, nil
+}
+
+func (m Model) themeMenuGeometry() (int, int, int) {
+	x := minInt(textWidth(" BORD  "), max(0, m.width-1))
+	width := 14
+	for _, option := range m.themes.Options() {
+		width = max(width, textWidth(SanitizeTerminalText(option.Label))+4)
+	}
+	width = minInt(width, max(1, m.width-x))
+	return x, width, m.themeMenuVisible()
+}
+
+func (m Model) overlayThemeMenu(lines []string, t theme) []string {
+	options := m.themes.Options()
+	if len(options) == 0 || len(lines) < 2 {
+		return lines
+	}
+	x, width, visible := m.themeMenuGeometry()
+	menu := []string{paint(t.barBackground, t.barForeground, "┌"+strings.Repeat("─", max(0, width-2))+"┐", width)}
+	end := minInt(len(options), m.themeScroll+visible)
+	for i := m.themeScroll; i < end; i++ {
+		prefix := "  "
+		if i == m.themeIndex {
+			prefix = "> "
+		}
+		bg, fg := t.barBackground, t.barForeground
+		if i == m.themeIndex {
+			bg, fg = t.selectionBackground, t.selection
+		}
+		menu = append(menu, paint(bg, fg, "│"+prefix+SanitizeTerminalText(options[i].Label), width-1)+paint(t.barBackground, t.barForeground, "│", 1))
+	}
+	menu = append(menu, paint(t.barBackground, t.barForeground, "└"+strings.Repeat("─", max(0, width-2))+"┘", width))
+	for i, overlay := range menu {
+		y := i + 1
+		if y >= len(lines) {
+			break
+		}
+		lines[y] = ansi.Cut(lines[y], 0, x) + overlay + ansi.Cut(lines[y], x+width, m.width)
+	}
+	return lines
 }
 
 func (m Model) workspace(t theme, width, height int) []string {
 	if m.screen == ComposerScreen {
+		if m.draft.ReplyTo != nil {
+			return m.replyComposerWorkspace(t, width, height)
+		}
 		return m.singlePanel(t, width, height, m.composerTitle(), "ТЕКСТ ПУБЛИКАЦИИ", m.composerLines(), true)
 	}
 	if m.screen == HelpScreen {
@@ -897,14 +1109,19 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 		return lines
 	}
 	inner := width - 2
-	topText := "═ " + SanitizeTerminalText(title) + " "
-	top := paint(t.background, border, "╔"+fit(topText, inner, '═')+"╗", width)
-	bottom := paint(t.background, border, "╚"+strings.Repeat("═", inner)+"╝", width)
-	lines := []string{top}
-	if height > 2 {
-		lines = append(lines, paint(t.background, border, "║", 1)+paint(t.barBackground, t.barForeground, " "+hint, inner)+paint(t.background, border, "║", 1))
+	lines := t.lines
+	if lines.horizontal == "" {
+		lines = doubleLines
 	}
-	available := height - len(lines) - 1
+	topText := lines.horizontal + " " + SanitizeTerminalText(title) + " "
+	fill := []rune(lines.horizontal)[0]
+	top := paint(t.background, border, lines.leftTop+fit(topText, inner, fill)+lines.rightTop, width)
+	bottom := paint(t.background, border, lines.leftBottom+strings.Repeat(lines.horizontal, inner)+lines.rightBottom, width)
+	result := []string{top}
+	if height > 2 {
+		result = append(result, paint(t.background, border, lines.vertical, 1)+paint(t.barBackground, t.barForeground, " "+hint, inner)+paint(t.background, border, lines.vertical, 1))
+	}
+	available := height - len(result) - 1
 	for _, row := range rows {
 		for _, text := range row.lines {
 			if available <= 0 {
@@ -922,7 +1139,7 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 			if row.trustedANSI {
 				rowPaint = paintANSI
 			}
-			lines = append(lines, paint(t.background, border, "║", 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.background, border, "║", 1))
+			result = append(result, paint(t.background, border, lines.vertical, 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.background, border, lines.vertical, 1))
 			available--
 		}
 		if available <= 0 {
@@ -930,10 +1147,10 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 		}
 	}
 	for available > 0 {
-		lines = append(lines, paint(t.background, border, "║", 1)+paint(t.background, t.foreground, "", inner)+paint(t.background, border, "║", 1))
+		result = append(result, paint(t.background, border, lines.vertical, 1)+paint(t.background, t.foreground, "", inner)+paint(t.background, border, lines.vertical, 1))
 		available--
 	}
-	return append(lines, bottom)
+	return append(result, bottom)
 }
 
 func (m Model) boardRows() []displayRow {
@@ -1050,10 +1267,10 @@ func (m Model) composerLines() []displayRow {
 
 func (m Model) helpLines() []displayRow {
 	return []displayRow{{lines: []string{
-		"↑/k ↓/j   навигация / прокрутка полного поста", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
+		"↑/k ↓/j   навигация / прокрутка полного поста", "PgUp/PgDn  переход на страницу тредов или постов", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
 		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост",
-		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t          следующая тема", "?          эта справка", "q Ctrl+C   выход",
-		"Мышь       один клик открывает тред или полный пост", "F8         ответить на выделенный/открытый пост", "Колесо     навигация или прокрутка полного поста",
+		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t / F2     список встроенных и MC-тем", "?          эта справка", "q Ctrl+C   выход",
+		"Ответ      Tab — исходный пост; Shift+стрелки — выделить; Ctrl+C — копировать", "Мышь       один клик открывает; drag выделяет текст исходного поста", "F8         ответить на выделенный/открытый пост", "Колесо     навигация или прокрутка",
 	}}}
 }
 
@@ -1129,6 +1346,12 @@ func (m Model) compactCommandBar(width int) bool {
 
 func (m Model) commandLabels() []string {
 	if m.screen == ComposerScreen {
+		if m.draft.ReplyTo != nil && m.replyPane == replySourcePane {
+			return []string{"Ctrl+C Copy", "Tab Reply", "Esc Cancel"}
+		}
+		if m.draft.ReplyTo != nil {
+			return []string{"Ctrl+S Send", "Ctrl+O Attach", "Tab Source", "Esc Cancel"}
+		}
 		return []string{"Ctrl+S Send", "Ctrl+O Attach", "Esc Cancel"}
 	}
 	if m.screen == HelpScreen {
@@ -1435,8 +1658,11 @@ func (m Model) LastBoard() string {
 	return m.boards[m.boardIndex].Slug
 }
 
-// Theme returns the current stable theme name for persistence.
+// Theme returns the active theme identifier.
 func (m Model) Theme() ThemeName { return m.theme }
+
+// ThemeSetting returns a rediscoverable name or path for local-state persistence.
+func (m Model) ThemeSetting() string { return m.themes.setting(m.theme) }
 
 // errorsAs is kept tiny so View never risks exposing the wrapped error text.
 func errorsAs(err error, target any) bool { return errors.As(err, target) }
