@@ -10,8 +10,9 @@ Bord — публичная анонимная терминальная борд
   изображений и management API;
 - `bord` — полноэкранный TUI-клиент в стиле Midnight Commander с клавиатурой,
   мышью, темами и поддержкой JPEG/PNG.
-- `bord-admin` — отдельный приватный TUI для очереди жалоб, блокировок и аудита;
-  он работает только с изолированным management API.
+- `bord-admin` — приватный TUI для жалоб, блокировок, аудита и lifecycle досок;
+  он также встраивает обычный пользовательский режим, но management API и
+  credential остаются изолированы от public transport.
 
 Аккаунты не требуются. Клиент локально хранит анонимный session secret и ключи,
 позволяющие позднее удалить собственные публикации. Сервер не хранит исходный
@@ -334,6 +335,20 @@ response timeout, чтобы SSE-события доставлялись сра�
 матрица ролей и риск сохранения раскрытого IP в scrollback описаны отдельно в
 [`docs/admin-tui.md`](docs/admin-tui.md). Management listener нельзя направлять
 через публичный listener или Caddy.
+
+Встроенный пользовательский режим настраивается независимо:
+
+```sh
+BORD_ADMIN_MANAGEMENT=http://127.0.0.1:8081 \
+BORD_SERVER=https://board.example.org \
+bord-admin --credential-file ~/.config/bord/admin.credential
+```
+
+`--management`/`BORD_ADMIN_MANAGEMENT` используются только административным
+клиентом, а `--server`/`BORD_SERVER` — только обычным public API. `F3` или
+верхнее меню переключают «Администрирование»/«Пользователь». Выбранные режим и
+тема сохраняются в `admin.json`; anonymous session и delete capabilities —
+только в отдельном пользовательском `state.json`.
 
 Минимальная команда для публичного сервера:
 

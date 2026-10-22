@@ -10,7 +10,7 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/bord-terminal-smoke.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 echo "terminal smoke host: ${host_os}/${host_arch}"
-go test ./internal/client ./internal/adminclient ./internal/tui ./internal/admintui ./cmd/bord ./cmd/bord-admin
+go test ./internal/client ./internal/clientapp ./internal/adminclient ./internal/terminalui ./internal/tui ./internal/admintui ./internal/adminapp ./cmd/bord ./cmd/bord-admin
 
 host_binary="$tmp/bord"
 if [[ "$host_os" == windows ]]; then
@@ -45,6 +45,10 @@ for target_os in linux darwin windows; do
     go test -c -o "$tmp/adminclient-${target_os}-amd64.test${suffix}" ./internal/adminclient
   CGO_ENABLED=0 GOOS="$target_os" GOARCH=amd64 \
     go test -c -o "$tmp/admintui-${target_os}-amd64.test${suffix}" ./internal/admintui
+  CGO_ENABLED=0 GOOS="$target_os" GOARCH=amd64 \
+    go test -c -o "$tmp/adminapp-${target_os}-amd64.test${suffix}" ./internal/adminapp
+  CGO_ENABLED=0 GOOS="$target_os" GOARCH=amd64 \
+    go test -c -o "$tmp/terminalui-${target_os}-amd64.test${suffix}" ./internal/terminalui
   CGO_ENABLED=0 GOOS="$target_os" GOARCH=amd64 \
     go test -c -o "$tmp/bord-admin-${target_os}-amd64.test${suffix}" ./cmd/bord-admin
 done

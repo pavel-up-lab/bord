@@ -10,6 +10,48 @@ import (
 	"database/sql"
 )
 
+const activeBoardForAttachment = `-- name: ActiveBoardForAttachment :one
+SELECT b.id
+FROM boards b
+JOIN threads t ON t.board_id = b.id
+JOIN posts p ON p.thread_id = t.id
+JOIN attachments a ON a.id = p.attachment_id
+WHERE a.id = ?1 AND b.enabled = 1
+`
+
+func (q *Queries) ActiveBoardForAttachment(ctx context.Context, attachmentID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, activeBoardForAttachment, attachmentID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const activeBoardForPost = `-- name: ActiveBoardForPost :one
+SELECT b.id
+FROM boards b JOIN threads t ON t.board_id = b.id JOIN posts p ON p.thread_id = t.id
+WHERE p.id = ?1 AND b.enabled = 1
+`
+
+func (q *Queries) ActiveBoardForPost(ctx context.Context, postID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, activeBoardForPost, postID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const activeBoardForThread = `-- name: ActiveBoardForThread :one
+SELECT b.id
+FROM boards b JOIN threads t ON t.board_id = b.id
+WHERE t.id = ?1 AND b.enabled = 1
+`
+
+func (q *Queries) ActiveBoardForThread(ctx context.Context, threadID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, activeBoardForThread, threadID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const appendOutbox = `-- name: AppendOutbox :exec
 INSERT INTO event_outbox(schema_version, event_type, board_id, thread_id, post_id, payload, created_at)
 VALUES (?1, ?2, ?3, ?4,
@@ -37,6 +79,25 @@ func (q *Queries) AppendOutbox(ctx context.Context, arg AppendOutboxParams) erro
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const boardByID = `-- name: BoardByID :one
+SELECT id, slug, title, enabled, created_at
+FROM boards
+WHERE id = ?1
+`
+
+func (q *Queries) BoardByID(ctx context.Context, id int64) (Board, error) {
+	row := q.db.QueryRowContext(ctx, boardByID, id)
+	var i Board
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Title,
+		&i.Enabled,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const boardBySlug = `-- name: BoardBySlug :one
@@ -199,6 +260,66 @@ func (q *Queries) ListBoards(ctx context.Context) ([]Board, error) {
 			&i.Title,
 			&i.Enabled,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedBoards = `-- name: ListManagedBoards :many
+SELECT b.id, b.slug, b.title, b.enabled, b.created_at,
+       (SELECT count(*) FROM threads t WHERE t.board_id = b.id) AS thread_count,
+       (SELECT count(*) FROM posts p JOIN threads t ON t.id = p.thread_id WHERE t.board_id = b.id) AS post_count
+FROM boards b
+WHERE (?1 = 0 OR b.id < ?1)
+  AND (?2 = 'all'
+       OR (?2 = 'active' AND b.enabled = 1)
+       OR (?2 = 'archived' AND b.enabled = 0))
+ORDER BY b.id DESC
+LIMIT ?3
+`
+
+type ListManagedBoardsParams struct {
+	BeforeID   interface{} `json:"before_id"`
+	BoardState interface{} `json:"board_state"`
+	PageSize   int64       `json:"page_size"`
+}
+
+type ListManagedBoardsRow struct {
+	ID          int64  `json:"id"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	Enabled     int64  `json:"enabled"`
+	CreatedAt   string `json:"created_at"`
+	ThreadCount int64  `json:"thread_count"`
+	PostCount   int64  `json:"post_count"`
+}
+
+func (q *Queries) ListManagedBoards(ctx context.Context, arg ListManagedBoardsParams) ([]ListManagedBoardsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listManagedBoards, arg.BeforeID, arg.BoardState, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListManagedBoardsRow
+	for rows.Next() {
+		var i ListManagedBoardsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Title,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.ThreadCount,
+			&i.PostCount,
 		); err != nil {
 			return nil, err
 		}
@@ -387,6 +508,26 @@ func (q *Queries) SchemaVersion(ctx context.Context) (int64, error) {
 	var version int64
 	err := row.Scan(&version)
 	return version, err
+}
+
+const setBoardEnabled = `-- name: SetBoardEnabled :execrows
+UPDATE boards
+SET enabled = ?1
+WHERE id = ?2 AND enabled = ?3
+`
+
+type SetBoardEnabledParams struct {
+	Enabled         int64 `json:"enabled"`
+	ID              int64 `json:"id"`
+	ExpectedEnabled int64 `json:"expected_enabled"`
+}
+
+func (q *Queries) SetBoardEnabled(ctx context.Context, arg SetBoardEnabledParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setBoardEnabled, arg.Enabled, arg.ID, arg.ExpectedEnabled)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const storeIdempotency = `-- name: StoreIdempotency :exec

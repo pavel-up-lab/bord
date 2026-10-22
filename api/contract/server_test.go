@@ -64,6 +64,18 @@ func (adminPort) Authenticate(context.Context, string, string) (api.AdminPrincip
 func (adminPort) ListReports(context.Context, string, int) (api.Page[api.AdminReport], error) {
 	return api.Page[api.AdminReport]{Items: []api.AdminReport{}}, nil
 }
+func (adminPort) ListBoards(context.Context, string, string, int) (api.Page[api.AdminBoard], error) {
+	return api.Page[api.AdminBoard]{Items: []api.AdminBoard{}}, nil
+}
+func (adminPort) CreateBoard(context.Context, api.AdminCreateBoardRequest, string) (api.AdminBoard, error) {
+	return api.AdminBoard{}, nil
+}
+func (adminPort) ArchiveBoard(context.Context, string, string, string) (api.AdminBoard, error) {
+	return api.AdminBoard{}, nil
+}
+func (adminPort) RestoreBoard(context.Context, string, string, string) (api.AdminBoard, error) {
+	return api.AdminBoard{}, nil
+}
 func (adminPort) GetPostContext(context.Context, string, string, int) (api.AdminPostContext, error) {
 	return api.AdminPostContext{Board: api.AdminBoardSummary{ID: "board_01", Slug: "test", Title: "Test"}, Thread: api.AdminThreadSummary{ID: "thread_1"}, TargetPost: "post_001", Posts: []api.Post{}}, nil
 }

@@ -160,12 +160,12 @@ func TestThemeDropdownTopButtonsAndPersistence(t *testing.T) {
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF2})
 	m = updated.(Model)
-	if !m.themeMenu {
+	if !m.themePicker.IsOpen() {
 		t.Fatal("theme menu did not open")
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
-	if m.themeMenu {
+	if m.themePicker.IsOpen() {
 		t.Fatal("theme menu did not close")
 	}
 }

@@ -3,6 +3,7 @@ package admintui
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,14 +19,19 @@ import (
 )
 
 type serviceFake struct {
-	session         adminclient.Session
-	reports         adminclient.Page[adminclient.Report]
-	context         adminclient.PostContext
-	bans            adminclient.Page[adminclient.BanRecord]
-	audit           adminclient.Page[adminclient.AuditEntry]
-	err             error
-	visibilityCalls int
-	lastReason      string
+	session           adminclient.Session
+	reports           adminclient.Page[adminclient.Report]
+	context           adminclient.PostContext
+	bans              adminclient.Page[adminclient.BanRecord]
+	audit             adminclient.Page[adminclient.AuditEntry]
+	boards            adminclient.Page[adminclient.Board]
+	err               error
+	visibilityCalls   int
+	lastReason        string
+	createBoardCalls  int
+	lastBoardRequest  adminclient.CreateBoardRequest
+	archiveBoardCalls int
+	restoreBoardCalls int
 }
 
 func (s *serviceFake) Session(context.Context) (adminclient.Session, error) { return s.session, s.err }
@@ -43,6 +49,24 @@ func (s *serviceFake) Bans(context.Context, string, *string, int) (adminclient.P
 }
 func (s *serviceFake) Audit(context.Context, *string, int) (adminclient.Page[adminclient.AuditEntry], error) {
 	return s.audit, s.err
+}
+func (s *serviceFake) Boards(context.Context, string, *string, int) (adminclient.Page[adminclient.Board], error) {
+	return s.boards, s.err
+}
+func (s *serviceFake) CreateBoard(_ context.Context, request adminclient.CreateBoardRequest) (adminclient.Board, error) {
+	s.createBoardCalls++
+	s.lastBoardRequest = request
+	return adminclient.Board{Id: "00000003", Slug: request.Slug, Title: request.Title, State: "active"}, s.err
+}
+func (s *serviceFake) ArchiveBoard(_ context.Context, id, reason string) (adminclient.Board, error) {
+	s.archiveBoardCalls++
+	s.lastReason = reason
+	return adminclient.Board{Id: id, State: "archived"}, s.err
+}
+func (s *serviceFake) RestoreBoard(_ context.Context, id, reason string) (adminclient.Board, error) {
+	s.restoreBoardCalls++
+	s.lastReason = reason
+	return adminclient.Board{Id: id, State: "active"}, s.err
 }
 func (s *serviceFake) SetVisibility(_ context.Context, _ string, _ bool, reason string) error {
 	s.visibilityCalls++
@@ -67,6 +91,7 @@ func fixtureService() *serviceFake {
 		context: adminclient.PostContext{Board: generated.AdminBoardSummary{Id: "00000001", Slug: "general", Title: "General"}, Thread: generated.AdminThreadSummary{Id: "00000001"}, TargetPostId: "00000002", Posts: []generated.Post{{Id: "00000002", ThreadId: "00000001", AuthorId: "author", State: "hidden", Body: &body, Attachment: &generated.Attachment{Id: "attach_1", MediaType: "image/png", Filename: &filename, Sha256: strings.Repeat("a", 64), Size: 5, Width: 1, Height: 1}, CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}},
 		bans:    adminclient.Page[adminclient.BanRecord]{Items: []adminclient.BanRecord{{Id: "00000009", SubjectType: "lookup", Subject: "fingerprint:abcdef", Operation: "create_post", Reason: "spam", State: "active", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), ExpiresAt: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}}},
 		audit:   adminclient.Page[adminclient.AuditEntry]{Items: []adminclient.AuditEntry{{Id: "00000010", Action: "post.visibility", Outcome: "failure", RequestId: "request-001", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}},
+		boards:  adminclient.Page[adminclient.Board]{Items: []adminclient.Board{{Id: "00000001", Slug: "general", Title: "General", State: "active", ThreadCount: 2, PostCount: 4}, {Id: "00000002", Slug: "archive", Title: "Archive", State: "archived"}}},
 	}
 }
 
@@ -171,6 +196,210 @@ func TestScreenSwitchCancelsRequestAndRefreshIsRetrySafe(t *testing.T) {
 	m = updated.(Model)
 	if len(m.audit) != 1 || m.screen != AuditScreen {
 		t.Fatalf("audit screen=%#v", m)
+	}
+}
+
+func TestAdministratorBoardScreenFiltersPaginationAndMouse(t *testing.T) {
+	m := loadedModel(t)
+	updated, cmd := m.selectScreen(BoardsScreen)
+	m = updated.(Model)
+	if cmd == nil || m.screen != BoardsScreen {
+		t.Fatalf("screen=%v cmd=%v", m.screen, cmd)
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if len(m.boards) != 2 || !strings.Contains(m.View(), "/general/") || !strings.Contains(m.View(), "[archived]") {
+		t.Fatalf("boards=%#v view=%q", m.boards, m.View())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF6})
+	m = updated.(Model)
+	if m.boardState != "active" {
+		t.Fatalf("state=%q", m.boardState)
+	}
+	m.loading = false
+	cursor := "next-board"
+	m.boardsCursor = &cursor
+	m.boardIndex = len(m.boards) - 1
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("board pagination command missing")
+	}
+	if message, ok := cmd().(boardsMsg); !ok || !message.append {
+		t.Fatalf("pagination message=%T %#v", cmd(), cmd())
+	}
+	m = updated.(Model)
+	m.loading = false
+	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := updated.(Model).boardIndex; got != 0 {
+		t.Fatalf("wide board mouse index=%d", got)
+	}
+	m = updated.(Model)
+	m.width = 50
+	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 4, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := updated.(Model).boardIndex; got != 1 {
+		t.Fatalf("narrow board mouse index=%d", got)
+	}
+}
+
+func TestNonAdministratorCannotOpenBoardScreen(t *testing.T) {
+	for _, role := range []string{"reports", "moderator"} {
+		service := fixtureService()
+		service.session.Role = generated.AdminRole(role)
+		m := NewModel(context.Background(), service).WithSession(service.session)
+		m.loading = false
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+		got := updated.(Model)
+		if got.screen == BoardsScreen || cmd != nil || strings.Contains(got.topBar(got.themes.Palette(got.theme), 120), "[4 Доски]") {
+			t.Fatalf("role=%s opened board screen", role)
+		}
+	}
+}
+
+func TestCreateBoardModalValidationConfirmationRetryAndMouseFocus(t *testing.T) {
+	m := loadedModel(t)
+	m.screen = BoardsScreen
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = updated.(Model)
+	if m.modal == nil || m.modal.kind != modalCreateBoard || m.modal.field != 0 {
+		t.Fatalf("modal=%#v", m.modal)
+	}
+	updated, _ = m.Update(tea.MouseMsg{X: 10, Y: 6, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = updated.(Model)
+	if m.modal.field != 1 {
+		t.Fatalf("mouse field=%d", m.modal.field)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.modal != nil {
+		t.Fatal("Esc did not cancel create modal")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = updated.(Model)
+	m.modal.slug.SetValue("Bad Slug")
+	m.modal.title.SetValue("Games")
+	m.modal.editor.SetValue("create category")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if cmd != nil || !strings.Contains(m.modal.err, "Slug") {
+		t.Fatalf("invalid slug submitted cmd=%v err=%q", cmd, m.modal.err)
+	}
+	m.modal.slug.SetValue("games")
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if cmd != nil || !m.modal.confirmed {
+		t.Fatal("first confirmation executed mutation")
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if cmd == nil || !m.modal.pending {
+		t.Fatal("confirmed create did not start")
+	}
+	service := m.service.(*serviceFake)
+	service.err = errors.New("backend unavailable")
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.modal == nil || m.modal.pending || m.modal.slug.Value() != "games" || service.createBoardCalls != 1 {
+		t.Fatalf("retry state modal=%#v calls=%d", m.modal, service.createBoardCalls)
+	}
+	service.err = nil
+	m.modal.confirmed = true
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.modal != nil || service.lastBoardRequest.Reason != "create category" || service.createBoardCalls != 2 {
+		t.Fatalf("create result modal=%#v request=%#v calls=%d", m.modal, service.lastBoardRequest, service.createBoardCalls)
+	}
+}
+
+func TestArchiveRestoreRequireSecondConfirmationAndPreserveConflictState(t *testing.T) {
+	m := loadedModel(t)
+	m.screen, m.boards, m.boardIndex = BoardsScreen, fixtureService().boards.Items, 0
+	service := m.service.(*serviceFake)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(Model)
+	if m.modal == nil || m.modal.kind != modalArchiveBoard {
+		t.Fatalf("archive modal=%#v", m.modal)
+	}
+	m.modal.editor.SetValue("retire category")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if cmd != nil || service.archiveBoardCalls != 0 || !m.modal.confirmed {
+		t.Fatal("archive ran before second confirmation")
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	if cmd == nil || !m.modal.pending {
+		t.Fatal("archive did not enter pending state")
+	}
+	blocked, blockedCmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if blockedCmd != nil || blocked.(Model).modal == nil {
+		t.Fatal("pending archive accepted input")
+	}
+	service.err = &adminclient.Error{StatusCode: http.StatusConflict, Code: "conflict"}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.modal == nil || m.boardIndex != 0 || service.archiveBoardCalls != 1 || !strings.Contains(m.modal.err, "conflict") {
+		t.Fatalf("conflict lost state modal=%#v index=%d calls=%d", m.modal, m.boardIndex, service.archiveBoardCalls)
+	}
+	service.err = nil
+	m.modal = nil
+	m.boards[1].State = "archived"
+	m.boardIndex = 1
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m = updated.(Model)
+	if m.modal == nil || m.modal.kind != modalRestoreBoard {
+		t.Fatalf("restore modal=%#v", m.modal)
+	}
+	m.modal.editor.SetValue("reopen category")
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if service.restoreBoardCalls != 1 || m.modal != nil {
+		t.Fatalf("restore calls=%d modal=%#v", service.restoreBoardCalls, m.modal)
+	}
+}
+
+func TestDocumentedBoardShortcutsAreWired(t *testing.T) {
+	m := loadedModel(t)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m = updated.(Model)
+	if m.screen != BoardsScreen || cmd == nil {
+		t.Fatal("4 did not open boards")
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	for _, label := range []string{"F6 All/Active/Archived", "N New", "D Archive", "U Restore"} {
+		if !strings.Contains(strings.Join(m.commandLabels(), " "), label) {
+			t.Fatalf("missing command label %q", label)
+		}
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF6})
+	m = updated.(Model)
+	if m.boardState != "active" {
+		t.Fatal("F6 did not change board filter")
+	}
+	m.loading = false
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = updated.(Model)
+	if m.modal == nil || m.modal.kind != modalCreateBoard {
+		t.Fatal("N did not open create")
+	}
+	m.modal = nil
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(Model)
+	if m.modal == nil || m.modal.kind != modalArchiveBoard {
+		t.Fatal("D did not open archive")
+	}
+	m.modal = nil
+	m.boardIndex = 1
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m = updated.(Model)
+	if m.modal == nil || m.modal.kind != modalRestoreBoard {
+		t.Fatal("U did not open restore")
 	}
 }
 

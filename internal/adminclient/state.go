@@ -18,8 +18,10 @@ const maxStateBytes = 64 << 10
 type State struct {
 	Version    int    `json:"version"`
 	Management string `json:"management"`
+	Server     string `json:"server,omitempty"`
 	Theme      string `json:"theme,omitempty"`
 	View       string `json:"view,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 	InlineMode string `json:"inline_mode,omitempty"`
 }
 

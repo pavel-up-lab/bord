@@ -89,6 +89,135 @@ func TestMigrationCreatesFullSchemaWithForeignKeys(t *testing.T) {
 	}
 }
 
+func TestManagedBoardLifecycleRepository(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	second, err := domain.NewBoard("2", "games", "Games")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.CreateBoard(ctx, second, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	thread := createThread(t, f, "managed-board-count", "first")
+	if _, err := f.service.CreateReply(ctx, boardapp.CreateReplyInput{
+		ThreadID: thread.Thread.ID, Body: "reply", AuthorID: "author", DeleteVerifier: []byte("v"), IdempotencyKey: "managed-board-reply",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := f.repo.ListManagedBoards(ctx, boardapp.BoardStateAll, "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Boards) != 1 || page.Boards[0].Board.ID != "00000002" || page.Next != "00000002" {
+		t.Fatalf("first page = %+v", page)
+	}
+	page, err = f.repo.ListManagedBoards(ctx, boardapp.BoardStateAll, page.Next, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Boards) != 1 || page.Boards[0].ThreadCount != 1 || page.Boards[0].PostCount != 2 || page.Next.Valid() {
+		t.Fatalf("second page = %+v", page)
+	}
+
+	if err := f.repo.SetBoardEnabled(ctx, "00000001", true, false); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := f.repo.ListManagedBoards(ctx, boardapp.BoardStateArchived, "", 10)
+	if err != nil || len(archived.Boards) != 1 || archived.Boards[0].Board.Enabled {
+		t.Fatalf("archived page=%+v err=%v", archived, err)
+	}
+	if err := f.repo.SetBoardEnabled(ctx, "00000001", true, false); domain.ErrorCode(err) != domain.CodeConflict {
+		t.Fatalf("repeat archive code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if err := f.repo.SetBoardEnabled(ctx, "00000999", true, false); domain.ErrorCode(err) != domain.CodeBoardNotFound {
+		t.Fatalf("missing board code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	duplicate, _ := domain.NewBoard("3", "games", "Duplicate")
+	if err := f.repo.CreateBoard(ctx, duplicate, f.clock.now); domain.ErrorCode(err) != domain.CodeConflict {
+		t.Fatalf("duplicate slug code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if err := f.repo.SetBoardEnabled(ctx, "00000001", false, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActiveParentBoardChecksHideDirectResourceIDs(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	created := createThread(t, f, "parent-checks", "first")
+	attachmentID := domain.AttachmentID("0123456789abcdef0123456789abcdef")
+	if _, err := f.db.Exec(`INSERT INTO attachments(id,state,media_type,size_bytes,sha256,width,height,safe_filename,created_at,attached_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		attachmentID, "attached", "image/png", 1, make([]byte, 32), 1, 1, "image.png", encodeTime(f.clock.now), encodeTime(f.clock.now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`UPDATE posts SET attachment_id=? WHERE id=?`, attachmentID, created.Post.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.RequireActiveBoardForThread(ctx, created.Thread.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.RequireActiveBoardForPost(ctx, created.Post.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.RequireActiveBoardForAttachment(ctx, attachmentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.SetBoardEnabled(ctx, "00000001", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.RequireActiveBoardForThread(ctx, created.Thread.ID); domain.ErrorCode(err) != domain.CodeThreadNotFound {
+		t.Fatalf("thread code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if err := f.repo.RequireActiveBoardForPost(ctx, created.Post.ID); domain.ErrorCode(err) != domain.CodePostNotFound {
+		t.Fatalf("post code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if err := f.repo.RequireActiveBoardForAttachment(ctx, attachmentID); domain.ErrorCode(err) != domain.CodeAttachmentNotFound {
+		t.Fatalf("attachment code=%q err=%v", domain.ErrorCode(err), err)
+	}
+}
+
+func TestArchivedBoardIsAbsentFromPublicBoardService(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	created := createThread(t, f, "archive-public", "first")
+	if err := f.repo.SetBoardEnabled(ctx, "00000001", true, false); err != nil {
+		t.Fatal(err)
+	}
+	boards, err := f.service.Boards(ctx)
+	if err != nil || len(boards) != 0 {
+		t.Fatalf("public boards=%+v err=%v", boards, err)
+	}
+	if _, err := f.service.Catalog(ctx, "tech", nil, 10); domain.ErrorCode(err) != domain.CodeBoardNotFound {
+		t.Fatalf("catalog code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if _, err := f.service.Posts(ctx, created.Thread.ID, "", 10); domain.ErrorCode(err) != domain.CodeThreadNotFound {
+		t.Fatalf("posts code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if _, err := f.service.CreateThread(ctx, boardapp.CreateThreadInput{BoardSlug: "tech", Body: "blocked", AuthorID: "author", DeleteVerifier: []byte("v"), IdempotencyKey: "archived-thread"}); domain.ErrorCode(err) != domain.CodeBoardNotFound {
+		t.Fatalf("thread create code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if _, err := f.service.CreateReply(ctx, boardapp.CreateReplyInput{ThreadID: created.Thread.ID, Body: "blocked", AuthorID: "author", DeleteVerifier: []byte("v"), IdempotencyKey: "archived-reply"}); domain.ErrorCode(err) != domain.CodeThreadNotFound {
+		t.Fatalf("reply create code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	if err := f.service.DeleteOwnPost(ctx, created.Post.ID, []byte("delete-me")); domain.ErrorCode(err) != domain.CodePostNotFound {
+		t.Fatalf("delete code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	var posts, events int
+	_ = f.db.QueryRow(`SELECT count(*) FROM posts`).Scan(&posts)
+	_ = f.db.QueryRow(`SELECT count(*) FROM event_outbox`).Scan(&events)
+	if posts != 1 || events != 1 {
+		t.Fatalf("archived writes changed data posts=%d events=%d", posts, events)
+	}
+	if err := f.repo.SetBoardEnabled(ctx, "00000001", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if page, err := f.service.Posts(ctx, created.Thread.ID, "", 10); err != nil || len(page.Posts) != 1 {
+		t.Fatalf("restored posts=%+v err=%v", page, err)
+	}
+}
+
 func TestCreateReplayConflictAndAtomicOutbox(t *testing.T) {
 	f := newFixture(t)
 	first := createThread(t, f, "key-1", "hello")

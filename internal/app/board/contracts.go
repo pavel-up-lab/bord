@@ -31,6 +31,27 @@ type PostPage struct {
 	Next  domain.PostID
 }
 
+// BoardState selects records for the private board lifecycle view. Public
+// callers continue to use ListBoards, which exposes enabled boards only.
+type BoardState string
+
+const (
+	BoardStateActive   BoardState = "active"
+	BoardStateArchived BoardState = "archived"
+	BoardStateAll      BoardState = "all"
+)
+
+type ManagedBoard struct {
+	Board       domain.Board
+	ThreadCount int64
+	PostCount   int64
+}
+
+type ManagedBoardPage struct {
+	Boards []ManagedBoard
+	Next   domain.BoardID
+}
+
 type IdempotencyRecord struct {
 	RequestHash [32]byte
 	Response    []byte
@@ -52,7 +73,14 @@ type OutboxEvent struct {
 type Store interface {
 	NextID(context.Context, string) (string, error)
 	ListBoards(context.Context) ([]domain.Board, error)
+	ListManagedBoards(context.Context, BoardState, domain.BoardID, int) (ManagedBoardPage, error)
+	BoardByID(context.Context, domain.BoardID) (domain.Board, error)
 	BoardBySlug(context.Context, string) (domain.Board, error)
+	RequireActiveBoardForThread(context.Context, domain.ThreadID) error
+	RequireActiveBoardForPost(context.Context, domain.PostID) error
+	RequireActiveBoardForAttachment(context.Context, domain.AttachmentID) error
+	CreateBoard(context.Context, domain.Board, time.Time) error
+	SetBoardEnabled(context.Context, domain.BoardID, bool, bool) error
 	ThreadByID(context.Context, domain.ThreadID) (domain.Thread, error)
 	PostByID(context.Context, domain.PostID) (domain.Post, error)
 	ListThreads(context.Context, domain.BoardID, *CatalogCursor, int) (CatalogPage, error)

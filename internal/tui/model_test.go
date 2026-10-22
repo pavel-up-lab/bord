@@ -39,6 +39,7 @@ type fakeService struct {
 	posts          generated.PostPage
 	createErr      error
 	keys           []string
+	deleted        []string
 	subscribeEvent bool
 	attachmentBody []byte
 	attachmentType string
@@ -59,6 +60,10 @@ func (f *fakeService) CreateThread(_ context.Context, _ string, key string, _ ge
 func (f *fakeService) CreatePost(_ context.Context, _ string, key string, _ generated.CreatePost) (generated.CreateResult, error) {
 	f.keys = append(f.keys, key)
 	return generated.CreateResult{ThreadId: "thread_1", PostId: "post_2"}, f.createErr
+}
+func (f *fakeService) DeleteOwnPost(_ context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
+	return f.createErr
 }
 func (f *fakeService) UploadAttachment(context.Context, string, io.Reader) (generated.Attachment, error) {
 	return generated.Attachment{Id: "attachment_1"}, nil
@@ -120,7 +125,7 @@ func TestComposerRetryReusesIdempotencyAndPreservesDraft(t *testing.T) {
 	if m.editor.Value() != "draft survives" || m.screen != ComposerScreen {
 		t.Fatal("failed send lost draft")
 	}
-	if !strings.Contains(m.statusText(), "Ctrl+S повторить") || !strings.Contains(m.composerLines()[0].lines[len(m.composerLines()[0].lines)-2], "ОШИБКА") {
+	if !strings.Contains(m.statusText(), "Ctrl+S повторить") || !strings.Contains(m.composerLines()[0].Lines[len(m.composerLines()[0].Lines)-2], "ОШИБКА") {
 		t.Fatal("composer did not expose retry status and key")
 	}
 	m.loading = true
@@ -327,7 +332,7 @@ func TestWindowResizeConsumesExactTerminalAndThemeMenu(t *testing.T) {
 	for _, want := range []ThemeName{ThemeAmber, ThemeGreen, ThemeMono} {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
 		m = updated.(Model)
-		if !m.themeMenu {
+		if !m.themePicker.IsOpen() {
 			t.Fatal("theme menu did not open")
 		}
 		assertDimensions(t, m.View(), 80, 24)
@@ -338,6 +343,31 @@ func TestWindowResizeConsumesExactTerminalAndThemeMenu(t *testing.T) {
 		if m.Theme() != want {
 			t.Fatalf("theme=%q want=%q", m.Theme(), want)
 		}
+	}
+}
+
+func TestThemePickerLayoutAndCancellationRegression(t *testing.T) {
+	setColorProfile(3)
+	defer setColorProfile(3)
+	for _, test := range []struct {
+		name          string
+		width, height int
+	}{{name: "theme-picker-wide", width: 80, height: 24}, {name: "theme-picker-narrow", width: 32, height: 10}} {
+		t.Run(test.name, func(t *testing.T) {
+			m := NewModel(context.Background(), &fakeService{})
+			m.width, m.height, m.loading = test.width, test.height, false
+			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyF2})
+			m = updated.(Model)
+			assertDimensions(t, m.View(), test.width, test.height)
+			assertGolden(t, test.name+".golden", m.View())
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+			m = updated.(Model)
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			m = updated.(Model)
+			if m.themePicker.IsOpen() || m.theme != ThemeClassic {
+				t.Fatalf("cancel changed theme: open=%v theme=%q", m.themePicker.IsOpen(), m.theme)
+			}
+		})
 	}
 }
 
@@ -483,12 +513,12 @@ func TestClickReplyNumberSelectsTargetPost(t *testing.T) {
 func TestRowsShowBoardAndReplyCounts(t *testing.T) {
 	m := NewModel(context.Background(), &fakeService{})
 	m.boards = []generated.Board{{Slug: "general", Title: "Общение", ThreadCount: 12}}
-	if got := m.boardRows()[0].lines[0]; !strings.Contains(got, "/general/ [12]") {
+	if got := m.boardRows()[0].Lines[0]; !strings.Contains(got, "/general/ [12]") {
 		t.Fatalf("board count missing: %q", got)
 	}
 	m.screen = CatalogScreen
 	m.threads = []generated.Thread{{Id: "thread_1", ReplyCount: 7}}
-	if got := m.contentRows()[0].lines[0]; !strings.Contains(got, "thread_1           [7]") {
+	if got := m.contentRows()[0].Lines[0]; !strings.Contains(got, "thread_1           [7]") {
 		t.Fatalf("reply count missing: %q", got)
 	}
 }
@@ -554,7 +584,7 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 
 	updated, _ = m.Update(click(textWidth(" BORD  ")+1, 0))
 	m = updated.(Model)
-	if !m.themeMenu {
+	if !m.themePicker.IsOpen() {
 		t.Fatal("top theme click did not open menu")
 	}
 	updated, _ = m.Update(click(textWidth(" BORD  ")+1, 3))
@@ -801,7 +831,7 @@ func TestReplyComposerChromeButtonsBypassTextSelection(t *testing.T) {
 	m := newModel(replyEditorPane)
 	themeX := textWidth(" BORD  [← Назад] ") + 1
 	updated, _ := m.Update(tea.MouseMsg{X: themeX, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	if got := updated.(Model); !got.themeMenu {
+	if got := updated.(Model); !got.themePicker.IsOpen() {
 		t.Fatal("top theme click was intercepted by reply composer")
 	}
 }
@@ -821,6 +851,23 @@ func TestCommandLabelsAndKeysStayAligned(t *testing.T) {
 		if labels, keys := m.commandLabels(), m.commandKeys(); len(labels) != len(keys) {
 			t.Fatalf("reply pane=%v labels=%d keys=%d", pane, len(labels), len(keys))
 		}
+	}
+}
+
+func TestDeleteOwnPostUsesPublicCapabilityService(t *testing.T) {
+	service := &fakeService{}
+	m := NewModel(context.Background(), service)
+	m.loading, m.screen, m.activeThread = false, ThreadScreen, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", State: generated.Visible}}
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(Model)
+	if command == nil || !m.loading {
+		t.Fatal("delete command not started")
+	}
+	updated, _ = m.Update(command())
+	m = updated.(Model)
+	if len(service.deleted) != 1 || service.deleted[0] != "post_1" || len(m.posts) != 0 {
+		t.Fatalf("deleted=%v posts=%v", service.deleted, m.posts)
 	}
 }
 
@@ -897,7 +944,7 @@ func TestFocusedAndInactiveSelectionsHaveDistinctContrast(t *testing.T) {
 	setColorProfile(1)
 	defer setColorProfile(3)
 	m := NewModel(context.Background(), &fakeService{})
-	rows := []displayRow{{lines: []string{"selected"}, active: true}}
+	rows := []displayRow{{Lines: []string{"selected"}, Active: true}}
 	active := m.singlePanel(palette(ThemeClassic), 20, 4, "Active", "ITEM", rows, true)
 	inactive := m.singlePanel(palette(ThemeClassic), 20, 4, "Inactive", "ITEM", rows, false)
 	if active[2] == inactive[2] {

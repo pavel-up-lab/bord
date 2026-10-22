@@ -56,7 +56,10 @@ func (*mediaFake) Upload(context.Context, string, io.Reader) (Attachment, error)
 	return Attachment{}, nil
 }
 
-type adminFake struct{ credential, requestID string }
+type adminFake struct {
+	credential, requestID string
+	boardErr              error
+}
 
 type extendedAbuseFake struct {
 	readOperation, writeOperation, session string
@@ -81,6 +84,18 @@ func (a *adminFake) Authenticate(_ context.Context, credential, requestID string
 }
 func (*adminFake) ListReports(context.Context, string, int) (Page[AdminReport], error) {
 	return Page[AdminReport]{Items: []AdminReport{}}, nil
+}
+func (a *adminFake) ListBoards(context.Context, string, string, int) (Page[AdminBoard], error) {
+	return Page[AdminBoard]{Items: []AdminBoard{}}, a.boardErr
+}
+func (a *adminFake) CreateBoard(context.Context, AdminCreateBoardRequest, string) (AdminBoard, error) {
+	return AdminBoard{}, a.boardErr
+}
+func (a *adminFake) ArchiveBoard(context.Context, string, string, string) (AdminBoard, error) {
+	return AdminBoard{}, a.boardErr
+}
+func (a *adminFake) RestoreBoard(context.Context, string, string, string) (AdminBoard, error) {
+	return AdminBoard{}, a.boardErr
 }
 func (*adminFake) GetPostContext(context.Context, string, string, int) (AdminPostContext, error) {
 	return AdminPostContext{Posts: []Post{}}, nil
@@ -306,6 +321,10 @@ func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/admin/v1/reports"},
 		{http.MethodGet, "/admin/v1/session"},
+		{http.MethodGet, "/admin/v1/boards"},
+		{http.MethodPost, "/admin/v1/boards"},
+		{http.MethodPost, "/admin/v1/boards/board_01/archive"},
+		{http.MethodPost, "/admin/v1/boards/board_01/restore"},
 		{http.MethodGet, "/admin/v1/posts/post_001/context"},
 		{http.MethodGet, "/admin/v1/attachments/attach_1"},
 		{http.MethodPut, "/admin/v1/posts/post_001/visibility"},
@@ -343,6 +362,14 @@ func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 	management.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"test-admin"`) || !strings.Contains(w.Body.String(), `"role":"administrator"`) || strings.Contains(w.Body.String(), "credential-value") {
 		t.Fatalf("unsafe session response: %d %s", w.Code, w.Body.String())
+	}
+	admin.boardErr = domain.NewError(domain.CodeForbidden, "", nil)
+	req = httptest.NewRequest(http.MethodGet, "/admin/v1/boards", nil)
+	req.Header.Set("Authorization", "Bearer credential-value")
+	w = httptest.NewRecorder()
+	management.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("moderator-equivalent board denial status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

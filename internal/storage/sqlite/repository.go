@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	boardapp "bord/internal/app/board"
@@ -85,6 +86,55 @@ func (r *Repository) ListBoards(ctx context.Context) ([]domain.Board, error) {
 	return result, nil
 }
 
+func (r *Repository) ListManagedBoards(ctx context.Context, state boardapp.BoardState, before domain.BoardID, limit int) (boardapp.ManagedBoardPage, error) {
+	if state != boardapp.BoardStateActive && state != boardapp.BoardStateArchived && state != boardapp.BoardStateAll {
+		return boardapp.ManagedBoardPage{}, domain.NewError(domain.CodeValidation, "state", nil)
+	}
+	if limit < 1 || limit > 100 {
+		return boardapp.ManagedBoardPage{}, domain.NewError(domain.CodeValidation, "limit", nil)
+	}
+	var beforeID int64
+	var err error
+	if before.Valid() {
+		beforeID, err = parseID(string(before))
+		if err != nil {
+			return boardapp.ManagedBoardPage{}, domain.NewError(domain.CodeValidation, "cursor", err)
+		}
+	}
+	rows, err := r.queries(ctx).ListManagedBoards(ctx, dbgen.ListManagedBoardsParams{BeforeID: beforeID, BoardState: string(state), PageSize: int64(limit + 1)})
+	if err != nil {
+		return boardapp.ManagedBoardPage{}, err
+	}
+	page := boardapp.ManagedBoardPage{Boards: make([]boardapp.ManagedBoard, 0, min(limit, len(rows)))}
+	for index, row := range rows {
+		if index == limit {
+			page.Next = page.Boards[len(page.Boards)-1].Board.ID
+			break
+		}
+		page.Boards = append(page.Boards, boardapp.ManagedBoard{
+			Board:       domain.Board{ID: domain.BoardID(formatID(row.ID)), Slug: row.Slug, Title: row.Title, Enabled: row.Enabled == 1},
+			ThreadCount: row.ThreadCount,
+			PostCount:   row.PostCount,
+		})
+	}
+	return page, nil
+}
+
+func (r *Repository) BoardByID(ctx context.Context, id domain.BoardID) (domain.Board, error) {
+	numeric, err := parseID(string(id))
+	if err != nil {
+		return domain.Board{}, domain.NewError(domain.CodeBoardNotFound, "board_id", err)
+	}
+	row, err := r.queries(ctx).BoardByID(ctx, numeric)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Board{}, domain.NewError(domain.CodeBoardNotFound, "board_id", err)
+	}
+	if err != nil {
+		return domain.Board{}, err
+	}
+	return boardFromRow(row), nil
+}
+
 func (r *Repository) BoardBySlug(ctx context.Context, slug string) (domain.Board, error) {
 	row, err := r.queries(ctx).BoardBySlug(ctx, slug)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -94,6 +144,45 @@ func (r *Repository) BoardBySlug(ctx context.Context, slug string) (domain.Board
 		return domain.Board{}, err
 	}
 	return boardFromRow(row), nil
+}
+
+func (r *Repository) RequireActiveBoardForThread(ctx context.Context, id domain.ThreadID) error {
+	numeric, err := parseID(string(id))
+	if err == nil {
+		_, err = r.queries(ctx).ActiveBoardForThread(ctx, numeric)
+	}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || numeric == 0 {
+			return domain.NewError(domain.CodeThreadNotFound, "thread_id", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *Repository) RequireActiveBoardForPost(ctx context.Context, id domain.PostID) error {
+	numeric, err := parseID(string(id))
+	if err == nil {
+		_, err = r.queries(ctx).ActiveBoardForPost(ctx, numeric)
+	}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || numeric == 0 {
+			return domain.NewError(domain.CodePostNotFound, "post_id", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *Repository) RequireActiveBoardForAttachment(ctx context.Context, id domain.AttachmentID) error {
+	if !id.Valid() {
+		return domain.NewError(domain.CodeAttachmentNotFound, "attachment_id", nil)
+	}
+	_, err := r.queries(ctx).ActiveBoardForAttachment(ctx, string(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.NewError(domain.CodeAttachmentNotFound, "attachment_id", err)
+	}
+	return err
 }
 
 func (r *Repository) ThreadByID(ctx context.Context, id domain.ThreadID) (domain.Thread, error) {
@@ -359,7 +448,42 @@ func (r *Repository) CreateBoard(ctx context.Context, board domain.Board, create
 	if board.Enabled {
 		enabled = 1
 	}
-	return r.queries(ctx).CreateBoard(ctx, dbgen.CreateBoardParams{ID: id, Slug: board.Slug, Title: board.Title, Enabled: enabled, CreatedAt: encodeTime(createdAt)})
+	err = r.queries(ctx).CreateBoard(ctx, dbgen.CreateBoardParams{ID: id, Slug: board.Slug, Title: board.Title, Enabled: enabled, CreatedAt: encodeTime(createdAt)})
+	if isConstraintError(err) {
+		return domain.NewError(domain.CodeConflict, "slug", err)
+	}
+	return err
+}
+
+// SetBoardEnabled is a compare-state update: enabled is the desired state and
+// expected is the state the caller observed. Zero affected rows are reported as
+// conflict after existence is confirmed, making lifecycle retries explicit.
+func (r *Repository) SetBoardEnabled(ctx context.Context, id domain.BoardID, expected, enabled bool) error {
+	numeric, err := parseID(string(id))
+	if err != nil {
+		return domain.NewError(domain.CodeBoardNotFound, "board_id", err)
+	}
+	toInt := func(value bool) int64 {
+		if value {
+			return 1
+		}
+		return 0
+	}
+	rows, err := r.queries(ctx).SetBoardEnabled(ctx, dbgen.SetBoardEnabledParams{ID: numeric, ExpectedEnabled: toInt(expected), Enabled: toInt(enabled)})
+	if err != nil {
+		return err
+	}
+	if rows == 1 {
+		return nil
+	}
+	if _, lookupErr := r.BoardByID(ctx, id); lookupErr != nil {
+		return lookupErr
+	}
+	return domain.NewError(domain.CodeConflict, "board", nil)
+}
+
+func isConstraintError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "constraint")
 }
 
 func boardFromRow(row dbgen.Board) domain.Board {

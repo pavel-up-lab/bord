@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"bord/internal/api"
+	boardapp "bord/internal/app/board"
 	"bord/internal/domain"
 	"bord/internal/events"
 	"bord/internal/media"
@@ -30,6 +31,72 @@ import (
 type testClock struct {
 	mu  sync.Mutex
 	now time.Time
+}
+
+func TestArchivedBoardIsHiddenAcrossPublicHTTPReads(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(t.TempDir() + "/bord.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = storage.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	clock := &testClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	runtime, err := New(Config{DB: db, Blobs: t.TempDir(), LookupKey: bytes.Repeat([]byte{1}, 32), Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	if err = runtime.SeedBoard(ctx, "general", "General"); err != nil {
+		t.Fatal(err)
+	}
+	created, err := runtime.Board.CreateThread(ctx, boardapp.CreateThreadInput{BoardSlug: "general", Body: "opening", AuthorID: "author", DeleteVerifier: []byte("verifier"), IdempotencyKey: "archived-http"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachmentID := "0123456789abcdef0123456789abcdef"
+	if _, err = runtime.DB.Exec(`INSERT INTO attachments(id,state,media_type,size_bytes,sha256,width,height,safe_filename,created_at,attached_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, attachmentID, "attached", "image/png", 1, make([]byte, 32), 1, 1, "image.png", encodeTime(clock.Now()), encodeTime(clock.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runtime.DB.Exec(`UPDATE posts SET attachment_id=? WHERE id=?`, attachmentID, created.Post.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = runtime.Repo.SetBoardEnabled(ctx, created.Thread.BoardID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	handler := api.NewRouter(api.Config{Public: Public{runtime}, Media: Media{Runtime: runtime, Processor: media.Processor{Limits: media.DefaultLimits()}}, Abuse: runtime.Abuse})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	response := request(t, server, http.MethodGet, "/api/v1/boards", "", nil, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("boards status=%d", response.StatusCode)
+	}
+	var boardList struct {
+		Boards []api.Board `json:"boards"`
+	}
+	decode(t, response, &boardList)
+	if len(boardList.Boards) != 0 {
+		t.Fatalf("archived board leaked: %+v", boardList.Boards)
+	}
+	for _, path := range []string{
+		"/api/v1/boards/general/threads",
+		"/api/v1/threads/" + string(created.Thread.ID),
+		"/api/v1/threads/" + string(created.Thread.ID) + "/posts",
+		"/api/v1/attachments/" + attachmentID,
+	} {
+		response = request(t, server, http.MethodGet, path, "", nil, nil)
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status=%d body=%s", path, response.StatusCode, read(response))
+		}
+		_ = response.Body.Close()
+	}
+	response = requestJSON(t, server, http.MethodPost, "/api/v1/posts/"+string(created.Post.ID)+"/reports", map[string]string{"reason": "spam"}, nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("archived report status=%d body=%s", response.StatusCode, read(response))
+	}
+	_ = response.Body.Close()
 }
 
 func (c *testClock) Now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.now }

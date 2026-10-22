@@ -8,6 +8,7 @@ import (
 	"bord/internal/terminalui"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -20,6 +21,9 @@ const (
 	modalBan
 	modalRevoke
 	modalReveal
+	modalCreateBoard
+	modalArchiveBoard
+	modalRestoreBoard
 )
 
 type modal struct {
@@ -30,6 +34,8 @@ type modal struct {
 	err                string
 	operations         []string
 	ttl                time.Duration
+	slug, title        textinput.Model
+	field              int
 }
 
 func (m Model) selectedPost() (string, bool) {
@@ -96,6 +102,36 @@ func (m Model) openRevealModal() (tea.Model, tea.Cmd) {
 	return m.openModal(modalReveal, postID), nil
 }
 
+func (m Model) openCreateBoardModal() (tea.Model, tea.Cmd) {
+	if string(m.session.Role) != "administrator" || m.screen != BoardsScreen {
+		return m, nil
+	}
+	slug := textinput.New()
+	slug.Placeholder, slug.CharLimit, slug.Width = "slug", 32, 32
+	title := textinput.New()
+	title.Placeholder, title.CharLimit, title.Width = "Название", 100, 56
+	updated := m.openModal(modalCreateBoard, "")
+	updated.modal.slug, updated.modal.title = slug, title
+	updated.focusBoardModalField(0)
+	return updated, nil
+}
+
+func (m Model) openBoardStateModal(enabled bool) (tea.Model, tea.Cmd) {
+	if string(m.session.Role) != "administrator" || m.screen != BoardsScreen || len(m.boards) == 0 || m.boardIndex < 0 || m.boardIndex >= len(m.boards) {
+		return m, nil
+	}
+	board := m.boards[m.boardIndex]
+	want := "archived"
+	kind := modalArchiveBoard
+	if enabled {
+		want, kind = "active", modalRestoreBoard
+	}
+	if string(board.State) == want {
+		return m, nil
+	}
+	return m.openModal(kind, board.Id), nil
+}
+
 func (m Model) openModal(kind modalKind, target string) Model {
 	editor := newReasonEditor()
 	m.modal = &modal{kind: kind, target: target, editor: editor}
@@ -115,7 +151,16 @@ func (m Model) updateModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modal.kind == modalReveal && m.revealedIP != "" && msg.String() != "esc" {
 		return m, nil
 	}
-	switch msg.String() {
+	key := msg.String()
+	if m.modal.kind == modalCreateBoard && (key == "tab" || key == "shift+tab" || key == "enter" && m.modal.field < 2) {
+		delta := 1
+		if key == "shift+tab" {
+			delta = -1
+		}
+		m.focusBoardModalField((m.modal.field + delta + 3) % 3)
+		return m, nil
+	}
+	switch key {
 	case "esc":
 		m.modal, m.revealedIP = nil, ""
 		return m, nil
@@ -125,6 +170,17 @@ func (m Model) updateModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modal.err = "Причина должна содержать 3–500 символов"
 			return m, nil
 		}
+		if m.modal.kind == modalCreateBoard {
+			slug, title := strings.TrimSpace(m.modal.slug.Value()), strings.TrimSpace(m.modal.title.Value())
+			if !validAdminBoardSlug(slug) {
+				m.modal.err = "Slug: 1–32 символа a-z, 0-9 или -"
+				return m, nil
+			}
+			if title == "" || len([]rune(title)) > 100 {
+				m.modal.err = "Название должно содержать 1–100 символов"
+				return m, nil
+			}
+		}
 		if !m.modal.confirmed {
 			m.modal.confirmed, m.modal.err = true, "Нажмите Ctrl+S повторно для подтверждения"
 			return m, nil
@@ -133,6 +189,7 @@ func (m Model) updateModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m, id, ctx := m.beginRequest()
 		kind, target := m.modal.kind, m.modal.target
 		operations, ttl := append([]string(nil), m.modal.operations...), m.modal.ttl
+		slug, title := strings.TrimSpace(m.modal.slug.Value()), strings.TrimSpace(m.modal.title.Value())
 		return m, func() tea.Msg {
 			var value string
 			var err error
@@ -149,6 +206,12 @@ func (m Model) updateModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err = m.service.RevokeBan(ctx, target, reason)
 			case modalReveal:
 				value, err = m.service.RevealIP(ctx, target, reason)
+			case modalCreateBoard:
+				_, err = m.service.CreateBoard(ctx, adminclient.CreateBoardRequest{Slug: slug, Title: title, Reason: reason})
+			case modalArchiveBoard:
+				_, err = m.service.ArchiveBoard(ctx, target, reason)
+			case modalRestoreBoard:
+				_, err = m.service.RestoreBoard(ctx, target, reason)
 			}
 			return mutationMsg{id: id, kind: kind, value: value, err: err}
 		}
@@ -181,9 +244,50 @@ func (m Model) updateModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
-	m.modal.editor, cmd = m.modal.editor.Update(msg)
+	if m.modal.kind == modalCreateBoard {
+		switch m.modal.field {
+		case 0:
+			m.modal.slug, cmd = m.modal.slug.Update(msg)
+		case 1:
+			m.modal.title, cmd = m.modal.title.Update(msg)
+		default:
+			m.modal.editor, cmd = m.modal.editor.Update(msg)
+		}
+	} else {
+		m.modal.editor, cmd = m.modal.editor.Update(msg)
+	}
 	m.modal.confirmed, m.modal.err = false, ""
 	return m, cmd
+}
+
+func (m *Model) focusBoardModalField(field int) {
+	if m.modal == nil || m.modal.kind != modalCreateBoard {
+		return
+	}
+	m.modal.field = clamp(field, 0, 2)
+	m.modal.slug.Blur()
+	m.modal.title.Blur()
+	m.modal.editor.Blur()
+	switch m.modal.field {
+	case 0:
+		m.modal.slug.Focus()
+	case 1:
+		m.modal.title.Focus()
+	default:
+		m.modal.editor.Focus()
+	}
+}
+
+func validAdminBoardSlug(value string) bool {
+	if len(value) < 1 || len(value) > 32 || value[0] == '-' {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func (m Model) openAttachment() (tea.Model, tea.Cmd) {

@@ -5,9 +5,6 @@ import (
 	"strings"
 
 	"bord/internal/terminalui"
-
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
 
 const narrowWidth = 78
@@ -29,14 +26,27 @@ func (m Model) View() string {
 	for len(lines) < height {
 		lines = append(lines, terminalui.Paint(theme.Background, theme.Foreground, "", width))
 	}
-	if m.themeMenu {
-		lines = m.renderThemeMenu(lines, theme)
+	if m.themePicker.IsOpen() {
+		lines = m.themePicker.Overlay(lines, m.themes, theme, m.width, m.height, m.themePickerAnchor())
 	}
 	return strings.Join(lines[:height], "\n")
 }
 
 func (m Model) topBar(theme terminalui.Theme, width int) string {
-	return terminalui.TopBar(theme, " BORD ADMIN  [1 Жалобы] [2 Блокировки] [3 Аудит] [F2 Тема] [F1 Справка]", " "+m.screenTitle()+" ", width)
+	left := " BORD ADMIN  [1 Жалобы] [2 Блокировки] [3 Аудит]"
+	if string(m.session.Role) == "administrator" {
+		left += " [4 Доски]"
+	}
+	left += " [F2 Тема] [F1 Справка]"
+	return terminalui.TopBar(theme, left, " "+m.screenTitle()+" ", width)
+}
+
+func (m Model) themePickerAnchor() int {
+	left := " BORD ADMIN  [1 Жалобы] [2 Блокировки] [3 Аудит] "
+	if string(m.session.Role) == "administrator" {
+		left += "[4 Доски] "
+	}
+	return terminalui.TextWidth(left)
 }
 
 func (m Model) screenTitle() string {
@@ -47,6 +57,8 @@ func (m Model) screenTitle() string {
 		return "Блокировки: " + m.banState
 	case AuditScreen:
 		return "Аудит"
+	case BoardsScreen:
+		return "Доски: " + m.boardState
 	case HelpScreen:
 		return "Справка"
 	}
@@ -61,11 +73,13 @@ func (m Model) workspace(theme terminalui.Theme, width, height int) []string {
 	case ReportsScreen:
 		return m.reportWorkspace(theme, width, height)
 	case BansScreen:
-		return panel(theme, "Блокировки", m.banRows(), width, height, true)
+		return panel(theme, "Блокировки", "ID / СОСТОЯНИЕ / ОПЕРАЦИЯ / СРОК", m.banRows(), width, height, true)
 	case AuditScreen:
-		return panel(theme, "Аудит", m.auditRows(), width, height, true)
+		return panel(theme, "Аудит", "ВРЕМЯ / OUTCOME / ACTION / TARGET", m.auditRows(), width, height, true)
+	case BoardsScreen:
+		return panel(theme, "Доски", "STATE / SLUG / THREADS / POSTS / TITLE", m.boardRows(), width, height, true)
 	case HelpScreen:
-		return panel(theme, "Справка", []string{"1 / 2 / 3 — экраны", "↑/↓, PgUp/PgDn — навигация", "Tab — переключить панель", "Enter — открыть / следующая страница", "H/U — скрыть/восстановить пост", "C — закрыть тред", "B — блокировка по посту", "X — отозвать блокировку", "I — раскрыть IP (administrator)", "A — открыть вложение", "F2 — тема, F5 — обновить, F10 — выход"}, width, height, true)
+		return panel(theme, "Справка", "КЛАВИША / ДЕЙСТВИЕ", []string{"1 / 2 / 3 / 4 — Жалобы / Блокировки / Аудит / Доски", "↑/↓, PgUp/PgDn — навигация", "Tab — переключить панель", "Enter — открыть / следующая страница", "H/U — скрыть/восстановить пост", "C — закрыть тред", "B — блокировка по посту", "X — отозвать блокировку", "I — раскрыть IP (administrator)", "A — открыть вложение", "Доски: N создать, D архивировать, U восстановить", "F6 — фильтр состояния текущего списка", "F2 — тема, F5 — обновить, F10 — выход"}, width, height, true)
 	}
 	return blank(theme, width, height)
 }
@@ -73,19 +87,14 @@ func (m Model) workspace(theme terminalui.Theme, width, height int) []string {
 func (m Model) reportWorkspace(theme terminalui.Theme, width, height int) []string {
 	if width < narrowWidth {
 		if m.focus == ListFocus {
-			return panel(theme, "Жалобы • Tab: контекст", m.reportRows(), width, height, true)
+			return panel(theme, "Жалобы • Tab: контекст", "ЖАЛОБА / POST / ПРИЧИНА", m.reportRows(), width, height, true)
 		}
-		return panel(theme, "Контекст • Tab: жалобы", m.contextRows(), width, height, true)
+		return panel(theme, "Контекст • Tab: жалобы", "POST / STATE / CONTENT", m.contextRows(), width, height, true)
 	}
-	left := max(28, width/3)
-	right := width - left
-	leftRows := panel(theme, "Жалобы", m.reportRows(), left, height, m.focus == ListFocus)
-	rightRows := panel(theme, "Контекст", m.contextRows(), right, height, m.focus == ContextFocus)
-	rows := make([]string, height)
-	for index := range rows {
-		rows[index] = leftRows[index] + rightRows[index]
-	}
-	return rows
+	left, right := terminalui.SplitWidth(width, 28, 28)
+	leftRows := panel(theme, "Жалобы", "ЖАЛОБА / POST / ПРИЧИНА", m.reportRows(), left, height, m.focus == ListFocus)
+	rightRows := panel(theme, "Контекст", "POST / STATE / CONTENT", m.contextRows(), right, height, m.focus == ContextFocus)
+	return terminalui.JoinPanels(height, leftRows, rightRows)
 }
 
 func (m Model) reportRows() []string {
@@ -182,9 +191,30 @@ func (m Model) auditRows() []string {
 	return rows
 }
 
+func (m Model) boardRows() []string {
+	rows := make([]string, 0, len(m.boards)+1)
+	for index, board := range m.boards {
+		marker := "  "
+		if index == m.boardIndex {
+			marker = "> "
+		}
+		rows = append(rows, fmt.Sprintf("%s[%s] /%s/ threads:%d posts:%d %s", marker, board.State, terminalui.SanitizeTerminalText(board.Slug), board.ThreadCount, board.PostCount, terminalui.SanitizeTerminalText(board.Title)))
+	}
+	if len(rows) == 0 {
+		rows = append(rows, "  Досок нет")
+	}
+	if m.boardsCursor != nil {
+		rows = append(rows, "  Enter: следующая страница")
+	}
+	return rows
+}
+
 func (m Model) modalRows(theme terminalui.Theme, width, height int) []string {
-	title := map[modalKind]string{modalHide: "Скрыть пост", modalRestore: "Восстановить пост", modalClose: "Закрыть тред", modalBan: "Создать блокировку", modalRevoke: "Отозвать блокировку", modalReveal: "Раскрыть IP — чувствительные данные"}[m.modal.kind]
+	title := map[modalKind]string{modalHide: "Скрыть пост", modalRestore: "Восстановить пост", modalClose: "Закрыть тред", modalBan: "Создать блокировку", modalRevoke: "Отозвать блокировку", modalReveal: "Раскрыть IP — чувствительные данные", modalCreateBoard: "Создать доску", modalArchiveBoard: "Архивировать доску", modalRestoreBoard: "Восстановить доску"}[m.modal.kind]
 	rows := []string{"Действие: " + title, "Цель: " + terminalui.SanitizeTerminalText(m.modal.target), ""}
+	if m.modal.kind == modalCreateBoard {
+		rows = []string{"Slug:", m.modal.slug.View(), "Название:", m.modal.title.View(), "Причина:"}
+	}
 	rows = append(rows, strings.Split(m.modal.editor.View(), "\n")...)
 	if m.modal.kind == modalBan {
 		rows = append(rows, "Операции: "+strings.Join(m.modal.operations, ", ")+" • TTL: "+m.modal.ttl.String())
@@ -202,7 +232,10 @@ func (m Model) modalRows(theme terminalui.Theme, width, height int) []string {
 	} else {
 		rows = append(rows, "", "Ctrl+S — перейти к подтверждению • Esc — отмена")
 	}
-	return panel(theme, title, rows, width, height, true)
+	if m.modal.kind == modalCreateBoard {
+		rows = append(rows, "Tab/Enter — следующее поле")
+	}
+	return panel(theme, title, "ДЕЙСТВИЕ / ПРИЧИНА / ПОДТВЕРЖДЕНИЕ", rows, width, height, true)
 }
 
 func (m Model) statusLine() string {
@@ -240,36 +273,19 @@ func (m Model) commandLabels() []string {
 		return []string{"F1 Help", "F2 Theme", "F5 Refresh", "F6 Active/History", "X Revoke", "F10 Quit"}
 	case AuditScreen:
 		return []string{"F1 Help", "F2 Theme", "F5 Refresh", "F10 Quit"}
+	case BoardsScreen:
+		return []string{"F1 Help", "F2 Theme", "F5 Refresh", "F6 All/Active/Archived", "N New", "D Archive", "U Restore", "F10 Quit"}
 	default:
 		return []string{"Esc Back", "F2 Theme", "F10 Quit"}
 	}
 }
 
-func panel(theme terminalui.Theme, title string, rows []string, width, height int, active bool) []string {
-	if width <= 2 || height <= 1 {
-		return blank(theme, width, height)
+func panel(theme terminalui.Theme, title, hint string, rows []string, width, height int, active bool) []string {
+	display := make([]terminalui.Row, 0, len(rows))
+	for _, row := range rows {
+		display = append(display, terminalui.Row{Lines: []string{row}, Active: strings.HasPrefix(row, "> ")})
 	}
-	border := theme.Muted
-	if active {
-		border = theme.Accent
-	}
-	line := theme.Lines
-	if line.Horizontal == "" {
-		line = terminalui.DefaultLines()
-	}
-	inner := width - 2
-	topText := line.Horizontal + " " + terminalui.SanitizeTerminalText(title) + " "
-	top := line.LeftTop + fit(topText, inner) + line.RightTop
-	result := []string{terminalui.Paint(theme.Background, border, top, width)}
-	for index := 0; index < height-2; index++ {
-		value := ""
-		if index < len(rows) {
-			value = rows[index]
-		}
-		result = append(result, terminalui.Paint(theme.Background, border, line.Vertical, 1)+terminalui.Paint(theme.Background, theme.Foreground, fit(value, inner), inner)+terminalui.Paint(theme.Background, border, line.Vertical, 1))
-	}
-	result = append(result, terminalui.Paint(theme.Background, border, line.LeftBottom+strings.Repeat(line.Horizontal, inner)+line.RightBottom, width))
-	return result
+	return terminalui.Panel(theme, width, height, title, hint, display, active)
 }
 
 func blank(theme terminalui.Theme, width, height int) []string {
@@ -278,44 +294,4 @@ func blank(theme terminalui.Theme, width, height int) []string {
 		result[i] = terminalui.Paint(theme.Background, theme.Foreground, "", width)
 	}
 	return result
-}
-func fit(value string, width int) string {
-	value = ansi.Truncate(value, width, "…")
-	if missing := width - lipgloss.Width(value); missing > 0 {
-		value += strings.Repeat(" ", missing)
-	}
-	return value
-}
-
-func (m Model) renderThemeMenu(lines []string, theme terminalui.Theme) []string {
-	options := m.themes.Options()
-	if len(options) == 0 {
-		return lines
-	}
-	menuWidth := min(32, max(14, m.width/3))
-	start := max(1, m.width-menuWidth-1)
-	for index, option := range options {
-		y := 2 + index
-		if y >= len(lines)-1 {
-			break
-		}
-		marker := "  "
-		if index == m.themeIndex {
-			marker = "> "
-		}
-		content := terminalui.Paint(theme.BarBackground, theme.BarForeground, marker+terminalui.SanitizeTerminalText(option.Label), menuWidth)
-		prefix := ansi.Truncate(lines[y], start, "")
-		lines[y] = prefix + content
-		if terminalui.TextWidth(lines[y]) < m.width {
-			lines[y] += terminalui.Paint(theme.Background, theme.Foreground, "", m.width-terminalui.TextWidth(lines[y]))
-		}
-	}
-	return lines
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

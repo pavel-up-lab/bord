@@ -62,13 +62,13 @@ type Service interface {
 }
 
 type KeyMap struct {
-	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
+	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, DeletePost, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
 }
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up: "up,k", Down: "down,j", PageUp: "pgup", PageDown: "pgdown", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
-		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
+		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", DeletePost: "d,delete", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
 		Theme: "t,f2",
 	}
 }
@@ -104,8 +104,7 @@ type Model struct {
 	preferredBoard                                       string
 	theme                                                ThemeName
 	themes                                               ThemeCatalog
-	themeMenu                                            bool
-	themeIndex, themeScroll                              int
+	themePicker                                          terminalui.ThemePicker
 	replyPane                                            replyPane
 	replyPostCursor, replyPostAnchor, replyPostScroll    int
 	replyPostDragging                                    bool
@@ -149,6 +148,11 @@ type postsMsg struct {
 type sentMsg struct {
 	id     uint64
 	result generated.CreateResult
+	err    error
+}
+type deletedMsg struct {
+	id     uint64
+	postID string
 	err    error
 }
 type ReconcileMsg struct{ Board, Thread string }
@@ -295,6 +299,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeThread = msg.result.ThreadId
 			return m, m.loadPosts(false)
 		}
+	case deletedMsg:
+		if msg.id != m.requestID {
+			return m, nil
+		}
+		m.loading, m.err = false, msg.err
+		if msg.err == nil {
+			for index := range m.posts {
+				if m.posts[index].Id == msg.postID {
+					m.posts = append(m.posts[:index], m.posts[index+1:]...)
+					break
+				}
+			}
+			m.contentIndex = clamp(m.contentIndex, 0, max(0, len(m.posts)-1))
+			if m.screen == PostScreen {
+				m.screen = ThreadScreen
+			}
+		}
 	case ReconcileMsg:
 		if msg.Thread != "" && msg.Thread == m.activeThread {
 			return m, m.loadPosts(false)
@@ -344,7 +365,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if m.themeMenu {
+	if m.themePicker.IsOpen() {
 		return m.updateThemeMenuKey(key)
 	}
 	if m.screen == ComposerScreen && m.draft.ReplyTo != nil && m.replyPane == replySourcePane && key == "ctrl+c" {
@@ -522,6 +543,22 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case matches(key, m.keys.ReplyPost) && m.activeThread != "" && len(m.posts) > 0:
 		postID := m.posts[clamp(m.contentIndex, 0, len(m.posts)-1)].Id
 		m.beginReplyComposer(postID)
+	case matches(key, m.keys.DeletePost) && (m.screen == ThreadScreen || m.screen == PostScreen):
+		post, ok := m.currentPost()
+		if !ok {
+			return m, nil
+		}
+		id, ctx, cancel := m.nextRequest()
+		return m, func() tea.Msg {
+			defer cancel()
+			owner, supported := m.api.(interface {
+				DeleteOwnPost(context.Context, string) error
+			})
+			if !supported {
+				return deletedMsg{id: id, postID: post.Id, err: errors.New("delete capability unavailable")}
+			}
+			return deletedMsg{id: id, postID: post.Id, err: owner.DeleteOwnPost(ctx, post.Id)}
+		}
 	case matches(key, m.keys.Attachment):
 		if m.screen == AttachmentScreen && len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
 			return m, m.viewAttachmentInline()
@@ -851,8 +888,8 @@ func (m Model) View() string {
 	for len(lines) < h {
 		lines = append(lines, paint(colors.Background, colors.Foreground, "", w))
 	}
-	if m.themeMenu {
-		lines = m.overlayThemeMenu(lines, colors)
+	if m.themePicker.IsOpen() {
+		lines = m.themePicker.Overlay(lines, m.themes, colors, m.width, m.height, textWidth(" BORD  "))
 	}
 	if m.clipboardOSC != "" && len(lines) > 0 {
 		lines[0] = m.clipboardOSC + lines[0]
@@ -931,101 +968,18 @@ func (m Model) themeControlLabel() string {
 }
 
 func (m *Model) openThemeMenu() {
-	options := m.themes.Options()
-	if len(options) == 0 {
-		return
-	}
-	m.themeMenu = true
-	m.themeIndex = 0
-	for i := range options {
-		if options[i].Name == m.theme {
-			m.themeIndex = i
-			break
-		}
-	}
-	m.ensureThemeVisible()
-}
-
-func (m *Model) ensureThemeVisible() {
-	visible := m.themeMenuVisible()
-	if m.themeIndex < m.themeScroll {
-		m.themeScroll = m.themeIndex
-	} else if m.themeIndex >= m.themeScroll+visible {
-		m.themeScroll = m.themeIndex - visible + 1
-	}
-	m.themeScroll = max(0, m.themeScroll)
-}
-
-func (m Model) themeMenuVisible() int {
-	return max(1, minInt(10, max(1, m.height-4)))
+	m.themePicker.Open(m.themes, m.theme, m.height)
 }
 
 func (m Model) updateThemeMenuKey(key string) (tea.Model, tea.Cmd) {
-	options := m.themes.Options()
-	if len(options) == 0 {
-		m.themeMenu = false
-		return m, nil
-	}
-	switch key {
-	case "esc", "f2", "t":
-		m.themeMenu = false
-	case "up", "k":
-		m.themeIndex = clamp(m.themeIndex-1, 0, len(options)-1)
-		m.ensureThemeVisible()
-	case "down", "j":
-		m.themeIndex = clamp(m.themeIndex+1, 0, len(options)-1)
-		m.ensureThemeVisible()
-	case "pgup":
-		m.themeIndex = clamp(m.themeIndex-m.themeMenuVisible(), 0, len(options)-1)
-		m.ensureThemeVisible()
-	case "pgdown":
-		m.themeIndex = clamp(m.themeIndex+m.themeMenuVisible(), 0, len(options)-1)
-		m.ensureThemeVisible()
-	case "enter":
-		m.theme = options[m.themeIndex].Name
-		m.themeMenu = false
+	if selected, ok := m.themePicker.HandleKey(key, m.themes, m.height); ok {
+		m.theme = selected
 	}
 	return m, nil
 }
 
 func (m Model) themeMenuGeometry() (int, int, int) {
-	x := minInt(textWidth(" BORD  "), max(0, m.width-1))
-	width := 14
-	for _, option := range m.themes.Options() {
-		width = max(width, textWidth(SanitizeTerminalText(option.Label))+4)
-	}
-	width = minInt(width, max(1, m.width-x))
-	return x, width, m.themeMenuVisible()
-}
-
-func (m Model) overlayThemeMenu(lines []string, t theme) []string {
-	options := m.themes.Options()
-	if len(options) == 0 || len(lines) < 2 {
-		return lines
-	}
-	x, width, visible := m.themeMenuGeometry()
-	menu := []string{paint(t.BarBackground, t.BarForeground, "┌"+strings.Repeat("─", max(0, width-2))+"┐", width)}
-	end := minInt(len(options), m.themeScroll+visible)
-	for i := m.themeScroll; i < end; i++ {
-		prefix := "  "
-		if i == m.themeIndex {
-			prefix = "> "
-		}
-		bg, fg := t.BarBackground, t.BarForeground
-		if i == m.themeIndex {
-			bg, fg = t.SelectionBackground, t.Selection
-		}
-		menu = append(menu, paint(bg, fg, "│"+prefix+SanitizeTerminalText(options[i].Label), width-1)+paint(t.BarBackground, t.BarForeground, "│", 1))
-	}
-	menu = append(menu, paint(t.BarBackground, t.BarForeground, "└"+strings.Repeat("─", max(0, width-2))+"┘", width))
-	for i, overlay := range menu {
-		y := i + 1
-		if y >= len(lines) {
-			break
-		}
-		lines[y] = ansi.Cut(lines[y], 0, x) + overlay + ansi.Cut(lines[y], x+width, m.width)
-	}
-	return lines
+	return m.themePicker.Geometry(m.themes, m.width, m.height, textWidth(" BORD  "))
 }
 
 func (m Model) workspace(t theme, width, height int) []string {
@@ -1050,85 +1004,16 @@ func (m Model) workspace(t theme, width, height int) []string {
 		}
 		return m.singlePanel(t, width, height, m.contentTitle(), m.contentHint(), m.contentRows(), true)
 	}
-	leftWidth := m.leftPanelWidth()
-	rightWidth := width - leftWidth
+	leftWidth, rightWidth := terminalui.SplitWidth(width, 24, 28)
 	left := m.singlePanel(t, leftWidth, height, "Доски", "РАЗДЕЛ / THREADS / НАЗВАНИЕ", m.boardRows(), m.focus == FocusBoards)
 	right := m.singlePanel(t, rightWidth, height, m.contentTitle(), m.contentHint(), m.contentRows(), m.focus == FocusContent)
-	joined := make([]string, height)
-	for i := range joined {
-		joined[i] = left[i] + right[i]
-	}
-	return joined
+	return terminalui.JoinPanels(height, left, right)
 }
 
-type displayRow struct {
-	lines       []string
-	active      bool
-	trustedANSI bool
-}
+type displayRow = terminalui.Row
 
 func (m Model) singlePanel(t theme, width, height int, title, hint string, rows []displayRow, active bool) []string {
-	if height <= 0 {
-		return nil
-	}
-	border := t.Muted
-	if active {
-		border = t.Accent
-	}
-	if width < 2 || height < 2 {
-		lines := make([]string, height)
-		for i := range lines {
-			value := ""
-			if i == 0 {
-				value = title
-			}
-			lines[i] = paint(t.Background, t.Foreground, value, width)
-		}
-		return lines
-	}
-	inner := width - 2
-	lines := t.Lines
-	if lines.Horizontal == "" {
-		lines = doubleLines
-	}
-	topText := lines.Horizontal + " " + SanitizeTerminalText(title) + " "
-	fill := []rune(lines.Horizontal)[0]
-	top := paint(t.Background, border, lines.LeftTop+fit(topText, inner, fill)+lines.RightTop, width)
-	bottom := paint(t.Background, border, lines.LeftBottom+strings.Repeat(lines.Horizontal, inner)+lines.RightBottom, width)
-	result := []string{top}
-	if height > 2 {
-		result = append(result, paint(t.Background, border, lines.Vertical, 1)+paint(t.BarBackground, t.BarForeground, " "+hint, inner)+paint(t.Background, border, lines.Vertical, 1))
-	}
-	available := height - len(result) - 1
-	for _, row := range rows {
-		for _, text := range row.lines {
-			if available <= 0 {
-				break
-			}
-			bg, fg := t.Background, t.Foreground
-			if row.active {
-				if active {
-					bg, fg = t.SelectionBackground, t.Selection
-				} else {
-					bg, fg = t.Background, t.Accent
-				}
-			}
-			rowPaint := paint
-			if row.trustedANSI {
-				rowPaint = paintANSI
-			}
-			result = append(result, paint(t.Background, border, lines.Vertical, 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.Background, border, lines.Vertical, 1))
-			available--
-		}
-		if available <= 0 {
-			break
-		}
-	}
-	for available > 0 {
-		result = append(result, paint(t.Background, border, lines.Vertical, 1)+paint(t.Background, t.Foreground, "", inner)+paint(t.Background, border, lines.Vertical, 1))
-		available--
-	}
-	return append(result, bottom)
+	return terminalui.Panel(t, width, height, title, hint, rows, active)
 }
 
 func (m Model) boardRows() []displayRow {
@@ -1140,7 +1025,7 @@ func (m Model) boardRows() []displayRow {
 		if i == m.boardIndex {
 			marker = "> "
 		}
-		rows = append(rows, displayRow{lines: []string{fmt.Sprintf("%s/%s/ [%d] %s", marker, SanitizeTerminalText(board.Slug), board.ThreadCount, SanitizeTerminalText(board.Title))}, active: i == m.boardIndex})
+		rows = append(rows, displayRow{Lines: []string{fmt.Sprintf("%s/%s/ [%d] %s", marker, SanitizeTerminalText(board.Slug), board.ThreadCount, SanitizeTerminalText(board.Title))}, Active: i == m.boardIndex})
 	}
 	return rows
 }
@@ -1166,7 +1051,7 @@ func (m Model) contentRows() []displayRow {
 			if p.State == generated.Visible && p.Body != nil {
 				body = preview(*p.Body)
 			}
-			rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
+			rows = append(rows, displayRow{Lines: []string{meta, "  " + body}, Active: i == m.contentIndex})
 		}
 		return rows
 	}
@@ -1186,7 +1071,7 @@ func (m Model) contentRows() []displayRow {
 		if t.InitialPost != nil && t.InitialPost.Body != nil {
 			body = preview(*t.InitialPost.Body)
 		}
-		rows = append(rows, displayRow{lines: []string{meta, "  " + body}, active: i == m.contentIndex})
+		rows = append(rows, displayRow{Lines: []string{meta, "  " + body}, Active: i == m.contentIndex})
 	}
 	return rows
 }
@@ -1205,10 +1090,10 @@ func postMeta(p generated.Post, active bool) string {
 
 func (m Model) attachmentRows() []displayRow {
 	if m.loading {
-		return []displayRow{{lines: []string{"Загрузка и проверка вложения…"}}}
+		return []displayRow{{Lines: []string{"Загрузка и проверка вложения…"}}}
 	}
 	if m.err != nil {
-		return []displayRow{{lines: []string{"Ошибка: " + SanitizeTerminalText(m.err.Error()), "", "Esc  вернуться к посту"}}}
+		return []displayRow{{Lines: []string{"Ошибка: " + SanitizeTerminalText(m.err.Error()), "", "Esc  вернуться к посту"}}}
 	}
 	lines := []string{}
 	if len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
@@ -1220,12 +1105,12 @@ func (m Model) attachmentRows() []displayRow {
 		lines = append(lines, "", SanitizeTerminalText(m.attachmentWarning))
 	}
 	lines = append(lines, "Esc    вернуться к посту")
-	return []displayRow{{lines: lines}}
+	return []displayRow{{Lines: lines}}
 }
 
 func (m Model) composerLines() []displayRow {
 	if m.attachmentPicking {
-		return []displayRow{{lines: []string{"Путь: " + SanitizeTerminalText(m.attachmentPath) + "_", "", "Enter загрузить • Esc отменить"}}}
+		return []displayRow{{Lines: []string{"Путь: " + SanitizeTerminalText(m.attachmentPath) + "_", "", "Enter загрузить • Esc отменить"}}}
 	}
 	attachment := "нет"
 	if m.draft.AttachmentID != "" {
@@ -1240,13 +1125,13 @@ func (m Model) composerLines() []displayRow {
 		action = "ОШИБКА • Ctrl+S ПОВТОРИТЬ • Esc оставить черновик"
 	}
 	lines = append(lines, "", "Команды ниже также доступны мышью", action, "Вложение: "+attachment)
-	return []displayRow{{lines: lines, trustedANSI: true}}
+	return []displayRow{{Lines: lines, TrustedANSI: true}}
 }
 
 func (m Model) helpLines() []displayRow {
-	return []displayRow{{lines: []string{
+	return []displayRow{{Lines: []string{
 		"↑/k ↓/j   навигация / прокрутка полного поста", "PgUp/PgDn  переход на страницу тредов или постов", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
-		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост",
+		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост", "d / Delete удалить свой пост",
 		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t / F2     список встроенных и MC-тем", "?          эта справка", "q Ctrl+C   выход",
 		"Ответ      Tab — исходный пост; Shift+стрелки — выделить; Ctrl+C — копировать", "Мышь       один клик открывает; drag выделяет текст исходного поста", "F8         ответить на выделенный/открытый пост", "Колесо     навигация или прокрутка",
 	}}}
@@ -1290,7 +1175,7 @@ func (m Model) postDetailLines() []string {
 func (m Model) postDetailRows() []displayRow {
 	lines := m.postDetailLines()
 	start := clamp(m.postScroll, 0, max(0, len(lines)-1))
-	return []displayRow{{lines: lines[start:]}}
+	return []displayRow{{Lines: lines[start:]}}
 }
 
 func (m Model) statusLine(t theme, width int) string {
@@ -1322,10 +1207,10 @@ func (m Model) commandLabels() []string {
 		return []string{"Enter Open External", "Esc Back", "F10 Quit"}
 	}
 	if m.screen == ThreadScreen {
-		return []string{"F1 Help", "F5 Refresh", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
+		return []string{"F1 Help", "F5 Refresh", "F7 Reply Thread", "F8 Reply Post", "D Delete Own", "F10 Quit"}
 	}
 	if m.screen == PostScreen {
-		return []string{"Esc Back", "O Image", "F7 Reply Thread", "F8 Reply Post", "F10 Quit"}
+		return []string{"Esc Back", "O Image", "F7 Reply Thread", "F8 Reply Post", "D Delete Own", "F10 Quit"}
 	}
 	return []string{"F1 Help", "F2 Theme", "F4 Search", "F5 Refresh", "F7 New Thread", "F10 Quit"}
 }
@@ -1390,10 +1275,6 @@ func fit(value string, width int, fill rune) string {
 	return fitWidth(SanitizeTerminalText(value), width, fill)
 }
 
-func fitANSI(value string, width int, fill rune) string {
-	return fitWidth(value, width, fill)
-}
-
 func fitWidth(value string, width int, fill rune) string {
 	if width <= 0 {
 		return ""
@@ -1410,9 +1291,6 @@ func paint(background, foreground lipgloss.Color, value string, width int) strin
 	return lipgloss.NewStyle().Background(background).Foreground(foreground).Render(fit(value, width, ' '))
 }
 
-func paintANSI(background, foreground lipgloss.Color, value string, width int) string {
-	return lipgloss.NewStyle().Background(background).Foreground(foreground).Render(fitANSI(value, width, ' '))
-}
 func mergePosts(old, incoming []generated.Post, appendPage bool) []generated.Post {
 	if !appendPage {
 		old = nil
@@ -1624,6 +1502,19 @@ func (m Model) Theme() ThemeName { return m.theme }
 
 // ThemeSetting returns a rediscoverable name or path for local-state persistence.
 func (m Model) ThemeSetting() string { return m.themes.Setting(m.theme) }
+
+// Close cancels public HTTP/SSE work owned by this model.
+func (m Model) Close() {
+	if m.streamCancel != nil {
+		m.streamCancel()
+	}
+	if m.requestCancel != nil {
+		m.requestCancel()
+	}
+	if m.cancel != nil {
+		m.cancel()
+	}
+}
 
 // errorsAs is kept tiny so View never risks exposing the wrapped error text.
 func errorsAs(err error, target any) bool { return errors.As(err, target) }

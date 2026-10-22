@@ -19,7 +19,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if zone == terminalui.MouseOutside {
 		return m, nil
 	}
-	if m.themeMenu {
+	if m.themePicker.IsOpen() {
 		return m.activateThemeMenuMouse(msg)
 	}
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
@@ -85,24 +85,27 @@ func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activateThemeMenuMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
+	if msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
-	x, width, visible := m.themeMenuGeometry()
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		delta := -1
+		if msg.Button == tea.MouseButtonWheelDown {
+			delta = 1
+		}
+		m.themePicker.HandleWheel(delta, m.themes, m.height)
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
 	if msg.Y == 0 {
-		m.themeMenu = false
+		m.themePicker.Close()
 		return m.activateTop(msg.X)
 	}
-	if msg.X < x || msg.X >= x+width || msg.Y < 2 || msg.Y >= 2+visible {
-		m.themeMenu = false
-		return m, nil
+	if selected, ok := m.themePicker.HandleClick(msg.X, msg.Y, m.themes, m.width, m.height, textWidth(" BORD  ")); ok {
+		m.theme = selected
 	}
-	options := m.themes.Options()
-	index := m.themeScroll + msg.Y - 2
-	if index >= 0 && index < len(options) {
-		m.themeIndex, m.theme = index, options[index].Name
-	}
-	m.themeMenu = false
 	return m, nil
 }
 
@@ -149,10 +152,10 @@ func (m Model) commandKeys() []tea.KeyMsg {
 		return []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyEsc}, {Type: tea.KeyF10}}
 	}
 	if m.screen == ThreadScreen {
-		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
+		return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyRunes, Runes: []rune{'d'}}, {Type: tea.KeyF10}}
 	}
 	if m.screen == PostScreen {
-		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyRunes, Runes: []rune{'o'}}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyF10}}
+		return []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyRunes, Runes: []rune{'o'}}, {Type: tea.KeyF7}, {Type: tea.KeyF8}, {Type: tea.KeyRunes, Runes: []rune{'d'}}, {Type: tea.KeyF10}}
 	}
 	return []tea.KeyMsg{{Type: tea.KeyF1}, {Type: tea.KeyF2}, {Type: tea.KeyF4}, {Type: tea.KeyF5}, {Type: tea.KeyF7}, {Type: tea.KeyF10}}
 }
@@ -173,11 +176,8 @@ func (m Model) panelAt(x, y int) (Focus, bool) {
 }
 
 func (m Model) leftPanelWidth() int {
-	leftWidth := max(24, m.width/3)
-	if leftWidth > m.width-28 {
-		leftWidth = m.width / 2
-	}
-	return leftWidth
+	left, _ := terminalui.SplitWidth(m.width, 24, 28)
+	return left
 }
 
 func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {

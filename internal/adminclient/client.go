@@ -23,6 +23,13 @@ type PostContext = generated.AdminPostContext
 type Ban = generated.Ban
 type BanRecord = generated.AdminBan
 type AuditEntry = generated.AdminAuditEntry
+type Board = generated.AdminBoard
+
+type CreateBoardRequest struct {
+	Slug   string
+	Title  string
+	Reason string
+}
 
 type Page[T any] struct {
 	Items      []T
@@ -117,6 +124,52 @@ func (c *Client) Reports(ctx context.Context, cursor *string, limit int) (Page[R
 		return Page[Report]{}, err
 	}
 	return Page[Report]{Items: wire.Reports, NextCursor: wire.NextCursor}, nil
+}
+
+func (c *Client) Boards(ctx context.Context, state string, cursor *string, limit int) (Page[Board], error) {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
+	stateValue := generated.AdminListBoardsParamsState(state)
+	params := &generated.AdminListBoardsParams{Cursor: cursor, State: &stateValue}
+	if limit > 0 {
+		params.Limit = &limit
+	}
+	response, err := c.raw.AdminListBoards(ctx, params)
+	var wire generated.AdminBoardPage
+	if err := c.decode(response, err, http.StatusOK, &wire); err != nil {
+		return Page[Board]{}, err
+	}
+	return Page[Board]{Items: wire.Boards, NextCursor: wire.NextCursor}, nil
+}
+
+func (c *Client) CreateBoard(ctx context.Context, request CreateBoardRequest) (Board, error) {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
+	response, err := c.raw.AdminCreateBoard(ctx, generated.AdminCreateBoard{Slug: request.Slug, Title: request.Title, Reason: request.Reason})
+	var result Board
+	return result, c.decode(response, err, http.StatusCreated, &result)
+}
+
+func (c *Client) ArchiveBoard(ctx context.Context, boardID, reason string) (Board, error) {
+	return c.setBoardState(ctx, boardID, reason, false)
+}
+
+func (c *Client) RestoreBoard(ctx context.Context, boardID, reason string) (Board, error) {
+	return c.setBoardState(ctx, boardID, reason, true)
+}
+
+func (c *Client) setBoardState(ctx context.Context, boardID, reason string, enabled bool) (Board, error) {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
+	var response *http.Response
+	var err error
+	if enabled {
+		response, err = c.raw.AdminRestoreBoard(ctx, boardID, generated.Reason{Reason: reason})
+	} else {
+		response, err = c.raw.AdminArchiveBoard(ctx, boardID, generated.Reason{Reason: reason})
+	}
+	var result Board
+	return result, c.decode(response, err, http.StatusOK, &result)
 }
 
 func (c *Client) PostContext(ctx context.Context, postID string, cursor *string, limit int) (PostContext, error) {

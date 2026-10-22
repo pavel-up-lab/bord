@@ -76,6 +76,81 @@ func (h *Handler) adminGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": principal.ID, "role": role, "expires_at": principal.ExpiresAt})
 }
 
+func (h *Handler) adminListBoards(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		state = "all"
+	}
+	if state != "active" && state != "archived" && state != "all" {
+		writeError(w, r, validation("state", errors.New("invalid board state")))
+		return
+	}
+	collection := "admin:boards:" + state
+	limit, cursor, ok := h.pagination(w, r, collection)
+	if !ok {
+		return
+	}
+	page, err := h.config.Admin.ListBoards(r.Context(), state, cursor, limit)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if page.Items == nil {
+		page.Items = []AdminBoard{}
+	}
+	h.writePage(w, r, collection, "boards", page.Items, page.NextCursor)
+}
+
+func (h *Handler) adminCreateBoard(w http.ResponseWriter, r *http.Request) {
+	var body AdminCreateBoardRequest
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeDecodeError(w, r, err)
+		return
+	}
+	if !validBoardSlug(body.Slug) || len(strings.TrimSpace(body.Title)) < 1 || len(body.Title) > 100 || strings.TrimSpace(body.Title) != body.Title || !validReason(body.Reason) {
+		writeError(w, r, validation("body", errors.New("invalid board")))
+		return
+	}
+	board, err := h.config.Admin.CreateBoard(r.Context(), body, RequestID(r.Context()))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, board)
+}
+
+func (h *Handler) adminArchiveBoard(w http.ResponseWriter, r *http.Request) {
+	h.adminSetBoardState(w, r, false)
+}
+
+func (h *Handler) adminRestoreBoard(w http.ResponseWriter, r *http.Request) {
+	h.adminSetBoardState(w, r, true)
+}
+
+func (h *Handler) adminSetBoardState(w http.ResponseWriter, r *http.Request, enabled bool) {
+	id := r.PathValue("board_id")
+	if !validResourceID(id) {
+		writeError(w, r, validation("board_id", errors.New("invalid ID")))
+		return
+	}
+	reason, ok := h.adminReason(w, r)
+	if !ok {
+		return
+	}
+	var board AdminBoard
+	var err error
+	if enabled {
+		board, err = h.config.Admin.RestoreBoard(r.Context(), id, reason, RequestID(r.Context()))
+	} else {
+		board, err = h.config.Admin.ArchiveBoard(r.Context(), id, reason, RequestID(r.Context()))
+	}
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, board)
+}
+
 func (h *Handler) adminGetPostContext(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("post_id")
 	if !validResourceID(id) {

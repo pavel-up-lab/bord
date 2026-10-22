@@ -95,6 +95,45 @@ func TestPostingAPIPersistsCredentialAcrossUnknownOutcomeAndReplay(t *testing.T)
 	}
 }
 
+func TestPostingAPIDeletesOnlyWithStoredAnonymousCapability(t *testing.T) {
+	const secret = "anonymous-delete-secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body generated.DeletePost
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DeleteToken != secret {
+			t.Errorf("delete body=%#v err=%v", body, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	store := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	state, err := NewState(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.DeleteSecrets["post_1"] = secret
+	if err = store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	transport, err := New(server.URL, server.Client(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posting, err := NewPostingAPI(transport, store, &state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = posting.DeleteOwnPost(context.Background(), "post_1"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil || loaded.DeleteSecrets["post_1"] != "" {
+		t.Fatalf("state=%#v err=%v", loaded, err)
+	}
+	if err = posting.DeleteOwnPost(context.Background(), "post_2"); err == nil {
+		t.Fatal("missing delete capability accepted")
+	}
+}
+
 func mapCreateThread(body string) generated.CreateThread {
 	return generated.CreateThread{Body: &body}
 }

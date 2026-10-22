@@ -11,9 +11,11 @@ import (
 	"os"
 	"time"
 
+	"bord/internal/adminapp"
 	"bord/internal/adminclient"
 	"bord/internal/admintui"
 	"bord/internal/client"
+	"bord/internal/clientapp"
 	"bord/internal/terminalui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,6 +43,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("bord-admin", flag.ContinueOnError)
 	flags.SetOutput(safeWriter{stderr})
 	management := flags.String("management", "", "адрес приватного management API")
+	server := flags.String("server", "", "адрес публичного API для режима Пользователь")
 	credentialFile := flags.String("credential-file", "", "путь к защищенному credential-файлу")
 	themeFlag := flags.String("theme", "", "тема: встроенное имя, MC skin или путь к .ini")
 	inline := flags.String("inline", "", "inline-графика: auto, kitty или off")
@@ -74,6 +77,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if state.Management == "" {
 		state.Management = "http://127.0.0.1:8081"
+	}
+	if *server != "" {
+		state.Server = *server
+	} else if value := os.Getenv("BORD_SERVER"); value != "" {
+		state.Server = value
+	}
+	if state.Server == "" {
+		state.Server = "http://localhost:8080"
 	}
 	if *inline != "" {
 		switch *inline {
@@ -124,14 +135,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	viewer := admintui.TerminalImageViewer{Cache: cache, Renderer: terminalui.KittyRenderer{Capability: terminalui.EnvironmentCapabilities{}, Mode: terminalui.InlineMode(state.InlineMode)}, OpenExternal: client.OpenExternal}
-	model := admintui.NewModel(ctx, api).WithThemes(themes, themeName).WithScreen(state.View).WithSession(session).WithImageViewer(viewer)
+	adminModel := admintui.NewModel(ctx, api).WithThemes(themes, themeName).WithScreen(state.View).WithSession(session).WithImageViewer(viewer)
+	publicRuntime, err := clientapp.Bootstrap(ctx, clientapp.Options{Server: state.Server, Inline: state.InlineMode, Theme: state.Theme, Timeout: *timeout, Themes: themes})
+	if err != nil {
+		return err
+	}
+	model := adminapp.New(adminModel, publicRuntime.Model, themes, state.Mode)
 	final, err := runProgram(ctx, model, stdout)
 	if err != nil {
 		return errors.New("интерфейс завершился с внутренней ошибкой")
 	}
-	if result, ok := final.(admintui.Model); ok {
+	if result, ok := final.(adminapp.Model); ok {
 		state.Theme = result.ThemeSetting()
-		state.View = result.ViewSetting()
+		state.View = result.Admin().ViewSetting()
+		state.Mode = result.ModeSetting()
+		if saveErr := publicRuntime.SaveUserData(result.User()); saveErr != nil {
+			return saveErr
+		}
 	}
 	state.InlineMode = string(terminalui.InlineMode(state.InlineMode))
 	if err := store.Save(state); err != nil {
@@ -140,7 +160,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func defaultRunProgram(ctx context.Context, model admintui.Model, output io.Writer) (tea.Model, error) {
+func defaultRunProgram(ctx context.Context, model tea.Model, output io.Writer) (tea.Model, error) {
 	return tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx), tea.WithOutput(output)).Run()
 }
 

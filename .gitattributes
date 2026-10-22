@@ -5,3 +5,4 @@
 *.jpg binary
 *.jpeg binary
 *.png binary
+*.golden whitespace=-blank-at-eol

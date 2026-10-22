@@ -13,6 +13,40 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if zone == terminalui.MouseOutside {
 		return m, nil
 	}
+	if m.themePicker.IsOpen() {
+		if msg.Action != tea.MouseActionPress {
+			return m, nil
+		}
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			delta := -1
+			if msg.Button == tea.MouseButtonWheelDown {
+				delta = 1
+			}
+			m.themePicker.HandleWheel(delta, m.themes, m.height)
+			return m, nil
+		}
+		if msg.Button == tea.MouseButtonLeft {
+			if msg.Y == 0 {
+				m.themePicker.Close()
+				return m.activateTop(msg.X)
+			}
+			if selected, ok := m.themePicker.HandleClick(msg.X, msg.Y, m.themes, m.width, m.height, m.themePickerAnchor()); ok {
+				m.theme = selected
+			}
+		}
+		return m, nil
+	}
+	if m.modal != nil && m.modal.kind == modalCreateBoard && zone == terminalui.MouseWorkspace && msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		switch {
+		case msg.Y <= 4:
+			m.focusBoardModalField(0)
+		case msg.Y <= 6:
+			m.focusBoardModalField(1)
+		default:
+			m.focusBoardModalField(2)
+		}
+		return m, nil
+	}
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 		if zone == terminalui.MouseTopBar {
 			return m.activateTop(msg.X)
@@ -36,22 +70,29 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
-	labels := []string{" BORD ADMIN  ", "[1 Жалобы]", "[2 Блокировки]", "[3 Аудит]", "[F2 Тема]", "[F1 Справка]"}
+	type topItem struct {
+		label  string
+		screen *Screen
+		key    string
+	}
+	reports, bans, audit, boards := ReportsScreen, BansScreen, AuditScreen, BoardsScreen
+	items := []topItem{{label: " BORD ADMIN  "}, {label: "[1 Жалобы]", screen: &reports}, {label: "[2 Блокировки]", screen: &bans}, {label: "[3 Аудит]", screen: &audit}}
+	if string(m.session.Role) == "administrator" {
+		items = append(items, topItem{label: "[4 Доски]", screen: &boards})
+	}
+	items = append(items, topItem{label: "[F2 Тема]", key: "f2"}, topItem{label: "[F1 Справка]", key: "f1"})
 	offset := 0
-	for index, label := range labels {
-		width := terminalui.TextWidth(label) + 1
+	for _, item := range items {
+		width := terminalui.TextWidth(item.label) + 1
 		if x >= offset && x < offset+width {
-			switch index {
-			case 1:
-				return m.selectScreen(ReportsScreen)
-			case 2:
-				return m.selectScreen(BansScreen)
-			case 3:
-				return m.selectScreen(AuditScreen)
-			case 4:
-				m.themeMenu = true
+			if item.screen != nil {
+				return m.selectScreen(*item.screen)
+			}
+			switch item.key {
+			case "f2":
+				m.themePicker.Open(m.themes, m.theme, m.height)
 				return m, nil
-			case 5:
+			case "f1":
 				m.switchScreen(HelpScreen)
 				return m, nil
 			}
@@ -95,6 +136,12 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 		key = "x"
 	case "active/history":
 		key = "f6"
+	case "all/active/archived":
+		key = "f6"
+	case "new":
+		key = "n"
+	case "archive":
+		key = "d"
 	case "quit":
 		key = "f10"
 	case "back", "отмена":
@@ -118,7 +165,7 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activateWorkspace(x, y int) (tea.Model, tea.Cmd) {
-	row := y - 2
+	row := y - 3 // top bar + panel border + shared hint row
 	if row < 0 {
 		return m, nil
 	}
@@ -141,6 +188,9 @@ func (m Model) activateWorkspace(x, y int) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == AuditScreen {
 		m.auditIndex = clamp(row, 0, max(0, len(m.audit)-1))
+	}
+	if m.screen == BoardsScreen {
+		m.boardIndex = clamp(row, 0, max(0, len(m.boards)-1))
 	}
 	return m, nil
 }

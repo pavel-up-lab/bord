@@ -136,7 +136,7 @@ func (m Model) replySourceRows(panelWidth int, t theme) []displayRow {
 	for i := start; i < end; i++ {
 		rendered = append(rendered, m.renderReplySourceLine(lines[i], t))
 	}
-	return []displayRow{{lines: rendered, trustedANSI: true}}
+	return []displayRow{{Lines: rendered, TrustedANSI: true}}
 }
 
 func (m Model) renderReplySourceLine(line replyTextLine, t theme) string {

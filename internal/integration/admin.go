@@ -12,18 +12,23 @@ import (
 	"io"
 	"math"
 	"net/netip"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"bord/internal/api"
 	"bord/internal/app/attachment"
+	boardapp "bord/internal/app/board"
 	"bord/internal/app/moderation"
 	"bord/internal/domain"
 	"bord/internal/security"
+	storage "bord/internal/storage/sqlite"
 )
 
 type Admin struct {
 	db          *sql.DB
+	repo        *storage.Repository
 	clock       Clock
 	auth        *security.AdminAuthenticator
 	keyring     security.IPKeyring
@@ -31,13 +36,14 @@ type Admin struct {
 	attachments attachment.Service
 }
 
-func newAdmin(db *sql.DB, clock Clock, keyring security.IPKeyring, lookupKey []byte, attachments attachment.Service) (*Admin, error) {
+func newAdmin(repo *storage.Repository, clock Clock, keyring security.IPKeyring, lookupKey []byte, attachments attachment.Service) (*Admin, error) {
 	dummy, err := security.HashSecret([]byte("dummy-administrator-secret"), security.DefaultArgon2Params, rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	repo := adminIdentities{db: db}
-	return &Admin{db: db, clock: clock, auth: security.NewAdminAuthenticator(repo, clock, dummy), keyring: keyring, lookupKey: append([]byte(nil), lookupKey...), attachments: attachments}, nil
+	db := repo.DB()
+	identities := adminIdentities{db: db}
+	return &Admin{db: db, repo: repo, clock: clock, auth: security.NewAdminAuthenticator(identities, clock, dummy), keyring: keyring, lookupKey: append([]byte(nil), lookupKey...), attachments: attachments}, nil
 }
 
 func (a *Admin) Bootstrap(ctx context.Context, id string, role security.Role, expires time.Time) (string, error) {
@@ -70,6 +76,170 @@ func (a *Admin) actor(ctx context.Context, required security.Role) (api.AdminPri
 	}
 	return actor, nil
 }
+
+var boardSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+func (a *Admin) ListBoards(ctx context.Context, state, cursor string, limit int) (api.Page[api.AdminBoard], error) {
+	if _, err := a.actor(ctx, security.RoleAdministrator); err != nil {
+		return api.Page[api.AdminBoard]{}, err
+	}
+	if state == "" {
+		state = string(boardapp.BoardStateAll)
+	}
+	var before domain.BoardID
+	if cursor != "" {
+		if _, err := strconv.ParseInt(cursor, 10, 64); err != nil {
+			return api.Page[api.AdminBoard]{}, domain.NewError(domain.CodeValidation, "cursor", err)
+		}
+		before = domain.BoardID(cursor)
+	}
+	page, err := a.repo.ListManagedBoards(ctx, boardapp.BoardState(state), before, limit)
+	if err != nil {
+		return api.Page[api.AdminBoard]{}, err
+	}
+	result := api.Page[api.AdminBoard]{Items: make([]api.AdminBoard, 0, len(page.Boards))}
+	for _, item := range page.Boards {
+		result.Items = append(result.Items, managedBoardDTO(item))
+	}
+	result.NextCursor = string(page.Next)
+	return result, nil
+}
+
+func (a *Admin) CreateBoard(ctx context.Context, request api.AdminCreateBoardRequest, requestID string) (api.AdminBoard, error) {
+	actor, err := a.actor(ctx, security.RoleAdministrator)
+	target := request.Slug
+	if err == nil {
+		err = validateBoardMutation(request.Slug, request.Title, request.Reason)
+	}
+	if err != nil {
+		return api.AdminBoard{}, errors.Join(err, a.audit(ctx, actor.ID, "board.create", target, request.Reason, requestID, err))
+	}
+	var created api.AdminBoard
+	err = a.mutateWithAudit(ctx, actor.ID, "board.create", &target, request.Reason, requestID, func(tx *sql.Tx) error {
+		var numericID int64
+		if scanErr := tx.QueryRowContext(ctx, `INSERT INTO id_sequences(kind,value) VALUES('board',1) ON CONFLICT(kind) DO UPDATE SET value=value+1 RETURNING value`).Scan(&numericID); scanErr != nil {
+			return scanErr
+		}
+		board, domainErr := domain.NewBoard(domain.BoardID(fmtID(numericID)), request.Slug, request.Title)
+		if domainErr != nil {
+			return domainErr
+		}
+		_, insertErr := tx.ExecContext(ctx, `INSERT INTO boards(id,slug,title,enabled,created_at) VALUES(?,?,?,?,?)`, numericID, board.Slug, board.Title, 1, encodeTime(a.clock.Now()))
+		if insertErr != nil {
+			if strings.Contains(strings.ToLower(insertErr.Error()), "constraint") {
+				return domain.NewError(domain.CodeConflict, "slug", insertErr)
+			}
+			return insertErr
+		}
+		target = fmtID(numericID)
+		created = api.AdminBoard{ID: target, Slug: board.Slug, Title: board.Title, State: "active"}
+		return nil
+	})
+	return created, err
+}
+
+func (a *Admin) ArchiveBoard(ctx context.Context, id, reason, requestID string) (api.AdminBoard, error) {
+	return a.setBoardState(ctx, id, reason, requestID, true, false, "board.archive")
+}
+
+func (a *Admin) RestoreBoard(ctx context.Context, id, reason, requestID string) (api.AdminBoard, error) {
+	return a.setBoardState(ctx, id, reason, requestID, false, true, "board.restore")
+}
+
+func (a *Admin) setBoardState(ctx context.Context, id, reason, requestID string, expected, enabled bool, action string) (api.AdminBoard, error) {
+	actor, err := a.actor(ctx, security.RoleAdministrator)
+	if err == nil {
+		if _, parseErr := parseAdminID(id); parseErr != nil {
+			err = domain.NewError(domain.CodeBoardNotFound, "board_id", parseErr)
+		} else if !validAdminReason(reason) {
+			err = domain.NewError(domain.CodeValidation, "reason", nil)
+		}
+	}
+	if err != nil {
+		return api.AdminBoard{}, errors.Join(err, a.audit(ctx, actor.ID, action, id, reason, requestID, err))
+	}
+	var result api.AdminBoard
+	err = a.mutateWithAudit(ctx, actor.ID, action, &id, reason, requestID, func(tx *sql.Tx) error {
+		numericID, _ := parseAdminID(id)
+		toInt := func(value bool) int {
+			if value {
+				return 1
+			}
+			return 0
+		}
+		updated, updateErr := tx.ExecContext(ctx, `UPDATE boards SET enabled=? WHERE id=? AND enabled=?`, toInt(enabled), numericID, toInt(expected))
+		if updateErr != nil {
+			return updateErr
+		}
+		if changed, _ := updated.RowsAffected(); changed != 1 {
+			var exists int
+			lookupErr := tx.QueryRowContext(ctx, `SELECT count(*) FROM boards WHERE id=?`, numericID).Scan(&exists)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if exists == 0 {
+				return domain.NewError(domain.CodeBoardNotFound, "board_id", nil)
+			}
+			return domain.NewError(domain.CodeConflict, "board", nil)
+		}
+		return scanAdminBoard(ctx, tx, numericID, &result)
+	})
+	return result, err
+}
+
+func validateBoardMutation(slug, title, reason string) error {
+	if !boardSlugPattern.MatchString(slug) {
+		return domain.NewError(domain.CodeValidation, "slug", nil)
+	}
+	if strings.TrimSpace(title) != title || len(title) < 1 || len(title) > 100 {
+		return domain.NewError(domain.CodeValidation, "title", nil)
+	}
+	if !validAdminReason(reason) {
+		return domain.NewError(domain.CodeValidation, "reason", nil)
+	}
+	return nil
+}
+
+func validAdminReason(reason string) bool {
+	return strings.TrimSpace(reason) == reason && len(reason) >= 3 && len(reason) <= 500 && !security.ContainsRawIP(reason)
+}
+
+func parseAdminID(id string) (int64, error) {
+	numeric, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || numeric < 1 {
+		return 0, fmt.Errorf("invalid resource ID")
+	}
+	return numeric, nil
+}
+
+func scanAdminBoard(ctx context.Context, row interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, id int64, target *api.AdminBoard) error {
+	var enabled int
+	err := row.QueryRowContext(ctx, `SELECT b.id,b.slug,b.title,b.enabled,(SELECT count(*) FROM threads t WHERE t.board_id=b.id),(SELECT count(*) FROM posts p JOIN threads t ON t.id=p.thread_id WHERE t.board_id=b.id) FROM boards b WHERE b.id=?`, id).
+		Scan(&id, &target.Slug, &target.Title, &enabled, &target.ThreadCount, &target.PostCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.NewError(domain.CodeBoardNotFound, "board_id", err)
+	}
+	if err != nil {
+		return err
+	}
+	target.ID = fmtID(id)
+	target.State = "archived"
+	if enabled == 1 {
+		target.State = "active"
+	}
+	return nil
+}
+
+func managedBoardDTO(item boardapp.ManagedBoard) api.AdminBoard {
+	state := "archived"
+	if item.Board.Enabled {
+		state = "active"
+	}
+	return api.AdminBoard{ID: string(item.Board.ID), Slug: item.Board.Slug, Title: item.Board.Title, State: state, ThreadCount: item.ThreadCount, PostCount: item.PostCount}
+}
+
 func (a *Admin) ListReports(ctx context.Context, cursor string, limit int) (api.Page[api.AdminReport], error) {
 	after := int64(0)
 	if cursor != "" {

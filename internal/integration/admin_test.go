@@ -82,6 +82,106 @@ func TestAdminActorRejectsMissingPrincipal(t *testing.T) {
 	}
 }
 
+func TestAdminBoardLifecycleAuthorizationValidationAndAudit(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(t.TempDir() + "/bord.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = storage.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	clock := &testClock{now: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}
+	runtime, err := New(Config{DB: db, Blobs: t.TempDir(), LookupKey: bytes.Repeat([]byte{1}, 32), Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	if err = runtime.SeedBoard(ctx, "general", "General"); err != nil {
+		t.Fatal(err)
+	}
+	at := encodeTime(clock.Now())
+	if _, err = db.Exec(`INSERT INTO admin_identities(id,role,credential_verifier,created_at,expires_at) VALUES ('root','administrator',X'00',?,?),('mod','moderator',X'00',?,?)`, at, encodeTime(clock.Now().Add(time.Hour)), at, encodeTime(clock.Now().Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	administrator := api.WithAdminPrincipal(ctx, api.AdminPrincipal{ID: "root", Role: security.RoleAdministrator})
+	moderator := api.WithAdminPrincipal(ctx, api.AdminPrincipal{ID: "mod", Role: security.RoleModerator})
+
+	if _, err = runtime.Admin.ListBoards(moderator, "all", "", 10); domain.ErrorCode(err) != domain.CodeForbidden {
+		t.Fatalf("moderator list code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	request := api.AdminCreateBoardRequest{Slug: "games", Title: "Games", Reason: "new topic area"}
+	if _, err = runtime.Admin.CreateBoard(moderator, request, "board-create-denied"); domain.ErrorCode(err) != domain.CodeForbidden {
+		t.Fatalf("moderator create code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	invalid := request
+	invalid.Slug = "Bad Slug"
+	if _, err = runtime.Admin.CreateBoard(administrator, invalid, "board-create-invalid"); domain.ErrorCode(err) != domain.CodeValidation {
+		t.Fatalf("invalid create code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	created, err := runtime.Admin.CreateBoard(administrator, request, "board-create-success")
+	if err != nil || created.ID == "" || created.State != "active" {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	if _, err = runtime.Admin.CreateBoard(administrator, request, "board-create-duplicate"); domain.ErrorCode(err) != domain.CodeConflict {
+		t.Fatalf("duplicate code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	boards, err := runtime.Admin.ListBoards(administrator, "all", "", 10)
+	if err != nil || len(boards.Items) != 2 {
+		t.Fatalf("boards=%+v err=%v", boards, err)
+	}
+	archived, err := runtime.Admin.ArchiveBoard(administrator, created.ID, "area retired", "board-archive-success")
+	if err != nil || archived.State != "archived" {
+		t.Fatalf("archived=%+v err=%v", archived, err)
+	}
+	if _, err = runtime.Admin.ArchiveBoard(administrator, created.ID, "repeat archive", "board-archive-conflict"); domain.ErrorCode(err) != domain.CodeConflict {
+		t.Fatalf("repeat archive code=%q err=%v", domain.ErrorCode(err), err)
+	}
+	restored, err := runtime.Admin.RestoreBoard(administrator, created.ID, "area reopened", "board-restore-success")
+	if err != nil || restored.State != "active" {
+		t.Fatalf("restored=%+v err=%v", restored, err)
+	}
+
+	if _, err = db.Exec(`CREATE TRIGGER reject_board_audit BEFORE INSERT ON moderation_actions WHEN NEW.request_id='board-create-rollback' BEGIN SELECT RAISE(ABORT, 'audit rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rollback := api.AdminCreateBoardRequest{Slug: "rollback", Title: "Rollback", Reason: "audit atomicity"}
+	if _, err = runtime.Admin.CreateBoard(administrator, rollback, "board-create-rollback"); err == nil {
+		t.Fatal("board creation succeeded without its audit")
+	}
+	var rollbackCount int
+	if err = db.QueryRow(`SELECT count(*) FROM boards WHERE slug='rollback'`).Scan(&rollbackCount); err != nil || rollbackCount != 0 {
+		t.Fatalf("unaudited board count=%d err=%v", rollbackCount, err)
+	}
+
+	rows, err := db.Query(`SELECT request_id,outcome,coalesce(json_extract(payload,'$.error_code'),'') FROM moderation_actions WHERE action LIKE 'board.%' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := map[string]string{}
+	for rows.Next() {
+		var requestID, outcome, code string
+		if err = rows.Scan(&requestID, &outcome, &code); err != nil {
+			t.Fatal(err)
+		}
+		seen[requestID] = outcome + ":" + code
+	}
+	for requestID, want := range map[string]string{
+		"board-create-denied":    "failure:forbidden",
+		"board-create-invalid":   "failure:validation_failed",
+		"board-create-success":   "success:",
+		"board-create-duplicate": "failure:conflict",
+		"board-archive-success":  "success:",
+		"board-archive-conflict": "failure:conflict",
+		"board-restore-success":  "success:",
+	} {
+		if seen[requestID] != want {
+			t.Errorf("audit %s=%q want=%q", requestID, seen[requestID], want)
+		}
+	}
+}
+
 func TestAdminPostContextIncludesVisibleAndHiddenContent(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(t.TempDir() + "/bord.db")

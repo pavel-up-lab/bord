@@ -124,6 +124,21 @@ type AdminPostContext struct {
 	NextCursor string
 }
 
+type AdminBoard struct {
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	State       string `json:"state"`
+	ThreadCount int64  `json:"thread_count"`
+	PostCount   int64  `json:"post_count"`
+}
+
+type AdminCreateBoardRequest struct {
+	Slug   string `json:"slug"`
+	Title  string `json:"title"`
+	Reason string `json:"reason"`
+}
+
 type Ban struct {
 	ID        string    `json:"id"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -181,6 +196,10 @@ type AdminPrincipal struct {
 type AdminService interface {
 	Authenticate(context.Context, string, string) (AdminPrincipal, error)
 	ListReports(context.Context, string, int) (Page[AdminReport], error)
+	ListBoards(context.Context, string, string, int) (Page[AdminBoard], error)
+	CreateBoard(context.Context, AdminCreateBoardRequest, string) (AdminBoard, error)
+	ArchiveBoard(context.Context, string, string, string) (AdminBoard, error)
+	RestoreBoard(context.Context, string, string, string) (AdminBoard, error)
 	GetPostContext(context.Context, string, string, int) (AdminPostContext, error)
 	OpenAttachment(context.Context, string) (io.ReadCloser, Attachment, error)
 	ListBans(context.Context, string, string, int) (Page[AdminBan], error)

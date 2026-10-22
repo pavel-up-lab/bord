@@ -49,6 +49,12 @@ const (
 	AdminBanSubjectTypePrefix AdminBanSubjectType = "prefix"
 )
 
+// Defines values for AdminBoardState.
+const (
+	AdminBoardStateActive   AdminBoardState = "active"
+	AdminBoardStateArchived AdminBoardState = "archived"
+)
+
 // Defines values for AdminRole.
 const (
 	Administrator AdminRole = "administrator"
@@ -132,6 +138,13 @@ const (
 	AdminListBansParamsStateHistory AdminListBansParamsState = "history"
 )
 
+// Defines values for AdminListBoardsParamsState.
+const (
+	AdminListBoardsParamsStateActive   AdminListBoardsParamsState = "active"
+	AdminListBoardsParamsStateAll      AdminListBoardsParamsState = "all"
+	AdminListBoardsParamsStateArchived AdminListBoardsParamsState = "archived"
+)
+
 // AdminAuditEntry defines model for AdminAuditEntry.
 type AdminAuditEntry struct {
 	Action    string                 `json:"action"`
@@ -186,11 +199,39 @@ type AdminBanPage struct {
 	NextCursor *Cursor `json:"next_cursor,omitempty"`
 }
 
+// AdminBoard defines model for AdminBoard.
+type AdminBoard struct {
+	Id          ResourceID      `json:"id"`
+	PostCount   int64           `json:"post_count"`
+	Slug        string          `json:"slug"`
+	State       AdminBoardState `json:"state"`
+	ThreadCount int64           `json:"thread_count"`
+	Title       string          `json:"title"`
+}
+
+// AdminBoardState defines model for AdminBoard.State.
+type AdminBoardState string
+
+// AdminBoardPage defines model for AdminBoardPage.
+type AdminBoardPage struct {
+	Boards []AdminBoard `json:"boards"`
+
+	// NextCursor Opaque signed cursor bound to collection and expiry
+	NextCursor *Cursor `json:"next_cursor,omitempty"`
+}
+
 // AdminBoardSummary defines model for AdminBoardSummary.
 type AdminBoardSummary struct {
 	Id    ResourceID `json:"id"`
 	Slug  string     `json:"slug"`
 	Title string     `json:"title"`
+}
+
+// AdminCreateBoard defines model for AdminCreateBoard.
+type AdminCreateBoard struct {
+	Reason string `json:"reason"`
+	Slug   string `json:"slug"`
+	Title  string `json:"title"`
 }
 
 // AdminPostContext defines model for AdminPostContext.
@@ -426,6 +467,9 @@ type ThreadPage struct {
 // Timestamp defines model for Timestamp.
 type Timestamp = time.Time
 
+// BoardID defines model for BoardID.
+type BoardID = ResourceID
+
 // BoardSlug defines model for BoardSlug.
 type BoardSlug = string
 
@@ -459,6 +503,16 @@ type AdminListBansParams struct {
 
 // AdminListBansParamsState defines parameters for AdminListBans.
 type AdminListBansParamsState string
+
+// AdminListBoardsParams defines parameters for AdminListBoards.
+type AdminListBoardsParams struct {
+	Cursor *Cursor                     `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *PageLimit                  `form:"limit,omitempty" json:"limit,omitempty"`
+	State  *AdminListBoardsParamsState `form:"state,omitempty" json:"state,omitempty"`
+}
+
+// AdminListBoardsParamsState defines parameters for AdminListBoards.
+type AdminListBoardsParamsState string
 
 // AdminGetPostContextParams defines parameters for AdminGetPostContext.
 type AdminGetPostContextParams struct {
@@ -506,6 +560,15 @@ type AdminCreateBanJSONRequestBody = CreateBan
 
 // AdminRevokeBanJSONRequestBody defines body for AdminRevokeBan for application/json ContentType.
 type AdminRevokeBanJSONRequestBody = Reason
+
+// AdminCreateBoardJSONRequestBody defines body for AdminCreateBoard for application/json ContentType.
+type AdminCreateBoardJSONRequestBody = AdminCreateBoard
+
+// AdminArchiveBoardJSONRequestBody defines body for AdminArchiveBoard for application/json ContentType.
+type AdminArchiveBoardJSONRequestBody = Reason
+
+// AdminRestoreBoardJSONRequestBody defines body for AdminRestoreBoard for application/json ContentType.
+type AdminRestoreBoardJSONRequestBody = Reason
 
 // AdminCreatePostBanJSONRequestBody defines body for AdminCreatePostBan for application/json ContentType.
 type AdminCreatePostBanJSONRequestBody = CreatePostBan
@@ -625,6 +688,24 @@ type ClientInterface interface {
 	AdminRevokeBanWithBody(ctx context.Context, banId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	AdminRevokeBan(ctx context.Context, banId ResourceID, body AdminRevokeBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminListBoards request
+	AdminListBoards(ctx context.Context, params *AdminListBoardsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminCreateBoardWithBody request with any body
+	AdminCreateBoardWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AdminCreateBoard(ctx context.Context, body AdminCreateBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminArchiveBoardWithBody request with any body
+	AdminArchiveBoardWithBody(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AdminArchiveBoard(ctx context.Context, boardId BoardID, body AdminArchiveBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminRestoreBoardWithBody request with any body
+	AdminRestoreBoardWithBody(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AdminRestoreBoard(ctx context.Context, boardId BoardID, body AdminRestoreBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminCreatePostBanWithBody request with any body
 	AdminCreatePostBanWithBody(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -782,6 +863,90 @@ func (c *Client) AdminRevokeBanWithBody(ctx context.Context, banId ResourceID, c
 
 func (c *Client) AdminRevokeBan(ctx context.Context, banId ResourceID, body AdminRevokeBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminRevokeBanRequest(c.Server, banId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminListBoards(ctx context.Context, params *AdminListBoardsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminListBoardsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminCreateBoardWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminCreateBoardRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminCreateBoard(ctx context.Context, body AdminCreateBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminCreateBoardRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminArchiveBoardWithBody(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminArchiveBoardRequestWithBody(c.Server, boardId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminArchiveBoard(ctx context.Context, boardId BoardID, body AdminArchiveBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminArchiveBoardRequest(c.Server, boardId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminRestoreBoardWithBody(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminRestoreBoardRequestWithBody(c.Server, boardId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminRestoreBoard(ctx context.Context, boardId BoardID, body AdminRestoreBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminRestoreBoardRequest(c.Server, boardId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1410,6 +1575,221 @@ func NewAdminRevokeBanRequestWithBody(server string, banId ResourceID, contentTy
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminListBoardsRequest generates requests for AdminListBoards
+func NewAdminListBoardsRequest(server string, params *AdminListBoardsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/boards")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "state", runtime.ParamLocationQuery, *params.State); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminCreateBoardRequest calls the generic AdminCreateBoard builder with application/json body
+func NewAdminCreateBoardRequest(server string, body AdminCreateBoardJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminCreateBoardRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAdminCreateBoardRequestWithBody generates requests for AdminCreateBoard with any type of body
+func NewAdminCreateBoardRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/boards")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminArchiveBoardRequest calls the generic AdminArchiveBoard builder with application/json body
+func NewAdminArchiveBoardRequest(server string, boardId BoardID, body AdminArchiveBoardJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminArchiveBoardRequestWithBody(server, boardId, "application/json", bodyReader)
+}
+
+// NewAdminArchiveBoardRequestWithBody generates requests for AdminArchiveBoard with any type of body
+func NewAdminArchiveBoardRequestWithBody(server string, boardId BoardID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "board_id", runtime.ParamLocationPath, boardId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/boards/%s/archive", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminRestoreBoardRequest calls the generic AdminRestoreBoard builder with application/json body
+func NewAdminRestoreBoardRequest(server string, boardId BoardID, body AdminRestoreBoardJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminRestoreBoardRequestWithBody(server, boardId, "application/json", bodyReader)
+}
+
+// NewAdminRestoreBoardRequestWithBody generates requests for AdminRestoreBoard with any type of body
+func NewAdminRestoreBoardRequestWithBody(server string, boardId BoardID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "board_id", runtime.ParamLocationPath, boardId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/boards/%s/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -2489,6 +2869,24 @@ type ClientWithResponsesInterface interface {
 
 	AdminRevokeBanWithResponse(ctx context.Context, banId ResourceID, body AdminRevokeBanJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRevokeBanResponse, error)
 
+	// AdminListBoardsWithResponse request
+	AdminListBoardsWithResponse(ctx context.Context, params *AdminListBoardsParams, reqEditors ...RequestEditorFn) (*AdminListBoardsResponse, error)
+
+	// AdminCreateBoardWithBodyWithResponse request with any body
+	AdminCreateBoardWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateBoardResponse, error)
+
+	AdminCreateBoardWithResponse(ctx context.Context, body AdminCreateBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateBoardResponse, error)
+
+	// AdminArchiveBoardWithBodyWithResponse request with any body
+	AdminArchiveBoardWithBodyWithResponse(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminArchiveBoardResponse, error)
+
+	AdminArchiveBoardWithResponse(ctx context.Context, boardId BoardID, body AdminArchiveBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminArchiveBoardResponse, error)
+
+	// AdminRestoreBoardWithBodyWithResponse request with any body
+	AdminRestoreBoardWithBodyWithResponse(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRestoreBoardResponse, error)
+
+	AdminRestoreBoardWithResponse(ctx context.Context, boardId BoardID, body AdminRestoreBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRestoreBoardResponse, error)
+
 	// AdminCreatePostBanWithBodyWithResponse request with any body
 	AdminCreatePostBanWithBodyWithResponse(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreatePostBanResponse, error)
 
@@ -2678,6 +3076,98 @@ func (r AdminRevokeBanResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AdminRevokeBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminListBoardsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminBoardPage
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminListBoardsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminListBoardsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminCreateBoardResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *AdminBoard
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminCreateBoardResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminCreateBoardResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminArchiveBoardResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminBoard
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminArchiveBoardResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminArchiveBoardResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminRestoreBoardResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminBoard
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminRestoreBoardResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminRestoreBoardResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3235,6 +3725,66 @@ func (c *ClientWithResponses) AdminRevokeBanWithResponse(ctx context.Context, ba
 	return ParseAdminRevokeBanResponse(rsp)
 }
 
+// AdminListBoardsWithResponse request returning *AdminListBoardsResponse
+func (c *ClientWithResponses) AdminListBoardsWithResponse(ctx context.Context, params *AdminListBoardsParams, reqEditors ...RequestEditorFn) (*AdminListBoardsResponse, error) {
+	rsp, err := c.AdminListBoards(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminListBoardsResponse(rsp)
+}
+
+// AdminCreateBoardWithBodyWithResponse request with arbitrary body returning *AdminCreateBoardResponse
+func (c *ClientWithResponses) AdminCreateBoardWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateBoardResponse, error) {
+	rsp, err := c.AdminCreateBoardWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminCreateBoardResponse(rsp)
+}
+
+func (c *ClientWithResponses) AdminCreateBoardWithResponse(ctx context.Context, body AdminCreateBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateBoardResponse, error) {
+	rsp, err := c.AdminCreateBoard(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminCreateBoardResponse(rsp)
+}
+
+// AdminArchiveBoardWithBodyWithResponse request with arbitrary body returning *AdminArchiveBoardResponse
+func (c *ClientWithResponses) AdminArchiveBoardWithBodyWithResponse(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminArchiveBoardResponse, error) {
+	rsp, err := c.AdminArchiveBoardWithBody(ctx, boardId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminArchiveBoardResponse(rsp)
+}
+
+func (c *ClientWithResponses) AdminArchiveBoardWithResponse(ctx context.Context, boardId BoardID, body AdminArchiveBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminArchiveBoardResponse, error) {
+	rsp, err := c.AdminArchiveBoard(ctx, boardId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminArchiveBoardResponse(rsp)
+}
+
+// AdminRestoreBoardWithBodyWithResponse request with arbitrary body returning *AdminRestoreBoardResponse
+func (c *ClientWithResponses) AdminRestoreBoardWithBodyWithResponse(ctx context.Context, boardId BoardID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRestoreBoardResponse, error) {
+	rsp, err := c.AdminRestoreBoardWithBody(ctx, boardId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminRestoreBoardResponse(rsp)
+}
+
+func (c *ClientWithResponses) AdminRestoreBoardWithResponse(ctx context.Context, boardId BoardID, body AdminRestoreBoardJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRestoreBoardResponse, error) {
+	rsp, err := c.AdminRestoreBoard(ctx, boardId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminRestoreBoardResponse(rsp)
+}
+
 // AdminCreatePostBanWithBodyWithResponse request with arbitrary body returning *AdminCreatePostBanResponse
 func (c *ClientWithResponses) AdminCreatePostBanWithBodyWithResponse(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreatePostBanResponse, error) {
 	rsp, err := c.AdminCreatePostBanWithBody(ctx, postId, contentType, body, reqEditors...)
@@ -3635,6 +4185,138 @@ func ParseAdminRevokeBanResponse(rsp *http.Response) (*AdminRevokeBanResponse, e
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminListBoardsResponse parses an HTTP response from a AdminListBoardsWithResponse call
+func ParseAdminListBoardsResponse(rsp *http.Response) (*AdminListBoardsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminListBoardsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminBoardPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminCreateBoardResponse parses an HTTP response from a AdminCreateBoardWithResponse call
+func ParseAdminCreateBoardResponse(rsp *http.Response) (*AdminCreateBoardResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminCreateBoardResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AdminBoard
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminArchiveBoardResponse parses an HTTP response from a AdminArchiveBoardWithResponse call
+func ParseAdminArchiveBoardResponse(rsp *http.Response) (*AdminArchiveBoardResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminArchiveBoardResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminBoard
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminRestoreBoardResponse parses an HTTP response from a AdminRestoreBoardWithResponse call
+func ParseAdminRestoreBoardResponse(rsp *http.Response) (*AdminRestoreBoardResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminRestoreBoardResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminBoard
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

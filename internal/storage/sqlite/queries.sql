@@ -17,9 +17,49 @@ SELECT id, slug, title, enabled, created_at
 FROM boards
 WHERE slug = sqlc.arg(slug);
 
+-- name: BoardByID :one
+SELECT id, slug, title, enabled, created_at
+FROM boards
+WHERE id = sqlc.arg(id);
+
+-- name: ListManagedBoards :many
+SELECT b.id, b.slug, b.title, b.enabled, b.created_at,
+       (SELECT count(*) FROM threads t WHERE t.board_id = b.id) AS thread_count,
+       (SELECT count(*) FROM posts p JOIN threads t ON t.id = p.thread_id WHERE t.board_id = b.id) AS post_count
+FROM boards b
+WHERE (sqlc.arg(before_id) = 0 OR b.id < sqlc.arg(before_id))
+  AND (sqlc.arg(board_state) = 'all'
+       OR (sqlc.arg(board_state) = 'active' AND b.enabled = 1)
+       OR (sqlc.arg(board_state) = 'archived' AND b.enabled = 0))
+ORDER BY b.id DESC
+LIMIT sqlc.arg(page_size);
+
 -- name: CreateBoard :exec
 INSERT INTO boards(id, slug, title, enabled, created_at)
 VALUES (sqlc.arg(id), sqlc.arg(slug), sqlc.arg(title), sqlc.arg(enabled), sqlc.arg(created_at));
+
+-- name: SetBoardEnabled :execrows
+UPDATE boards
+SET enabled = sqlc.arg(enabled)
+WHERE id = sqlc.arg(id) AND enabled = sqlc.arg(expected_enabled);
+
+-- name: ActiveBoardForThread :one
+SELECT b.id
+FROM boards b JOIN threads t ON t.board_id = b.id
+WHERE t.id = sqlc.arg(thread_id) AND b.enabled = 1;
+
+-- name: ActiveBoardForPost :one
+SELECT b.id
+FROM boards b JOIN threads t ON t.board_id = b.id JOIN posts p ON p.thread_id = t.id
+WHERE p.id = sqlc.arg(post_id) AND b.enabled = 1;
+
+-- name: ActiveBoardForAttachment :one
+SELECT b.id
+FROM boards b
+JOIN threads t ON t.board_id = b.id
+JOIN posts p ON p.thread_id = t.id
+JOIN attachments a ON a.id = p.attachment_id
+WHERE a.id = sqlc.arg(attachment_id) AND b.enabled = 1;
 
 -- name: ThreadByID :one
 SELECT id, board_id, status, created_at, bumped_at

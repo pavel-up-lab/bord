@@ -52,12 +52,18 @@ func (s *Service) Catalog(ctx context.Context, slug string, cursor *CatalogCurso
 	if err != nil {
 		return CatalogPage{}, err
 	}
+	if !b.Enabled {
+		return CatalogPage{}, domain.NewError(domain.CodeBoardNotFound, "slug", nil)
+	}
 	return s.store.ListThreads(ctx, b.ID, cursor, limit)
 }
 
 func (s *Service) Posts(ctx context.Context, threadID domain.ThreadID, after domain.PostID, limit int) (PostPage, error) {
 	if limit < 1 || limit > 200 {
 		return PostPage{}, domain.NewError(domain.CodeValidation, "limit", nil)
+	}
+	if err := s.store.RequireActiveBoardForThread(ctx, threadID); err != nil {
+		return PostPage{}, err
 	}
 	if _, err := s.store.ThreadByID(ctx, threadID); err != nil {
 		return PostPage{}, err
@@ -84,7 +90,7 @@ func (s *Service) CreateThread(ctx context.Context, in CreateThreadInput) (Creat
 			return err
 		}
 		if !b.Enabled {
-			return domain.NewError(domain.CodeConflict, "board", nil)
+			return domain.NewError(domain.CodeBoardNotFound, "board", nil)
 		}
 		threadID, err := s.nextThreadID(ctx)
 		if err != nil {
@@ -139,6 +145,9 @@ func (s *Service) CreateReply(ctx context.Context, in CreateReplyInput) (CreateR
 		if err := thread.RequireOpen(); err != nil {
 			return err
 		}
+		if err := s.store.RequireActiveBoardForThread(ctx, thread.ID); err != nil {
+			return err
+		}
 		postID, err := s.nextPostID(ctx)
 		if err != nil {
 			return err
@@ -177,6 +186,9 @@ func (s *Service) DeleteOwnPost(ctx context.Context, postID domain.PostID, delet
 		return domain.NewError(domain.CodeUnauthorized, "delete_token", nil)
 	}
 	return s.tx.WithinTransaction(ctx, func(ctx context.Context) error {
+		if err := s.store.RequireActiveBoardForPost(ctx, postID); err != nil {
+			return err
+		}
 		post, err := s.store.PostByID(ctx, postID)
 		if err != nil {
 			return err

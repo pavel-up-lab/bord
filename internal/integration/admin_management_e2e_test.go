@@ -65,6 +65,48 @@ func TestSeparateManagementListenerAdminWorkflow(t *testing.T) {
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("admin route exposed publicly: %d", response.StatusCode)
 	}
+	response = request(t, publicServer, http.MethodGet, "/admin/v1/boards", "", nil, map[string]string{"Authorization": "Bearer " + credential})
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("admin boards exposed publicly: %d", response.StatusCode)
+	}
+	_ = response.Body.Close()
+
+	adminHeaders := map[string]string{"Authorization": "Bearer " + credential}
+	response = requestJSON(t, managementServer, http.MethodPost, "/admin/v1/boards", map[string]string{"slug": "games", "title": "Games", "reason": "create games section"}, adminHeaders)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("board create=%d %s", response.StatusCode, read(response))
+	}
+	var managedBoard api.AdminBoard
+	decode(t, response, &managedBoard)
+	if managedBoard.Slug != "games" || managedBoard.State != "active" {
+		t.Fatalf("created board=%+v", managedBoard)
+	}
+	response = requestJSON(t, publicServer, http.MethodPost, "/api/v1/boards/games/threads", create, map[string]string{"Idempotency-Key": "admin-board-thread-1"})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("games thread create=%d %s", response.StatusCode, read(response))
+	}
+	var gamesCreated api.CreateResult
+	decode(t, response, &gamesCreated)
+	response = requestJSON(t, managementServer, http.MethodPost, "/admin/v1/boards/"+managedBoard.ID+"/archive", map[string]string{"reason": "archive games section"}, adminHeaders)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("board archive=%d %s", response.StatusCode, read(response))
+	}
+	decode(t, response, &managedBoard)
+	if managedBoard.State != "archived" || managedBoard.ThreadCount != 1 || managedBoard.PostCount != 1 {
+		t.Fatalf("archived board=%+v", managedBoard)
+	}
+	for _, path := range []string{"/api/v1/boards/games/threads", "/api/v1/threads/" + gamesCreated.ThreadID, "/api/v1/threads/" + gamesCreated.ThreadID + "/posts"} {
+		response = request(t, publicServer, http.MethodGet, path, "", nil, nil)
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("archived path %s=%d %s", path, response.StatusCode, read(response))
+		}
+		_ = response.Body.Close()
+	}
+	response = requestJSON(t, publicServer, http.MethodPost, "/api/v1/threads/"+gamesCreated.ThreadID+"/posts", create, map[string]string{"Idempotency-Key": "admin-board-reply-01"})
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("archived reply=%d %s", response.StatusCode, read(response))
+	}
+	_ = response.Body.Close()
 
 	client, err := adminclient.New(managementServer.URL, credential, managementServer.Client(), time.Second)
 	if err != nil {
@@ -74,6 +116,20 @@ func TestSeparateManagementListenerAdminWorkflow(t *testing.T) {
 	if err != nil || session.Role != "administrator" {
 		t.Fatalf("session=%#v err=%v", session, err)
 	}
+	archivedContext, err := client.PostContext(ctx, gamesCreated.PostID, nil, 10)
+	if err != nil || len(archivedContext.Posts) != 1 || archivedContext.Board.Slug != "games" {
+		t.Fatalf("archived management context=%#v err=%v", archivedContext, err)
+	}
+	response = requestJSON(t, managementServer, http.MethodPost, "/admin/v1/boards/"+managedBoard.ID+"/restore", map[string]string{"reason": "restore games section"}, adminHeaders)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("board restore=%d %s", response.StatusCode, read(response))
+	}
+	_ = response.Body.Close()
+	response = request(t, publicServer, http.MethodGet, "/api/v1/threads/"+gamesCreated.ThreadID, "", nil, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("restored thread=%d %s", response.StatusCode, read(response))
+	}
+	_ = response.Body.Close()
 	reports, err := client.Reports(ctx, nil, 10)
 	if err != nil || len(reports.Items) != 1 || reports.Items[0].PostId != created.PostID {
 		t.Fatalf("reports=%#v err=%v", reports, err)
@@ -102,6 +158,20 @@ func TestSeparateManagementListenerAdminWorkflow(t *testing.T) {
 	audit, err := client.Audit(ctx, nil, 50)
 	if err != nil || len(audit.Items) < 4 {
 		t.Fatalf("audit=%#v err=%v", audit, err)
+	}
+	boardAudit := map[string]bool{}
+	for _, entry := range audit.Items {
+		if entry.Action == "board.create" || entry.Action == "board.archive" || entry.Action == "board.restore" {
+			if entry.ActorId == nil || *entry.ActorId != "root" || entry.TargetId == nil || *entry.TargetId != managedBoard.ID || entry.Reason == nil || *entry.Reason == "" || entry.Outcome != "success" || entry.RequestId == "" {
+				t.Fatalf("unsafe or incomplete board audit: %#v", entry)
+			}
+			boardAudit[entry.Action] = true
+		}
+	}
+	for _, action := range []string{"board.create", "board.archive", "board.restore"} {
+		if !boardAudit[action] {
+			t.Errorf("missing %s audit", action)
+		}
 	}
 	ip, err := client.RevealIP(ctx, created.PostID, "confirmed reveal reason")
 	if err != nil || ip == "" {

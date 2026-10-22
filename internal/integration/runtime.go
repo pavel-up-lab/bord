@@ -109,7 +109,7 @@ func New(config Config) (*Runtime, error) {
 		_ = blobs.Close()
 		return nil, err
 	}
-	admin, err := newAdmin(config.DB, config.Clock, keyring, config.LookupKey, attachments)
+	admin, err := newAdmin(repo, config.Clock, keyring, config.LookupKey, attachments)
 	if err != nil {
 		_ = blobs.Close()
 		return nil, err
@@ -348,6 +348,9 @@ func (p Public) DeletePost(ctx context.Context, id, token string) error {
 	return p.Runtime.Board.DeleteOwnPost(ctx, domain.PostID(id), []byte(token))
 }
 func (p Public) ReportPost(ctx context.Context, id string, request api.ReportRequest) error {
+	if err := p.Runtime.Repo.RequireActiveBoardForPost(ctx, domain.PostID(id)); err != nil {
+		return err
+	}
 	sid := p.Runtime.Abuse.subjectID(ctx)
 	if sid == 0 {
 		return domain.NewError(domain.CodeInternal, "", nil)
@@ -455,6 +458,9 @@ func (r *attachmentRepo) ByID(ctx context.Context, id domain.AttachmentID) (atta
 	return r.get(ctx, id, false)
 }
 func (r *attachmentRepo) PublicByID(ctx context.Context, id domain.AttachmentID) (attachment.Record, error) {
+	if err := r.repo.RequireActiveBoardForAttachment(ctx, id); err != nil {
+		return attachment.Record{}, attachment.ErrNotFound
+	}
 	return r.get(ctx, id, true)
 }
 func (r *attachmentRepo) ModerationByID(ctx context.Context, id domain.AttachmentID) (attachment.Record, error) {

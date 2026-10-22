@@ -64,6 +64,10 @@ func NewRouter(config Config) http.Handler {
 	if config.Admin != nil {
 		mux.Handle("GET /admin/v1/reports", h.admin(http.HandlerFunc(h.adminListReports)))
 		mux.Handle("GET /admin/v1/session", h.admin(http.HandlerFunc(h.adminGetSession)))
+		mux.Handle("GET /admin/v1/boards", h.admin(http.HandlerFunc(h.adminListBoards)))
+		mux.Handle("POST /admin/v1/boards", h.admin(http.HandlerFunc(h.adminCreateBoard)))
+		mux.Handle("POST /admin/v1/boards/{board_id}/archive", h.admin(http.HandlerFunc(h.adminArchiveBoard)))
+		mux.Handle("POST /admin/v1/boards/{board_id}/restore", h.admin(http.HandlerFunc(h.adminRestoreBoard)))
 		mux.Handle("GET /admin/v1/posts/{post_id}/context", h.admin(http.HandlerFunc(h.adminGetPostContext)))
 		mux.Handle("GET /admin/v1/attachments/{attachment_id}", h.admin(http.HandlerFunc(h.adminGetAttachment)))
 		mux.Handle("PUT /admin/v1/posts/{post_id}/visibility", h.admin(http.HandlerFunc(h.adminSetVisibility)))

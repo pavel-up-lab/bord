@@ -10,16 +10,16 @@ import (
 func TestAdminStateIsAtomicPrivateAndContainsNoCredential(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config", "admin.json")
 	store := NewStateStore(path)
-	first := State{Management: "http://127.0.0.1:8081", Theme: "classic", View: "reports", InlineMode: "auto"}
+	first := State{Management: "http://127.0.0.1:8081", Server: "https://bord.example", Theme: "classic", View: "reports", Mode: "user", InlineMode: "auto"}
 	if err := store.Save(first); err != nil {
 		t.Fatal(err)
 	}
-	second := State{Management: "http://127.0.0.1:9081", Theme: "green", View: "audit", InlineMode: "off"}
+	second := State{Management: "http://127.0.0.1:9081", Server: "https://public.example", Theme: "green", View: "audit", Mode: "admin", InlineMode: "off"}
 	if err := store.Save(second); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.Load()
-	if err != nil || loaded.Management != second.Management || loaded.Theme != second.Theme || loaded.View != second.View {
+	if err != nil || loaded.Management != second.Management || loaded.Server != second.Server || loaded.Theme != second.Theme || loaded.View != second.View || loaded.Mode != second.Mode {
 		t.Fatalf("loaded=%#v err=%v", loaded, err)
 	}
 	info, err := os.Stat(path)

@@ -19,6 +19,7 @@ const (
 	ReportsScreen Screen = iota
 	BansScreen
 	AuditScreen
+	BoardsScreen
 	HelpScreen
 )
 
@@ -36,6 +37,10 @@ type Service interface {
 	Attachment(context.Context, string) ([]byte, string, error)
 	Bans(context.Context, string, *string, int) (adminclient.Page[adminclient.BanRecord], error)
 	Audit(context.Context, *string, int) (adminclient.Page[adminclient.AuditEntry], error)
+	Boards(context.Context, string, *string, int) (adminclient.Page[adminclient.Board], error)
+	CreateBoard(context.Context, adminclient.CreateBoardRequest) (adminclient.Board, error)
+	ArchiveBoard(context.Context, string, string) (adminclient.Board, error)
+	RestoreBoard(context.Context, string, string) (adminclient.Board, error)
 	SetVisibility(context.Context, string, bool, string) error
 	CloseThread(context.Context, string, string) error
 	CreatePostBan(context.Context, string, adminclient.PostBanRequest) (adminclient.Ban, error)
@@ -58,18 +63,19 @@ type Model struct {
 	width, height    int
 	theme            terminalui.ThemeName
 	themes           terminalui.ThemeCatalog
-	themeMenu        bool
-	themeIndex       int
+	themePicker      terminalui.ThemePicker
 
-	session                                               adminclient.Session
-	reports                                               []adminclient.Report
-	context                                               adminclient.PostContext
-	bans                                                  []adminclient.BanRecord
-	audit                                                 []adminclient.AuditEntry
-	reportIndex, postIndex, banIndex, auditIndex          int
-	listScroll, contextScroll                             int
-	reportsCursor, contextCursor, bansCursor, auditCursor *string
-	banState                                              string
+	session                                                             adminclient.Session
+	reports                                                             []adminclient.Report
+	context                                                             adminclient.PostContext
+	bans                                                                []adminclient.BanRecord
+	audit                                                               []adminclient.AuditEntry
+	boards                                                              []adminclient.Board
+	reportIndex, postIndex, banIndex, auditIndex, boardIndex            int
+	listScroll, contextScroll                                           int
+	reportsCursor, contextCursor, bansCursor, auditCursor, boardsCursor *string
+	banState                                                            string
+	boardState                                                          string
 
 	requestID    uint64
 	loading      bool
@@ -109,6 +115,12 @@ type auditMsg struct {
 	append bool
 	err    error
 }
+type boardsMsg struct {
+	id     uint64
+	page   adminclient.Page[adminclient.Board]
+	append bool
+	err    error
+}
 type mutationMsg struct {
 	id    uint64
 	kind  modalKind
@@ -129,7 +141,7 @@ func NewModel(ctx context.Context, service Service) Model {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	return Model{ctx: ctx, cancel: cancel, service: service, screen: ReportsScreen, previous: ReportsScreen, focus: ListFocus, theme: terminalui.ThemeClassic, themes: terminalui.DiscoverThemes(), requestID: 1, loading: true, banState: "active"}
+	return Model{ctx: ctx, cancel: cancel, service: service, screen: ReportsScreen, previous: ReportsScreen, focus: ListFocus, theme: terminalui.ThemeClassic, themes: terminalui.DiscoverThemes(), requestID: 1, loading: true, banState: "active", boardState: "all"}
 }
 
 func (m Model) WithThemes(catalog terminalui.ThemeCatalog, selected terminalui.ThemeName) Model {
@@ -155,6 +167,8 @@ func (m Model) Init() tea.Cmd {
 		return m.bansCommand(m.requestID, m.ctx, nil, false)
 	case AuditScreen:
 		return m.auditCommand(m.requestID, m.ctx, nil, false)
+	case BoardsScreen:
+		return m.boardsCommand(m.requestID, m.ctx, nil, false)
 	default:
 		return m.reportsCommand(m.requestID, m.ctx, nil, false)
 	}
@@ -168,15 +182,18 @@ func (m Model) Close() {
 		m.cancel()
 	}
 }
-func (m Model) Screen() Screen       { return m.screen }
-func (m Model) ThemeSetting() string { return m.themes.Setting(m.theme) }
-func (m Model) Role() string         { return string(m.session.Role) }
+func (m Model) Screen() Screen              { return m.screen }
+func (m Model) ThemeSetting() string        { return m.themes.Setting(m.theme) }
+func (m Model) Theme() terminalui.ThemeName { return m.theme }
+func (m Model) Role() string                { return string(m.session.Role) }
 func (m Model) ViewSetting() string {
 	switch m.screen {
 	case BansScreen:
 		return "bans"
 	case AuditScreen:
 		return "audit"
+	case BoardsScreen:
+		return "boards"
 	default:
 		return "reports"
 	}
@@ -188,6 +205,8 @@ func (m Model) WithScreen(value string) Model {
 		m.screen = BansScreen
 	case "audit":
 		m.screen = AuditScreen
+	case "boards":
+		m.screen = BoardsScreen
 	default:
 		m.screen = ReportsScreen
 	}
@@ -265,6 +284,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.audit = mergeBy(m.audit, msg.page.Items, msg.append, func(item adminclient.AuditEntry) string { return item.Id })
 			m.auditCursor = msg.page.NextCursor
 			m.auditIndex = clamp(m.auditIndex, 0, max(0, len(m.audit)-1))
+		}
+		return m, nil
+	case boardsMsg:
+		if msg.id != m.requestID {
+			return m, nil
+		}
+		m.loading, m.err = false, msg.err
+		if msg.err == nil {
+			m.boards = mergeBy(m.boards, msg.page.Items, msg.append, func(item adminclient.Board) string { return item.Id })
+			m.boardsCursor = msg.page.NextCursor
+			m.boardIndex = clamp(m.boardIndex, 0, max(0, len(m.boards)-1))
 		}
 		return m, nil
 	case mutationMsg:
@@ -352,6 +382,14 @@ func (m Model) startScreenLoad(appendPage bool) (tea.Model, tea.Cmd) {
 			m.auditCursor = nil
 		}
 		return m, m.auditCommand(id, ctx, cursor, appendPage)
+	case BoardsScreen:
+		var cursor *string
+		if appendPage {
+			cursor = m.boardsCursor
+		} else {
+			m.boardsCursor = nil
+		}
+		return m, m.boardsCommand(id, ctx, cursor, appendPage)
 	default:
 		m.loading = false
 		return m, nil
@@ -400,6 +438,12 @@ func (m Model) auditCommand(id uint64, ctx context.Context, cursor *string, appe
 		return auditMsg{id, page, appendPage, err}
 	}
 }
+func (m Model) boardsCommand(id uint64, ctx context.Context, cursor *string, appendPage bool) tea.Cmd {
+	return func() tea.Msg {
+		page, err := m.service.Boards(ctx, m.boardState, cursor, 50)
+		return boardsMsg{id, page, appendPage, err}
+	}
+}
 
 func mergeBy[T any](old, incoming []T, appendPage bool, id func(T) string) []T {
 	if !appendPage {
@@ -435,7 +479,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateModal(msg)
 	}
 	key := msg.String()
-	if m.themeMenu {
+	if m.themePicker.IsOpen() {
 		return m.updateThemeMenu(key)
 	}
 	switch key {
@@ -446,7 +490,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.switchScreen(HelpScreen)
 		return m, nil
 	case "f2", "t":
-		m.themeMenu = true
+		m.themePicker.Open(m.themes, m.theme, m.height)
 		return m, nil
 	case "1":
 		return m.selectScreen(ReportsScreen)
@@ -454,6 +498,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.selectScreen(BansScreen)
 	case "3":
 		return m.selectScreen(AuditScreen)
+	case "4":
+		return m.selectScreen(BoardsScreen)
 	case "esc":
 		if m.screen == HelpScreen {
 			return m.selectScreen(m.previous)
@@ -486,7 +532,12 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "h":
 		return m.openVisibilityModal(false)
 	case "u":
+		if m.screen == BoardsScreen {
+			return m.openBoardStateModal(true)
+		}
 		return m.openVisibilityModal(true)
+	case "d":
+		return m.openBoardStateModal(false)
 	case "c":
 		return m.openCloseModal()
 	case "b":
@@ -497,12 +548,25 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openRevealModal()
 	case "a":
 		return m.openAttachment()
+	case "n":
+		return m.openCreateBoardModal()
 	case "f6":
 		if m.screen == BansScreen {
 			if m.banState == "active" {
 				m.banState = "history"
 			} else {
 				m.banState = "active"
+			}
+			return m.startScreenLoad(false)
+		}
+		if m.screen == BoardsScreen {
+			switch m.boardState {
+			case "all":
+				m.boardState = "active"
+			case "active":
+				m.boardState = "archived"
+			default:
+				m.boardState = "all"
 			}
 			return m.startScreenLoad(false)
 		}
@@ -521,6 +585,9 @@ func (m *Model) switchScreen(screen Screen) {
 }
 
 func (m Model) selectScreen(screen Screen) (tea.Model, tea.Cmd) {
+	if screen == BoardsScreen && string(m.session.Role) != "administrator" {
+		return m, nil
+	}
 	m.switchScreen(screen)
 	if screen == HelpScreen {
 		return m, nil
@@ -540,6 +607,8 @@ func (m *Model) moveSelection(delta int) {
 		m.banIndex = clamp(m.banIndex+delta, 0, max(0, len(m.bans)-1))
 	case AuditScreen:
 		m.auditIndex = clamp(m.auditIndex+delta, 0, max(0, len(m.audit)-1))
+	case BoardsScreen:
+		m.boardIndex = clamp(m.boardIndex+delta, 0, max(0, len(m.boards)-1))
 	}
 }
 
@@ -562,6 +631,8 @@ func (m Model) activateSelection() (tea.Model, tea.Cmd) {
 		cursor = m.bansCursor
 	case AuditScreen:
 		cursor = m.auditCursor
+	case BoardsScreen:
+		cursor = m.boardsCursor
 	}
 	if cursor != nil {
 		return m.startScreenLoad(true)
@@ -570,19 +641,8 @@ func (m Model) activateSelection() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateThemeMenu(key string) (tea.Model, tea.Cmd) {
-	options := m.themes.Options()
-	switch key {
-	case "esc", "f2", "t":
-		m.themeMenu = false
-	case "up", "k":
-		m.themeIndex = clamp(m.themeIndex-1, 0, max(0, len(options)-1))
-	case "down", "j":
-		m.themeIndex = clamp(m.themeIndex+1, 0, max(0, len(options)-1))
-	case "enter":
-		if len(options) > 0 {
-			m.theme = options[m.themeIndex].Name
-		}
-		m.themeMenu = false
+	if selected, ok := m.themePicker.HandleKey(key, m.themes, m.height); ok {
+		m.theme = selected
 	}
 	return m, nil
 }

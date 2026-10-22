@@ -3,9 +3,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"bord/migrations"
 )
 
 func TestMigrateTemporaryDatabase(t *testing.T) {
@@ -26,6 +29,55 @@ func TestMigrateTemporaryDatabase(t *testing.T) {
 	}
 	if err := Migrate(context.Background(), db); err != nil {
 		t.Fatalf("migration is not idempotent: %v", err)
+	}
+}
+
+func TestBoardLifecycleSchemaCompatibleFromEverySupportedVersion(t *testing.T) {
+	ctx := context.Background()
+	for version := 0; version <= MaxSchemaVersion; version++ {
+		t.Run(fmt.Sprintf("version-%d", version), func(t *testing.T) {
+			db, err := Open(filepath.Join(t.TempDir(), "compat.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err = db.Exec(`CREATE TABLE schema_migrations (version INTEGER NOT NULL); INSERT INTO schema_migrations VALUES (0)`); err != nil {
+				t.Fatal(err)
+			}
+			for current := 1; current <= version; current++ {
+				name := map[int]string{1: "000001_foundation.up.sql", 2: "000002_board_storage.up.sql", 3: "000003_integration_adapters.up.sql"}[current]
+				script, readErr := migrations.Files.ReadFile(name)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if _, err = db.Exec(string(script)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = db.Exec(`UPDATE schema_migrations SET version=?`, current); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if version >= 2 {
+				if _, err = db.Exec(`INSERT INTO boards(id,slug,title,enabled,created_at) VALUES(1,'archive','Archive',0,'2026-01-01T00:00:00Z')`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = Migrate(ctx, db); err != nil {
+				t.Fatal(err)
+			}
+			if err = Ready(ctx, db); err != nil {
+				t.Fatal(err)
+			}
+			if version < 2 {
+				if _, err = db.Exec(`INSERT INTO boards(id,slug,title,enabled,created_at) VALUES(1,'archive','Archive',0,'2026-01-01T00:00:00Z')`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var enabled int
+			if err = db.QueryRow(`SELECT enabled FROM boards WHERE slug='archive'`).Scan(&enabled); err != nil || enabled != 0 {
+				t.Fatalf("archived lifecycle state enabled=%d err=%v", enabled, err)
+			}
+		})
 	}
 }
 

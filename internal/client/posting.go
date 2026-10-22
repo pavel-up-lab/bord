@@ -75,6 +75,29 @@ func (p *PostingAPI) CreatePost(ctx context.Context, threadID, idempotencyKey st
 	return result, nil
 }
 
+// DeleteOwnPost uses only the anonymous capability kept in the ordinary user
+// store. A management credential is neither accepted nor available here.
+func (p *PostingAPI) DeleteOwnPost(ctx context.Context, postID string) error {
+	p.mu.Lock()
+	secret := p.state.DeleteSecrets[postID]
+	p.mu.Unlock()
+	if secret == "" {
+		return errors.New("delete capability unavailable")
+	}
+	if err := p.API.DeletePost(ctx, postID, secret); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	candidate := cloneState(*p.state)
+	delete(candidate.DeleteSecrets, postID)
+	if err := p.store.Save(candidate); err != nil {
+		return err
+	}
+	*p.state = candidate
+	return nil
+}
+
 func (p *PostingAPI) ensureState() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

@@ -10,9 +10,12 @@ type AuthorID string
 func (id AuthorID) Valid() bool { return strings.TrimSpace(string(id)) != "" }
 
 type Board struct {
-	ID      BoardID
-	Slug    string
-	Title   string
+	ID    BoardID
+	Slug  string
+	Title string
+	// Enabled is the lifecycle source of truth: false means archived. Archived
+	// boards retain all related content but are treated as absent by public use
+	// cases; private management use cases may still inspect and restore them.
 	Enabled bool
 }
 

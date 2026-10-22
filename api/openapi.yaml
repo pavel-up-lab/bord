@@ -149,6 +149,46 @@ paths:
       responses:
         '200': {description: Current administrative identity, content: {application/json: {schema: {$ref: '#/components/schemas/AdminSession'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /admin/v1/boards:
+    get:
+      operationId: adminListBoards
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/PageLimit'}
+        - {name: state, in: query, schema: {type: string, enum: [active, archived, all], default: all}}
+      responses:
+        '200': {description: Active and archived board lifecycle records, content: {application/json: {schema: {$ref: '#/components/schemas/AdminBoardPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: adminCreateBoard
+      tags: [admin]
+      security: [{adminBearer: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AdminCreateBoard'}}}}
+      responses:
+        '201': {description: Created active board, content: {application/json: {schema: {$ref: '#/components/schemas/AdminBoard'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/boards/{board_id}/archive:
+    post:
+      operationId: adminArchiveBoard
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/BoardID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses:
+        '200': {description: Archived board, content: {application/json: {schema: {$ref: '#/components/schemas/AdminBoard'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/boards/{board_id}/restore:
+    post:
+      operationId: adminRestoreBoard
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/BoardID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses:
+        '200': {description: Restored active board, content: {application/json: {schema: {$ref: '#/components/schemas/AdminBoard'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /admin/v1/posts/{post_id}/context:
     get:
       operationId: adminGetPostContext
@@ -242,6 +282,7 @@ components:
     adminBearer: {type: http, scheme: bearer}
   parameters:
     BoardSlug: {name: slug, in: path, required: true, schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}}
+    BoardID: {name: board_id, in: path, required: true, schema: {$ref: '#/components/schemas/ResourceID'}}
     ThreadID: {name: thread_id, in: path, required: true, schema: {$ref: '#/components/schemas/ThreadID'}}
     PostID: {name: post_id, in: path, required: true, schema: {$ref: '#/components/schemas/PostID'}}
     AttachmentID: {name: attachment_id, in: path, required: true, schema: {$ref: '#/components/schemas/AttachmentID'}}
@@ -278,6 +319,9 @@ components:
     Report: {type: object, additionalProperties: false, required: [id, post_id, reason, created_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, post_id: {$ref: '#/components/schemas/PostID'}, reason: {type: string}, created_at: {$ref: '#/components/schemas/Timestamp'}}}
     AdminRole: {type: string, enum: [reports, moderator, administrator]}
     AdminSession: {type: object, additionalProperties: false, required: [id, role, expires_at], properties: {id: {type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}, role: {$ref: '#/components/schemas/AdminRole'}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
+    AdminBoard: {type: object, additionalProperties: false, required: [id, slug, title, state, thread_count, post_count], properties: {id: {$ref: '#/components/schemas/ResourceID'}, slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}, title: {type: string, minLength: 1, maxLength: 100}, state: {type: string, enum: [active, archived]}, thread_count: {type: integer, format: int64, minimum: 0}, post_count: {type: integer, format: int64, minimum: 0}}}
+    AdminBoardPage: {type: object, additionalProperties: false, required: [boards], properties: {boards: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AdminBoard'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
+    AdminCreateBoard: {type: object, additionalProperties: false, required: [slug, title, reason], properties: {slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}, title: {type: string, minLength: 1, maxLength: 100}, reason: {type: string, minLength: 3, maxLength: 500}}}
     AdminBoardSummary: {type: object, additionalProperties: false, required: [id, slug, title], properties: {id: {$ref: '#/components/schemas/ResourceID'}, slug: {type: string, maxLength: 32}, title: {type: string, maxLength: 100}}}
     AdminThreadSummary: {type: object, additionalProperties: false, required: [id, closed], properties: {id: {$ref: '#/components/schemas/ThreadID'}, closed: {type: boolean}}}
     AdminPostContext: {type: object, additionalProperties: false, required: [board, thread, target_post_id, posts], properties: {board: {$ref: '#/components/schemas/AdminBoardSummary'}, thread: {$ref: '#/components/schemas/AdminThreadSummary'}, target_post_id: {$ref: '#/components/schemas/PostID'}, posts: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Post'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
