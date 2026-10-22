@@ -11,6 +11,7 @@ import (
 
 	"bord/api/generated"
 	"bord/internal/api"
+	"bord/internal/security"
 )
 
 type publicPort struct{}
@@ -57,9 +58,26 @@ func (abusePort) Challenge(context.Context, string) (api.Challenge, error) {
 
 type adminPort struct{}
 
-func (adminPort) Authenticate(context.Context, string, string) error { return nil }
+func (adminPort) Authenticate(context.Context, string, string) (api.AdminPrincipal, error) {
+	return api.AdminPrincipal{ID: "contract", Role: security.RoleAdministrator, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
 func (adminPort) ListReports(context.Context, string, int) (api.Page[api.AdminReport], error) {
 	return api.Page[api.AdminReport]{Items: []api.AdminReport{}}, nil
+}
+func (adminPort) GetPostContext(context.Context, string, string, int) (api.AdminPostContext, error) {
+	return api.AdminPostContext{Board: api.AdminBoardSummary{ID: "board_01", Slug: "test", Title: "Test"}, Thread: api.AdminThreadSummary{ID: "thread_1"}, TargetPost: "post_001", Posts: []api.Post{}}, nil
+}
+func (adminPort) OpenAttachment(context.Context, string) (io.ReadCloser, api.Attachment, error) {
+	return io.NopCloser(strings.NewReader("png")), attachment(), nil
+}
+func (adminPort) ListBans(context.Context, string, string, int) (api.Page[api.AdminBan], error) {
+	return api.Page[api.AdminBan]{Items: []api.AdminBan{}}, nil
+}
+func (adminPort) ListAudit(context.Context, string, int) (api.Page[api.AdminAuditEntry], error) {
+	return api.Page[api.AdminAuditEntry]{Items: []api.AdminAuditEntry{}}, nil
+}
+func (adminPort) CreatePostBan(context.Context, string, api.PostBanRequest, string) (api.Ban, error) {
+	return api.Ban{ID: "ban_0002", ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 func (adminPort) SetPostVisibility(context.Context, string, bool, string, string) error { return nil }
 func (adminPort) CloseThread(context.Context, string, string, string) error             { return nil }
@@ -127,6 +145,24 @@ func TestGeneratedClientAgainstHTTPAdapter(t *testing.T) {
 	assertCall(t, func() (*generated.AdminListReportsResponse, error) {
 		return client.AdminListReportsWithResponse(context.Background(), &generated.AdminListReportsParams{})
 	}, 200)
+	assertCall(t, func() (*generated.AdminGetSessionResponse, error) {
+		return client.AdminGetSessionWithResponse(context.Background())
+	}, 200)
+	assertCall(t, func() (*generated.AdminGetPostContextResponse, error) {
+		return client.AdminGetPostContextWithResponse(context.Background(), "post_001", &generated.AdminGetPostContextParams{})
+	}, 200)
+	assertCall(t, func() (*generated.AdminGetAttachmentResponse, error) {
+		return client.AdminGetAttachmentWithResponse(context.Background(), "attach_1")
+	}, 200)
+	assertCall(t, func() (*generated.AdminListBansResponse, error) {
+		return client.AdminListBansWithResponse(context.Background(), &generated.AdminListBansParams{})
+	}, 200)
+	assertCall(t, func() (*generated.AdminListAuditResponse, error) {
+		return client.AdminListAuditWithResponse(context.Background(), &generated.AdminListAuditParams{})
+	}, 200)
+	assertCall(t, func() (*generated.AdminCreatePostBanResponse, error) {
+		return client.AdminCreatePostBanWithResponse(context.Background(), "post_001", generated.CreatePostBan{Operations: []generated.CreatePostBanOperations{generated.CreatePostBanOperationsCreatePost}, ExpiresAt: time.Now().Add(time.Hour), Reason: "contract reason"})
+	}, 201)
 	assertCall(t, func() (*generated.AdminSetPostVisibilityResponse, error) {
 		return client.AdminSetPostVisibilityWithResponse(context.Background(), "post_001", generated.SetVisibility{Visible: false, Reason: "contract reason"})
 	}, 204)
@@ -134,7 +170,7 @@ func TestGeneratedClientAgainstHTTPAdapter(t *testing.T) {
 		return client.AdminCloseThreadWithResponse(context.Background(), "thread_1", generated.Reason{Reason: "contract reason"})
 	}, 204)
 	assertCall(t, func() (*generated.AdminCreateBanResponse, error) {
-		return client.AdminCreateBanWithResponse(context.Background(), generated.CreateBan{SubjectType: generated.Lookup, Subject: "subject", Operations: []string{"write"}, ExpiresAt: time.Now().Add(time.Hour), Reason: "contract reason"})
+		return client.AdminCreateBanWithResponse(context.Background(), generated.CreateBan{SubjectType: generated.CreateBanSubjectTypeLookup, Subject: "subject", Operations: []string{"write"}, ExpiresAt: time.Now().Add(time.Hour), Reason: "contract reason"})
 	}, 201)
 	assertCall(t, func() (*generated.AdminRevokeBanResponse, error) {
 		return client.AdminRevokeBanWithResponse(context.Background(), "ban_0001", generated.Reason{Reason: "contract reason"})

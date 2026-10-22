@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 
 	"bord/api/generated"
 	"bord/internal/client"
+	"bord/internal/terminalui"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -194,7 +194,7 @@ func (m Model) WithAttachmentViewer(mode InlineMode, cache *client.Cache) Model 
 
 // WithTheme selects a validated presentation theme.
 func (m Model) WithTheme(name ThemeName) Model {
-	if _, ok := m.themes.palettes[name]; ok {
+	if m.themes.Has(name) {
 		m.theme = name
 	}
 	return m
@@ -202,7 +202,7 @@ func (m Model) WithTheme(name ThemeName) Model {
 
 // WithThemes installs the discovered theme catalog and selects one palette.
 func (m Model) WithThemes(catalog ThemeCatalog, name ThemeName) Model {
-	if len(catalog.palettes) == 0 {
+	if len(catalog.Options()) == 0 {
 		catalog = DiscoverThemes()
 	}
 	m.themes = catalog
@@ -766,29 +766,11 @@ func (m Model) loadAttachment(meta generated.Attachment) tea.Cmd {
 		if err != nil {
 			return attachmentLoadedMsg{id: id, err: err}
 		}
-		mediaType, _, err := mime.ParseMediaType(responseType)
-		if err != nil || mediaType != string(meta.MediaType) || (mediaType != "image/jpeg" && mediaType != "image/png") {
-			return attachmentLoadedMsg{id: id, err: errors.New("тип загруженного вложения не совпадает")}
-		}
-		if meta.Size < 0 || int64(len(body)) != meta.Size {
-			return attachmentLoadedMsg{id: id, err: errors.New("размер загруженного вложения не совпадает")}
-		}
-		if m.attachmentCache == nil {
-			return attachmentLoadedMsg{id: id, err: errors.New("кэш вложений недоступен")}
-		}
-		path, err := m.attachmentCache.PutImage(id, meta.Sha256, mediaType, body)
+		prepared, err := terminalui.VerifyAndCacheImage(m.attachmentCache, m.attachmentRenderer, terminalui.ImageMetadata{ID: id, SHA256: meta.Sha256, MediaType: string(meta.MediaType), Size: meta.Size}, body, responseType)
 		if err != nil {
 			return attachmentLoadedMsg{id: id, err: err}
 		}
-		var inline []byte
-		warning := ""
-		if m.attachmentRenderer.Available() {
-			inline, err = PrepareKittyImage(body, mediaType)
-			if err != nil {
-				warning = "Inline-показ недоступен: " + err.Error()
-			}
-		}
-		return attachmentLoadedMsg{id: id, path: path, data: inline, warning: warning}
+		return attachmentLoadedMsg{id: id, path: prepared.Path, data: prepared.Inline, warning: prepared.Warning}
 	}
 }
 
@@ -810,9 +792,9 @@ func (m Model) openAttachment() tea.Cmd {
 
 func (m Model) viewAttachmentInline() tea.Cmd {
 	viewer := &kittyViewerCommand{
-		data:    m.attachmentData,
-		columns: max(1, m.width-2),
-		rows:    max(1, m.height-4),
+		Data:    m.attachmentData,
+		Columns: max(1, m.width-2),
+		Rows:    max(1, m.height-4),
 	}
 	return tea.Exec(viewer, func(err error) tea.Msg {
 		if err != nil {
@@ -853,7 +835,7 @@ func (m *Model) watchEvents() tea.Cmd {
 
 func (m Model) View() string {
 	w, h := max(1, m.width), max(1, m.height)
-	colors := m.themes.palette(m.theme)
+	colors := m.themes.Palette(m.theme)
 	lines := make([]string, 0, h)
 	lines = append(lines, m.topBar(colors, w))
 	workspaceHeight := max(0, h-3)
@@ -867,7 +849,7 @@ func (m Model) View() string {
 		lines = append(lines, m.commandBar(colors, w))
 	}
 	for len(lines) < h {
-		lines = append(lines, paint(colors.background, colors.foreground, "", w))
+		lines = append(lines, paint(colors.Background, colors.Foreground, "", w))
 	}
 	if m.themeMenu {
 		lines = m.overlayThemeMenu(lines, colors)
@@ -928,11 +910,7 @@ func (m Model) statusText() string {
 func (m Model) topBar(t theme, width int) string {
 	left := m.topBarLeft()
 	right := " " + m.contentTitle() + " "
-	space := width - textWidth(left) - textWidth(right)
-	if space < 1 {
-		return paint(t.barBackground, t.barForeground, left, width)
-	}
-	return paint(t.barBackground, t.barForeground, left+strings.Repeat(" ", space)+right, width)
+	return terminalui.TopBar(t, left, right, width)
 }
 
 func (m Model) topBarLeft() string {
@@ -944,7 +922,7 @@ func (m Model) topBarLeft() string {
 }
 
 func (m Model) themeControlLabel() string {
-	label := m.themes.labels[m.theme]
+	label := m.themes.Label(m.theme)
 	if label == "" {
 		label = string(m.theme)
 	}
@@ -1026,20 +1004,20 @@ func (m Model) overlayThemeMenu(lines []string, t theme) []string {
 		return lines
 	}
 	x, width, visible := m.themeMenuGeometry()
-	menu := []string{paint(t.barBackground, t.barForeground, "┌"+strings.Repeat("─", max(0, width-2))+"┐", width)}
+	menu := []string{paint(t.BarBackground, t.BarForeground, "┌"+strings.Repeat("─", max(0, width-2))+"┐", width)}
 	end := minInt(len(options), m.themeScroll+visible)
 	for i := m.themeScroll; i < end; i++ {
 		prefix := "  "
 		if i == m.themeIndex {
 			prefix = "> "
 		}
-		bg, fg := t.barBackground, t.barForeground
+		bg, fg := t.BarBackground, t.BarForeground
 		if i == m.themeIndex {
-			bg, fg = t.selectionBackground, t.selection
+			bg, fg = t.SelectionBackground, t.Selection
 		}
-		menu = append(menu, paint(bg, fg, "│"+prefix+SanitizeTerminalText(options[i].Label), width-1)+paint(t.barBackground, t.barForeground, "│", 1))
+		menu = append(menu, paint(bg, fg, "│"+prefix+SanitizeTerminalText(options[i].Label), width-1)+paint(t.BarBackground, t.BarForeground, "│", 1))
 	}
-	menu = append(menu, paint(t.barBackground, t.barForeground, "└"+strings.Repeat("─", max(0, width-2))+"┘", width))
+	menu = append(menu, paint(t.BarBackground, t.BarForeground, "└"+strings.Repeat("─", max(0, width-2))+"┘", width))
 	for i, overlay := range menu {
 		y := i + 1
 		if y >= len(lines) {
@@ -1093,9 +1071,9 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 	if height <= 0 {
 		return nil
 	}
-	border := t.muted
+	border := t.Muted
 	if active {
-		border = t.accent
+		border = t.Accent
 	}
 	if width < 2 || height < 2 {
 		lines := make([]string, height)
@@ -1104,22 +1082,22 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 			if i == 0 {
 				value = title
 			}
-			lines[i] = paint(t.background, t.foreground, value, width)
+			lines[i] = paint(t.Background, t.Foreground, value, width)
 		}
 		return lines
 	}
 	inner := width - 2
-	lines := t.lines
-	if lines.horizontal == "" {
+	lines := t.Lines
+	if lines.Horizontal == "" {
 		lines = doubleLines
 	}
-	topText := lines.horizontal + " " + SanitizeTerminalText(title) + " "
-	fill := []rune(lines.horizontal)[0]
-	top := paint(t.background, border, lines.leftTop+fit(topText, inner, fill)+lines.rightTop, width)
-	bottom := paint(t.background, border, lines.leftBottom+strings.Repeat(lines.horizontal, inner)+lines.rightBottom, width)
+	topText := lines.Horizontal + " " + SanitizeTerminalText(title) + " "
+	fill := []rune(lines.Horizontal)[0]
+	top := paint(t.Background, border, lines.LeftTop+fit(topText, inner, fill)+lines.RightTop, width)
+	bottom := paint(t.Background, border, lines.LeftBottom+strings.Repeat(lines.Horizontal, inner)+lines.RightBottom, width)
 	result := []string{top}
 	if height > 2 {
-		result = append(result, paint(t.background, border, lines.vertical, 1)+paint(t.barBackground, t.barForeground, " "+hint, inner)+paint(t.background, border, lines.vertical, 1))
+		result = append(result, paint(t.Background, border, lines.Vertical, 1)+paint(t.BarBackground, t.BarForeground, " "+hint, inner)+paint(t.Background, border, lines.Vertical, 1))
 	}
 	available := height - len(result) - 1
 	for _, row := range rows {
@@ -1127,19 +1105,19 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 			if available <= 0 {
 				break
 			}
-			bg, fg := t.background, t.foreground
+			bg, fg := t.Background, t.Foreground
 			if row.active {
 				if active {
-					bg, fg = t.selectionBackground, t.selection
+					bg, fg = t.SelectionBackground, t.Selection
 				} else {
-					bg, fg = t.background, t.accent
+					bg, fg = t.Background, t.Accent
 				}
 			}
 			rowPaint := paint
 			if row.trustedANSI {
 				rowPaint = paintANSI
 			}
-			result = append(result, paint(t.background, border, lines.vertical, 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.background, border, lines.vertical, 1))
+			result = append(result, paint(t.Background, border, lines.Vertical, 1)+rowPaint(bg, fg, " "+text, inner)+paint(t.Background, border, lines.Vertical, 1))
 			available--
 		}
 		if available <= 0 {
@@ -1147,7 +1125,7 @@ func (m Model) singlePanel(t theme, width, height int, title, hint string, rows 
 		}
 	}
 	for available > 0 {
-		result = append(result, paint(t.background, border, lines.vertical, 1)+paint(t.background, t.foreground, "", inner)+paint(t.background, border, lines.vertical, 1))
+		result = append(result, paint(t.Background, border, lines.Vertical, 1)+paint(t.Background, t.Foreground, "", inner)+paint(t.Background, border, lines.Vertical, 1))
 		available--
 	}
 	return append(result, bottom)
@@ -1316,32 +1294,15 @@ func (m Model) postDetailRows() []displayRow {
 }
 
 func (m Model) statusLine(t theme, width int) string {
-	return paint(t.background, t.foreground, m.statusText(), width)
+	return paint(t.Background, t.Foreground, m.statusText(), width)
 }
 
 func (m Model) commandBar(t theme, width int) string {
-	commands := m.commandLabels()
-	plain := strings.Join(commands, " ")
-	if m.compactCommandBar(width) {
-		return paint(t.barBackground, t.barForeground, plain, width)
-	}
-	var b strings.Builder
-	for i, command := range commands {
-		parts := strings.SplitN(command, " ", 2)
-		b.WriteString(lipgloss.NewStyle().Background(t.accent).Foreground(t.selection).Render(parts[0]))
-		if len(parts) == 2 {
-			b.WriteString(lipgloss.NewStyle().Background(t.barBackground).Foreground(t.barForeground).Render(" " + parts[1] + " "))
-		}
-		if i < len(commands)-1 {
-			b.WriteString(lipgloss.NewStyle().Background(t.background).Render(" "))
-		}
-	}
-	return b.String() + paint(t.background, t.foreground, "", max(0, width-lipgloss.Width(b.String())))
+	return terminalui.CommandBar(t, m.commandLabels(), width)
 }
 
 func (m Model) compactCommandBar(width int) bool {
-	commands := m.commandLabels()
-	return textWidth(strings.Join(commands, " "))+len(commands)-1 > width
+	return terminalui.CompactCommands(m.commandLabels(), width)
 }
 
 func (m Model) commandLabels() []string {
@@ -1423,7 +1384,7 @@ func preview(value string) string {
 	return value
 }
 
-func textWidth(value string) int { return lipgloss.Width(value) }
+func textWidth(value string) int { return terminalui.TextWidth(value) }
 
 func fit(value string, width int, fill rune) string {
 	return fitWidth(SanitizeTerminalText(value), width, fill)
@@ -1662,7 +1623,7 @@ func (m Model) LastBoard() string {
 func (m Model) Theme() ThemeName { return m.theme }
 
 // ThemeSetting returns a rediscoverable name or path for local-state persistence.
-func (m Model) ThemeSetting() string { return m.themes.setting(m.theme) }
+func (m Model) ThemeSetting() string { return m.themes.Setting(m.theme) }
 
 // errorsAs is kept tiny so View never risks exposing the wrapped error text.
 func errorsAs(err error, target any) bool { return errors.As(err, target) }

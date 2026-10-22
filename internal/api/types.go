@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"bord/internal/domain"
+	"bord/internal/security"
 )
 
 type Board struct {
@@ -106,9 +107,50 @@ type AdminReport struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type AdminBoardSummary struct {
+	ID, Slug, Title string
+}
+
+type AdminThreadSummary struct {
+	ID     string
+	Closed bool
+}
+
+type AdminPostContext struct {
+	Board      AdminBoardSummary
+	Thread     AdminThreadSummary
+	TargetPost string
+	Posts      []Post
+	NextCursor string
+}
+
 type Ban struct {
 	ID        string    `json:"id"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type AdminBan struct {
+	ID          string     `json:"id"`
+	SubjectType string     `json:"subject_type"`
+	Subject     string     `json:"subject"`
+	Operation   string     `json:"operation"`
+	Reason      string     `json:"reason"`
+	State       string     `json:"state"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
+type AdminAuditEntry struct {
+	ID        string    `json:"id"`
+	ActorID   string    `json:"actor_id,omitempty"`
+	Action    string    `json:"action"`
+	TargetID  string    `json:"target_id,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Outcome   string    `json:"outcome"`
+	ErrorCode string    `json:"error_code,omitempty"`
+	RequestID string    `json:"request_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type BanRequest struct {
@@ -120,11 +162,30 @@ type BanRequest struct {
 	Reason      string    `json:"reason"`
 }
 
+type PostBanRequest struct {
+	Operations []string  `json:"operations"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Reason     string    `json:"reason"`
+}
+
+// AdminPrincipal is authorization state for exactly one management request.
+// Request IDs remain correlation data and are not used as identity storage.
+type AdminPrincipal struct {
+	ID        string
+	Role      security.Role
+	ExpiresAt time.Time
+}
+
 // AdminService owns authentication, authorization, moderation and audit.
 // requestID is supplied explicitly so every attempt can be correlated in audit.
 type AdminService interface {
-	Authenticate(context.Context, string, string) error
+	Authenticate(context.Context, string, string) (AdminPrincipal, error)
 	ListReports(context.Context, string, int) (Page[AdminReport], error)
+	GetPostContext(context.Context, string, string, int) (AdminPostContext, error)
+	OpenAttachment(context.Context, string) (io.ReadCloser, Attachment, error)
+	ListBans(context.Context, string, string, int) (Page[AdminBan], error)
+	ListAudit(context.Context, string, int) (Page[AdminAuditEntry], error)
+	CreatePostBan(context.Context, string, PostBanRequest, string) (Ban, error)
 	SetPostVisibility(context.Context, string, bool, string, string) error
 	CloseThread(context.Context, string, string, string) error
 	CreateBan(context.Context, BanRequest, string) (Ban, error)

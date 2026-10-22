@@ -1,6 +1,8 @@
 # Docker-развёртывание за HTTPS edge
 
-Этот compose-стек не публикует backend или внутренний Caddy на host-портах.
+Этот compose-стек не публикует публичный backend или внутренний Caddy на
+host-портах. Management listener доступен только как `127.0.0.1:8081` для SSH
+tunnel и не слушает внешний интерфейс.
 Edge-контейнер подключается к существующей внешней Docker-сети
 `dom-kultury_default` (переопределяется через `BORD_EDGE_NETWORK`) под alias
 `bord-edge`. Публичный HTTPS reverse proxy должен направлять домен на

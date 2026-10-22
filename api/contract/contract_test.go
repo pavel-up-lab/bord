@@ -30,14 +30,28 @@ func TestOpenAPIContractIsValid(t *testing.T) {
 		"/api/v1/events",
 		"/api/v1/pow/challenges",
 		"/admin/v1/reports",
+		"/admin/v1/session",
+		"/admin/v1/posts/{post_id}/context",
+		"/admin/v1/attachments/{attachment_id}",
 		"/admin/v1/posts/{post_id}/visibility",
 		"/admin/v1/threads/{thread_id}/close",
 		"/admin/v1/bans",
 		"/admin/v1/bans/{ban_id}",
+		"/admin/v1/audit",
 		"/admin/v1/posts/{post_id}/ip",
+		"/admin/v1/posts/{post_id}/bans",
 	} {
 		if doc.Paths.Find(path) == nil {
 			t.Errorf("required path %s is absent", path)
 		}
+	}
+	audit := doc.Components.Schemas["AdminAuditEntry"].Value
+	for _, forbidden := range []string{"payload", "credential", "bearer", "ip", "raw_ip"} {
+		if _, exposed := audit.Properties[forbidden]; exposed {
+			t.Errorf("AdminAuditEntry exposes forbidden field %q", forbidden)
+		}
+	}
+	if audit.AdditionalProperties.Has == nil || *audit.AdditionalProperties.Has {
+		t.Error("AdminAuditEntry must reject non-allowlisted fields")
 	}
 }

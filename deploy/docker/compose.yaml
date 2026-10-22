@@ -12,6 +12,7 @@ services:
       - ALL
     environment:
       BORD_IP_LOOKUP_KEY_FILE: /run/secrets/ip_lookup_key
+      BORD_MANAGEMENT_ADDRESS: 0.0.0.0:8081
       BORD_TRUSTED_PROXIES: 172.30.83.2/32
     secrets:
       - ip_lookup_key
@@ -20,6 +21,9 @@ services:
       - ./data:/var/lib/bord
     tmpfs:
       - /tmp:size=32m,mode=1777
+    ports:
+      # SSH forwards to this host-loopback port; it is never exposed publicly.
+      - 127.0.0.1:8081:8081
     networks:
       bord_private:
         ipv4_address: 172.30.83.3

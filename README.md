@@ -1,15 +1,17 @@
 # Bord
 
 [Публичная борда](https://bord.pw) · [Скачать TUI](https://bord.pw/#install) ·
-[Руководство TUI](docs/tui.md) · [Безопасность](SECURITY.md) · [MIT License](LICENSE)
+[Руководство TUI](docs/tui.md) · [Admin TUI](docs/admin-tui.md) · [Безопасность](SECURITY.md) · [MIT License](LICENSE)
 
-Bord — публичная анонимная терминальная борда. Репозиторий содержит два
+Bord — публичная анонимная терминальная борда. Репозиторий содержит три
 исполняемых файла:
 
 - `bord-server` — HTTP API, SSE-уведомления, SQLite-хранилище, обработка
   изображений и management API;
 - `bord` — полноэкранный TUI-клиент в стиле Midnight Commander с клавиатурой,
   мышью, темами и поддержкой JPEG/PNG.
+- `bord-admin` — отдельный приватный TUI для очереди жалоб, блокировок и аудита;
+  он работает только с изолированным management API.
 
 Аккаунты не требуются. Клиент локально хранит анонимный session secret и ключи,
 позволяющие позднее удалить собственные публикации. Сервер не хранит исходный
@@ -70,6 +72,7 @@ SQLite встроен через pure-Go драйвер: системная би
 mkdir -p dist
 CGO_ENABLED=0 go build -trimpath -o dist/bord-server ./cmd/bord-server
 CGO_ENABLED=0 go build -trimpath -o dist/bord ./cmd/bord
+CGO_ENABLED=0 go build -trimpath -o dist/bord-admin ./cmd/bord-admin
 ```
 
 Проверить версии:
@@ -77,6 +80,7 @@ CGO_ENABLED=0 go build -trimpath -o dist/bord ./cmd/bord
 ```sh
 ./dist/bord-server version
 ./dist/bord version
+./dist/bord-admin version
 ```
 
 Примеры кросс-компиляции клиента:
@@ -325,6 +329,11 @@ response timeout, чтобы SSE-события доставлялись сра�
 Отдельный пошаговый гайд по установке готового бинарника и сборке из исходников
 для Linux, macOS и Windows, локальному state-файлу, обновлению и диагностике:
 [`docs/tui.md`](docs/tui.md).
+
+Приватный moderation-клиент, bootstrap credential, SSH tunnel/Tailscale,
+матрица ролей и риск сохранения раскрытого IP в scrollback описаны отдельно в
+[`docs/admin-tui.md`](docs/admin-tui.md). Management listener нельзя направлять
+через публичный listener или Caddy.
 
 Минимальная команда для публичного сервера:
 

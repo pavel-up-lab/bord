@@ -35,5 +35,6 @@ cmp "$first/SHA256SUMS" "$second/SHA256SUMS"
 
 python3 scripts/validate-release.py --directory "$first" --version "$version" --extract "$smoke"
 "$smoke/bord_${version}_linux_amd64/bord" --version | grep -F "$version"
+"$smoke/bord-admin_${version}_linux_amd64/bord-admin" --version | grep -F "$version"
 "$smoke/bord-server_${version}_linux_amd64/bord-server" version | grep -F "$version"
-printf 'release validation passed: reproducible archives, seven targets, native smoke\n'
+printf 'release validation passed: reproducible archives, thirteen targets, native smoke\n'

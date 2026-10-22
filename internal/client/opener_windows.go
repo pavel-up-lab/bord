@@ -4,7 +4,6 @@ package client
 
 import (
 	"context"
-	"os/exec"
 )
 
 // rundll32 is invoked directly; path is one argv item and is never parsed by cmd.exe.
@@ -13,5 +12,5 @@ func openerCommand(path string) (string, []string) {
 }
 func openPlatform(ctx context.Context, path string) error {
 	name, args := openerCommand(path)
-	return exec.CommandContext(ctx, name, args...).Start()
+	return startOpener(ctx, name, args...)
 }

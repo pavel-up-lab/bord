@@ -63,11 +63,17 @@ func NewRouter(config Config) http.Handler {
 	mux.HandleFunc("GET /api/v1/events", h.streamEvents)
 	if config.Admin != nil {
 		mux.Handle("GET /admin/v1/reports", h.admin(http.HandlerFunc(h.adminListReports)))
+		mux.Handle("GET /admin/v1/session", h.admin(http.HandlerFunc(h.adminGetSession)))
+		mux.Handle("GET /admin/v1/posts/{post_id}/context", h.admin(http.HandlerFunc(h.adminGetPostContext)))
+		mux.Handle("GET /admin/v1/attachments/{attachment_id}", h.admin(http.HandlerFunc(h.adminGetAttachment)))
 		mux.Handle("PUT /admin/v1/posts/{post_id}/visibility", h.admin(http.HandlerFunc(h.adminSetVisibility)))
 		mux.Handle("POST /admin/v1/threads/{thread_id}/close", h.admin(http.HandlerFunc(h.adminCloseThread)))
+		mux.Handle("GET /admin/v1/bans", h.admin(http.HandlerFunc(h.adminListBans)))
 		mux.Handle("POST /admin/v1/bans", h.admin(http.HandlerFunc(h.adminCreateBan)))
 		mux.Handle("DELETE /admin/v1/bans/{ban_id}", h.admin(http.HandlerFunc(h.adminRevokeBan)))
+		mux.Handle("GET /admin/v1/audit", h.admin(http.HandlerFunc(h.adminListAudit)))
 		mux.Handle("POST /admin/v1/posts/{post_id}/ip", h.admin(http.HandlerFunc(h.adminRevealIP)))
+		mux.Handle("POST /admin/v1/posts/{post_id}/bans", h.admin(http.HandlerFunc(h.adminCreatePostBan)))
 	}
 
 	var regular http.Handler = timeoutMiddleware(config.RequestTimeout, mux)

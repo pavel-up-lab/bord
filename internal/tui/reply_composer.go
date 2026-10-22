@@ -143,8 +143,8 @@ func (m Model) renderReplySourceLine(line replyTextLine, t theme) string {
 	runes := []rune(m.replySourceText())
 	selectionStart, selectionEnd := m.replySelection()
 	var b strings.Builder
-	selectionStyle := lipgloss.NewStyle().Background(t.accent).Foreground(t.selection)
-	cursorStyle := lipgloss.NewStyle().Background(t.muted).Foreground(t.background)
+	selectionStyle := lipgloss.NewStyle().Background(t.Accent).Foreground(t.Selection)
+	cursorStyle := lipgloss.NewStyle().Background(t.Muted).Foreground(t.Background)
 	for i := line.start; i < line.end && i < len(runes); i++ {
 		value := string(runes[i])
 		if selectionStart < selectionEnd && i >= selectionStart && i < selectionEnd {

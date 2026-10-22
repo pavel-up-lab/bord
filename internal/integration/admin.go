@@ -3,38 +3,41 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/netip"
 	"strconv"
-	"sync"
 	"time"
 
 	"bord/internal/api"
+	"bord/internal/app/attachment"
 	"bord/internal/app/moderation"
 	"bord/internal/domain"
 	"bord/internal/security"
 )
 
 type Admin struct {
-	db        *sql.DB
-	clock     Clock
-	auth      *security.AdminAuthenticator
-	keyring   security.IPKeyring
-	lookupKey []byte
-	mu        sync.Mutex
-	actors    map[string]security.AdminIdentity
+	db          *sql.DB
+	clock       Clock
+	auth        *security.AdminAuthenticator
+	keyring     security.IPKeyring
+	lookupKey   []byte
+	attachments attachment.Service
 }
 
-func newAdmin(db *sql.DB, clock Clock, keyring security.IPKeyring, lookupKey []byte) (*Admin, error) {
+func newAdmin(db *sql.DB, clock Clock, keyring security.IPKeyring, lookupKey []byte, attachments attachment.Service) (*Admin, error) {
 	dummy, err := security.HashSecret([]byte("dummy-administrator-secret"), security.DefaultArgon2Params, rand.Reader)
 	if err != nil {
 		return nil, err
 	}
 	repo := adminIdentities{db: db}
-	return &Admin{db: db, clock: clock, auth: security.NewAdminAuthenticator(repo, clock, dummy), keyring: keyring, lookupKey: append([]byte(nil), lookupKey...), actors: make(map[string]security.AdminIdentity)}, nil
+	return &Admin{db: db, clock: clock, auth: security.NewAdminAuthenticator(repo, clock, dummy), keyring: keyring, lookupKey: append([]byte(nil), lookupKey...), attachments: attachments}, nil
 }
 
 func (a *Admin) Bootstrap(ctx context.Context, id string, role security.Role, expires time.Time) (string, error) {
@@ -45,40 +48,20 @@ func (a *Admin) Bootstrap(ctx context.Context, id string, role security.Role, ex
 	return credential, adminIdentities{db: a.db}.Save(ctx, identity)
 }
 
-func (a *Admin) Authenticate(ctx context.Context, bearer, requestID string) error {
+func (a *Admin) Authenticate(ctx context.Context, bearer, requestID string) (api.AdminPrincipal, error) {
 	identity, err := a.auth.Authenticate(ctx, bearer, security.RoleReports)
 	auditErr := a.audit(ctx, identity.ID, "admin.authenticate", "", "", requestID, err)
 	if err != nil {
-		return errors.Join(mapAdminError(err), auditErr)
+		return api.AdminPrincipal{}, errors.Join(mapAdminError(err), auditErr)
 	}
 	if auditErr != nil {
-		return auditErr
+		return api.AdminPrincipal{}, auditErr
 	}
-	a.mu.Lock()
-	if _, collision := a.actors[requestID]; collision {
-		a.mu.Unlock()
-		return domain.NewError(domain.CodeForbidden, "", errors.New("duplicate active request ID"))
-	}
-	a.actors[requestID] = identity
-	a.mu.Unlock()
-	return nil
+	return api.AdminPrincipal{ID: identity.ID, Role: identity.Role, ExpiresAt: identity.ExpiresAt}, nil
 }
 
-// Finish releases request-scoped authorization state even for read-only admin
-// handlers and early handler failures.
-func (a *Admin) Finish(requestID string) {
-	a.mu.Lock()
-	_, pending := a.actors[requestID]
-	if pending {
-		delete(a.actors, requestID)
-	}
-	a.mu.Unlock()
-}
-func (a *Admin) actor(requestID string, required security.Role) (security.AdminIdentity, error) {
-	a.mu.Lock()
-	actor, ok := a.actors[requestID]
-	delete(a.actors, requestID)
-	a.mu.Unlock()
+func (a *Admin) actor(ctx context.Context, required security.Role) (api.AdminPrincipal, error) {
+	actor, ok := api.AdminPrincipalFromContext(ctx)
 	if !ok {
 		return actor, domain.NewError(domain.CodeUnauthorized, "", nil)
 	}
@@ -104,10 +87,12 @@ func (a *Admin) ListReports(ctx context.Context, cursor string, limit int) (api.
 	out := api.Page[api.AdminReport]{Items: []api.AdminReport{}}
 	for rows.Next() {
 		var x api.AdminReport
+		var reportID, postID int64
 		var at string
-		if err = rows.Scan(&x.ID, &x.PostID, &x.Reason, &at); err != nil {
+		if err = rows.Scan(&reportID, &postID, &x.Reason, &at); err != nil {
 			return out, err
 		}
+		x.ID, x.PostID = fmtID(reportID), fmtID(postID)
 		x.CreatedAt, _ = time.Parse(time.RFC3339Nano, at)
 		if len(out.Items) == limit {
 			out.NextCursor = out.Items[len(out.Items)-1].ID
@@ -117,8 +102,219 @@ func (a *Admin) ListReports(ctx context.Context, cursor string, limit int) (api.
 	}
 	return out, rows.Err()
 }
+
+func (a *Admin) GetPostContext(ctx context.Context, postID, cursor string, limit int) (api.AdminPostContext, error) {
+	if _, err := a.actor(ctx, security.RoleModerator); err != nil {
+		return api.AdminPostContext{}, err
+	}
+	var targetID, threadID, boardID int64
+	var threadState, slug, title string
+	err := a.db.QueryRowContext(ctx, `
+		SELECT p.id,p.thread_id,t.board_id,t.status,b.slug,b.title
+		FROM posts p JOIN threads t ON t.id=p.thread_id JOIN boards b ON b.id=t.board_id
+		WHERE p.id=?`, postID).Scan(&targetID, &threadID, &boardID, &threadState, &slug, &title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return api.AdminPostContext{}, domain.NewError(domain.CodePostNotFound, "post_id", err)
+	}
+	if err != nil {
+		return api.AdminPostContext{}, err
+	}
+	after := int64(0)
+	if cursor != "" {
+		after, err = strconv.ParseInt(cursor, 10, 64)
+		if err != nil || after < 0 {
+			return api.AdminPostContext{}, domain.NewError(domain.CodeValidation, "cursor", err)
+		}
+	} else if targetID > int64(limit/2) {
+		after = targetID - int64(limit/2) - 1
+	}
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT p.id,p.thread_id,p.reply_to_id,p.author_id,p.status,
+		       CASE WHEN p.status='hidden' THEN coalesce(p.hidden_body,'') ELSE p.body END,
+		       p.created_at,coalesce(p.deleted_at,''),
+		       a.id,a.media_type,a.size_bytes,a.sha256,a.width,a.height,a.safe_filename
+		FROM posts p
+		LEFT JOIN attachments a ON a.id=CASE WHEN p.status='hidden' THEN p.hidden_attachment_id ELSE p.attachment_id END
+		WHERE p.thread_id=? AND p.id>? ORDER BY p.id LIMIT ?`, threadID, after, limit+1)
+	if err != nil {
+		return api.AdminPostContext{}, err
+	}
+	defer rows.Close()
+	result := api.AdminPostContext{
+		Board:      api.AdminBoardSummary{ID: fmtID(boardID), Slug: slug, Title: title},
+		Thread:     api.AdminThreadSummary{ID: fmtID(threadID), Closed: threadState != "open"},
+		TargetPost: fmtID(targetID),
+		Posts:      []api.Post{},
+	}
+	for rows.Next() {
+		post, numericID, scanErr := scanAdminContextPost(rows)
+		if scanErr != nil {
+			return result, scanErr
+		}
+		if len(result.Posts) == limit {
+			result.NextCursor = strconv.FormatInt(numericID-1, 10)
+			break
+		}
+		result.Posts = append(result.Posts, post)
+	}
+	return result, rows.Err()
+}
+
+type rowScanner interface{ Scan(...any) error }
+
+func scanAdminContextPost(row rowScanner) (api.Post, int64, error) {
+	var id, threadID int64
+	var replyID sql.NullInt64
+	var authorID, state, body, created, deleted string
+	var attachmentID, mediaType, filename sql.NullString
+	var size, width, height sql.NullInt64
+	var hash []byte
+	if err := row.Scan(&id, &threadID, &replyID, &authorID, &state, &body, &created, &deleted, &attachmentID, &mediaType, &size, &hash, &width, &height, &filename); err != nil {
+		return api.Post{}, 0, err
+	}
+	post := api.Post{ID: fmtID(id), ThreadID: fmtID(threadID), AuthorID: authorID, State: state}
+	post.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	if state != "deleted" {
+		post.Body = &body
+	}
+	if replyID.Valid {
+		value := fmtID(replyID.Int64)
+		post.ReplyToID = &value
+	}
+	if deleted != "" {
+		value, _ := time.Parse(time.RFC3339Nano, deleted)
+		post.DeletedAt = &value
+	}
+	if attachmentID.Valid {
+		post.Attachment = &api.Attachment{ID: attachmentID.String, MediaType: mediaType.String, Filename: filename.String, Size: size.Int64, Width: int(width.Int64), Height: int(height.Int64), SHA256: hex.EncodeToString(hash)}
+	}
+	return post, id, nil
+}
+
+func (a *Admin) OpenAttachment(ctx context.Context, id string) (io.ReadCloser, api.Attachment, error) {
+	if _, err := a.actor(ctx, security.RoleModerator); err != nil {
+		return nil, api.Attachment{}, err
+	}
+	download, err := a.attachments.FetchForModeration(ctx, domain.AttachmentID(id))
+	if err != nil {
+		return nil, api.Attachment{}, mapAttachmentError(err)
+	}
+	return download.Body, attachmentDTO(download.Record), nil
+}
+
+func (a *Admin) ListBans(ctx context.Context, state, cursor string, limit int) (api.Page[api.AdminBan], error) {
+	if _, err := a.actor(ctx, security.RoleModerator); err != nil {
+		return api.Page[api.AdminBan]{}, err
+	}
+	before := int64(math.MaxInt64)
+	if cursor != "" {
+		parsed, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil || parsed <= 0 {
+			return api.Page[api.AdminBan]{}, domain.NewError(domain.CodeValidation, "cursor", err)
+		}
+		before = parsed
+	}
+	query := `SELECT id,subject_kind,subject_value,coalesce(operation,''),reason,created_at,expires_at,revoked_at FROM bans WHERE id<?`
+	now := encodeTime(a.clock.Now())
+	switch state {
+	case "active":
+		query += ` AND revoked_at IS NULL AND expires_at>?`
+	case "history":
+		query += ` AND (revoked_at IS NOT NULL OR expires_at<=?)`
+	case "all":
+	default:
+		return api.Page[api.AdminBan]{}, domain.NewError(domain.CodeValidation, "state", nil)
+	}
+	args := []any{before}
+	if state != "all" {
+		args = append(args, now)
+	}
+	args = append(args, limit+1)
+	query += ` ORDER BY id DESC LIMIT ?`
+	rows, err := a.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return api.Page[api.AdminBan]{}, err
+	}
+	defer rows.Close()
+	page := api.Page[api.AdminBan]{Items: []api.AdminBan{}}
+	var lastID int64
+	for rows.Next() {
+		var id int64
+		var subject []byte
+		var created, expires string
+		var revoked sql.NullString
+		var item api.AdminBan
+		if err := rows.Scan(&id, &item.SubjectType, &subject, &item.Operation, &item.Reason, &created, &expires, &revoked); err != nil {
+			return page, err
+		}
+		if len(page.Items) == limit {
+			page.NextCursor = strconv.FormatInt(lastID, 10)
+			break
+		}
+		fingerprint := sha256.Sum256(subject)
+		item.ID = fmtID(id)
+		item.Subject = "fingerprint:" + hex.EncodeToString(fingerprint[:8])
+		item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		item.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expires)
+		item.State = "active"
+		if revoked.Valid {
+			value, _ := time.Parse(time.RFC3339Nano, revoked.String)
+			item.RevokedAt = &value
+			item.State = "revoked"
+		} else if !item.ExpiresAt.After(a.clock.Now()) {
+			item.State = "expired"
+		}
+		page.Items = append(page.Items, item)
+		lastID = id
+	}
+	return page, rows.Err()
+}
+
+func (a *Admin) ListAudit(ctx context.Context, cursor string, limit int) (api.Page[api.AdminAuditEntry], error) {
+	if _, err := a.actor(ctx, security.RoleModerator); err != nil {
+		return api.Page[api.AdminAuditEntry]{}, err
+	}
+	before := int64(math.MaxInt64)
+	if cursor != "" {
+		parsed, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil || parsed <= 0 {
+			return api.Page[api.AdminAuditEntry]{}, domain.NewError(domain.CodeValidation, "cursor", err)
+		}
+		before = parsed
+	}
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT id,coalesce(admin_id,''),action,coalesce(target_id,''),coalesce(reason,''),outcome,
+		       coalesce(json_extract(payload,'$.error_code'),''),request_id,created_at
+		FROM moderation_actions WHERE id<? ORDER BY id DESC LIMIT ?`, before, limit+1)
+	if err != nil {
+		return api.Page[api.AdminAuditEntry]{}, err
+	}
+	defer rows.Close()
+	page := api.Page[api.AdminAuditEntry]{Items: []api.AdminAuditEntry{}}
+	var lastID int64
+	for rows.Next() {
+		var id int64
+		var created string
+		var item api.AdminAuditEntry
+		if err := rows.Scan(&id, &item.ActorID, &item.Action, &item.TargetID, &item.Reason, &item.Outcome, &item.ErrorCode, &item.RequestID, &created); err != nil {
+			return page, err
+		}
+		if len(page.Items) == limit {
+			page.NextCursor = strconv.FormatInt(lastID, 10)
+			break
+		}
+		item.ID = fmtID(id)
+		item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		if security.ContainsRawIP(item.Reason) {
+			item.Reason = "[redacted: raw IP address]"
+		}
+		page.Items = append(page.Items, item)
+		lastID = id
+	}
+	return page, rows.Err()
+}
 func (a *Admin) SetPostVisibility(ctx context.Context, id string, visible bool, reason, requestID string) error {
-	actor, err := a.actor(requestID, security.RoleModerator)
+	actor, err := a.actor(ctx, security.RoleModerator)
 	if err != nil {
 		return errors.Join(err, a.audit(ctx, actor.ID, "post.visibility", id, reason, requestID, err))
 	}
@@ -149,7 +345,7 @@ func (a *Admin) SetPostVisibility(ctx context.Context, id string, visible bool, 
 	return err
 }
 func (a *Admin) CloseThread(ctx context.Context, id, reason, requestID string) error {
-	actor, err := a.actor(requestID, security.RoleModerator)
+	actor, err := a.actor(ctx, security.RoleModerator)
 	if err != nil {
 		return errors.Join(err, a.audit(ctx, actor.ID, "thread.close", id, reason, requestID, err))
 	}
@@ -171,10 +367,13 @@ func (a *Admin) CloseThread(ctx context.Context, id, reason, requestID string) e
 	})
 }
 func (a *Admin) CreateBan(ctx context.Context, b api.BanRequest, requestID string) (api.Ban, error) {
-	actor, err := a.actor(requestID, security.RoleModerator)
+	actor, err := a.actor(ctx, security.RoleModerator)
 	var id int64
 	if err != nil {
 		return api.Ban{}, errors.Join(err, a.audit(ctx, actor.ID, "ban.create", "", b.Reason, requestID, err))
+	}
+	if !b.ExpiresAt.After(a.clock.Now()) || len(b.Operations) < 1 || len(b.Operations) > 10 {
+		err = domain.NewError(domain.CodeValidation, "expires_at", nil)
 	}
 	subjectKind, subjectValue := b.SubjectType, []byte(b.Subject)
 	switch b.SubjectType {
@@ -235,8 +434,49 @@ func (a *Admin) CreateBan(ctx context.Context, b api.BanRequest, requestID strin
 	}
 	return api.Ban{ID: fmt.Sprintf("%08d", id), ExpiresAt: b.ExpiresAt}, nil
 }
+
+func (a *Admin) CreatePostBan(ctx context.Context, postID string, request api.PostBanRequest, requestID string) (api.Ban, error) {
+	actor, authErr := a.actor(ctx, security.RoleModerator)
+	if authErr != nil {
+		return api.Ban{}, errors.Join(authErr, a.audit(ctx, actor.ID, "ban.create", postID, request.Reason, requestID, authErr))
+	}
+	if !request.ExpiresAt.After(a.clock.Now()) || !validPostBanOperations(request.Operations) {
+		err := domain.NewError(domain.CodeValidation, "operations", nil)
+		return api.Ban{}, errors.Join(err, a.audit(ctx, actor.ID, "ban.create", postID, request.Reason, requestID, err))
+	}
+	var lookup []byte
+	err := a.db.QueryRowContext(ctx, `SELECT ip_lookup FROM request_subjects WHERE post_id=? ORDER BY id DESC LIMIT 1`, postID).Scan(&lookup)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = domain.NewError(domain.CodePostNotFound, "post_id", err)
+	}
+	if err != nil {
+		return api.Ban{}, errors.Join(err, a.audit(ctx, actor.ID, "ban.create", postID, request.Reason, requestID, err))
+	}
+	return a.CreateBan(ctx, api.BanRequest{
+		SubjectType: "lookup",
+		Subject:     hex.EncodeToString(lookup),
+		Operations:  append([]string(nil), request.Operations...),
+		ExpiresAt:   request.ExpiresAt,
+		Reason:      request.Reason,
+	}, requestID)
+}
+
+func validPostBanOperations(operations []string) bool {
+	if len(operations) < 1 || len(operations) > 4 {
+		return false
+	}
+	allowed := map[string]bool{"create_thread": true, "create_post": true, "delete_post": true, "report": true}
+	seen := map[string]bool{}
+	for _, operation := range operations {
+		if !allowed[operation] || seen[operation] {
+			return false
+		}
+		seen[operation] = true
+	}
+	return true
+}
 func (a *Admin) RevokeBan(ctx context.Context, id, reason, requestID string) error {
-	actor, err := a.actor(requestID, security.RoleModerator)
+	actor, err := a.actor(ctx, security.RoleModerator)
 	if err != nil {
 		return errors.Join(err, a.audit(ctx, actor.ID, "ban.revoke", id, reason, requestID, err))
 	}
@@ -251,7 +491,7 @@ func (a *Admin) RevokeBan(ctx context.Context, id, reason, requestID string) err
 	})
 }
 func (a *Admin) RevealPostIP(ctx context.Context, postID, reason, requestID string) (string, error) {
-	actor, err := a.actor(requestID, security.RoleAdministrator)
+	actor, err := a.actor(ctx, security.RoleAdministrator)
 	var result string
 	if err == nil {
 		var env security.IPEnvelope
@@ -296,10 +536,12 @@ func (a *Admin) auditWith(ctx context.Context, executor auditExecutor, actor, ac
 		return err
 	}
 	outcome := "success"
+	payload := []byte(`{}`)
 	if actionErr != nil {
 		outcome = "failure"
+		payload, _ = json.Marshal(map[string]string{"error_code": entry.ErrorCode})
 	}
-	_, err := executor.ExecContext(ctx, `INSERT INTO moderation_actions(admin_id,action,target_id,reason,outcome,request_id,payload,created_at) VALUES(NULLIF(?,''),?,?,?,?,?,?,?)`, actor, action, target, reason, outcome, requestID, []byte(`{}`), encodeTime(entry.CreatedAt))
+	_, err := executor.ExecContext(ctx, `INSERT INTO moderation_actions(admin_id,action,target_id,reason,outcome,request_id,payload,created_at) VALUES(NULLIF(?,''),?,?,?,?,?,?,?)`, actor, action, target, reason, outcome, requestID, payload, encodeTime(entry.CreatedAt))
 	return err
 }
 

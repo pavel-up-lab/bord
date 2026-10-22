@@ -21,6 +21,41 @@ const (
 	AdminBearerScopes = "adminBearer.Scopes"
 )
 
+// Defines values for AdminAuditEntryOutcome.
+const (
+	Failure AdminAuditEntryOutcome = "failure"
+	Success AdminAuditEntryOutcome = "success"
+)
+
+// Defines values for AdminBanOperation.
+const (
+	AdminBanOperationCreatePost   AdminBanOperation = "create_post"
+	AdminBanOperationCreateThread AdminBanOperation = "create_thread"
+	AdminBanOperationDeletePost   AdminBanOperation = "delete_post"
+	AdminBanOperationReport       AdminBanOperation = "report"
+)
+
+// Defines values for AdminBanState.
+const (
+	AdminBanStateActive  AdminBanState = "active"
+	AdminBanStateExpired AdminBanState = "expired"
+	AdminBanStateRevoked AdminBanState = "revoked"
+)
+
+// Defines values for AdminBanSubjectType.
+const (
+	AdminBanSubjectTypeIp     AdminBanSubjectType = "ip"
+	AdminBanSubjectTypeLookup AdminBanSubjectType = "lookup"
+	AdminBanSubjectTypePrefix AdminBanSubjectType = "prefix"
+)
+
+// Defines values for AdminRole.
+const (
+	Administrator AdminRole = "administrator"
+	Moderator     AdminRole = "moderator"
+	Reports       AdminRole = "reports"
+)
+
 // Defines values for AttachmentMediaType.
 const (
 	Imagejpeg AttachmentMediaType = "image/jpeg"
@@ -36,9 +71,17 @@ const (
 
 // Defines values for CreateBanSubjectType.
 const (
-	Ip     CreateBanSubjectType = "ip"
-	Lookup CreateBanSubjectType = "lookup"
-	Prefix CreateBanSubjectType = "prefix"
+	CreateBanSubjectTypeIp     CreateBanSubjectType = "ip"
+	CreateBanSubjectTypeLookup CreateBanSubjectType = "lookup"
+	CreateBanSubjectTypePrefix CreateBanSubjectType = "prefix"
+)
+
+// Defines values for CreatePostBanOperations.
+const (
+	CreatePostBanOperationsCreatePost   CreatePostBanOperations = "create_post"
+	CreatePostBanOperationsCreateThread CreatePostBanOperations = "create_thread"
+	CreatePostBanOperationsDeletePost   CreatePostBanOperations = "delete_post"
+	CreatePostBanOperationsReport       CreatePostBanOperations = "report"
 )
 
 // Defines values for CreateReportReason.
@@ -81,6 +124,101 @@ const (
 	Hidden  PostState = "hidden"
 	Visible PostState = "visible"
 )
+
+// Defines values for AdminListBansParamsState.
+const (
+	AdminListBansParamsStateActive  AdminListBansParamsState = "active"
+	AdminListBansParamsStateAll     AdminListBansParamsState = "all"
+	AdminListBansParamsStateHistory AdminListBansParamsState = "history"
+)
+
+// AdminAuditEntry defines model for AdminAuditEntry.
+type AdminAuditEntry struct {
+	Action    string                 `json:"action"`
+	ActorId   *string                `json:"actor_id,omitempty"`
+	CreatedAt Timestamp              `json:"created_at"`
+	ErrorCode *ErrorCode             `json:"error_code,omitempty"`
+	Id        ResourceID             `json:"id"`
+	Outcome   AdminAuditEntryOutcome `json:"outcome"`
+	Reason    *string                `json:"reason,omitempty"`
+	RequestId string                 `json:"request_id"`
+	TargetId  *string                `json:"target_id,omitempty"`
+}
+
+// AdminAuditEntryOutcome defines model for AdminAuditEntry.Outcome.
+type AdminAuditEntryOutcome string
+
+// AdminAuditPage defines model for AdminAuditPage.
+type AdminAuditPage struct {
+	Entries []AdminAuditEntry `json:"entries"`
+
+	// NextCursor Opaque signed cursor bound to collection and expiry
+	NextCursor *Cursor `json:"next_cursor,omitempty"`
+}
+
+// AdminBan defines model for AdminBan.
+type AdminBan struct {
+	CreatedAt   Timestamp           `json:"created_at"`
+	ExpiresAt   Timestamp           `json:"expires_at"`
+	Id          ResourceID          `json:"id"`
+	Operation   AdminBanOperation   `json:"operation"`
+	Reason      string              `json:"reason"`
+	RevokedAt   *Timestamp          `json:"revoked_at,omitempty"`
+	State       AdminBanState       `json:"state"`
+	Subject     string              `json:"subject"`
+	SubjectType AdminBanSubjectType `json:"subject_type"`
+}
+
+// AdminBanOperation defines model for AdminBan.Operation.
+type AdminBanOperation string
+
+// AdminBanState defines model for AdminBan.State.
+type AdminBanState string
+
+// AdminBanSubjectType defines model for AdminBan.SubjectType.
+type AdminBanSubjectType string
+
+// AdminBanPage defines model for AdminBanPage.
+type AdminBanPage struct {
+	Bans []AdminBan `json:"bans"`
+
+	// NextCursor Opaque signed cursor bound to collection and expiry
+	NextCursor *Cursor `json:"next_cursor,omitempty"`
+}
+
+// AdminBoardSummary defines model for AdminBoardSummary.
+type AdminBoardSummary struct {
+	Id    ResourceID `json:"id"`
+	Slug  string     `json:"slug"`
+	Title string     `json:"title"`
+}
+
+// AdminPostContext defines model for AdminPostContext.
+type AdminPostContext struct {
+	Board AdminBoardSummary `json:"board"`
+
+	// NextCursor Opaque signed cursor bound to collection and expiry
+	NextCursor   *Cursor            `json:"next_cursor,omitempty"`
+	Posts        []Post             `json:"posts"`
+	TargetPostId PostID             `json:"target_post_id"`
+	Thread       AdminThreadSummary `json:"thread"`
+}
+
+// AdminRole defines model for AdminRole.
+type AdminRole string
+
+// AdminSession defines model for AdminSession.
+type AdminSession struct {
+	ExpiresAt Timestamp `json:"expires_at"`
+	Id        string    `json:"id"`
+	Role      AdminRole `json:"role"`
+}
+
+// AdminThreadSummary defines model for AdminThreadSummary.
+type AdminThreadSummary struct {
+	Closed bool     `json:"closed"`
+	Id     ThreadID `json:"id"`
+}
 
 // Attachment defines model for Attachment.
 type Attachment struct {
@@ -159,6 +297,16 @@ type CreatePost struct {
 	ReplyToId      *PostID       `json:"reply_to_id,omitempty"`
 	SessionProof   *string       `json:"session_proof,omitempty"`
 }
+
+// CreatePostBan defines model for CreatePostBan.
+type CreatePostBan struct {
+	ExpiresAt  Timestamp                 `json:"expires_at"`
+	Operations []CreatePostBanOperations `json:"operations"`
+	Reason     string                    `json:"reason"`
+}
+
+// CreatePostBanOperations defines model for CreatePostBan.Operations.
+type CreatePostBanOperations string
 
 // CreateReport defines model for CreateReport.
 type CreateReport struct {
@@ -296,6 +444,28 @@ type RateLimited = Error
 // ServiceUnavailable defines model for ServiceUnavailable.
 type ServiceUnavailable = Error
 
+// AdminListAuditParams defines parameters for AdminListAudit.
+type AdminListAuditParams struct {
+	Cursor *Cursor    `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *PageLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// AdminListBansParams defines parameters for AdminListBans.
+type AdminListBansParams struct {
+	Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *PageLimit                `form:"limit,omitempty" json:"limit,omitempty"`
+	State  *AdminListBansParamsState `form:"state,omitempty" json:"state,omitempty"`
+}
+
+// AdminListBansParamsState defines parameters for AdminListBans.
+type AdminListBansParamsState string
+
+// AdminGetPostContextParams defines parameters for AdminGetPostContext.
+type AdminGetPostContextParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // AdminListReportsParams defines parameters for AdminListReports.
 type AdminListReportsParams struct {
 	Cursor *Cursor    `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -336,6 +506,9 @@ type AdminCreateBanJSONRequestBody = CreateBan
 
 // AdminRevokeBanJSONRequestBody defines body for AdminRevokeBan for application/json ContentType.
 type AdminRevokeBanJSONRequestBody = Reason
+
+// AdminCreatePostBanJSONRequestBody defines body for AdminCreatePostBan for application/json ContentType.
+type AdminCreatePostBanJSONRequestBody = CreatePostBan
 
 // AdminRevealPostIPJSONRequestBody defines body for AdminRevealPostIP for application/json ContentType.
 type AdminRevealPostIPJSONRequestBody = Reason
@@ -434,6 +607,15 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// AdminGetAttachment request
+	AdminGetAttachment(ctx context.Context, attachmentId AttachmentID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminListAudit request
+	AdminListAudit(ctx context.Context, params *AdminListAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminListBans request
+	AdminListBans(ctx context.Context, params *AdminListBansParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AdminCreateBanWithBody request with any body
 	AdminCreateBanWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -443,6 +625,14 @@ type ClientInterface interface {
 	AdminRevokeBanWithBody(ctx context.Context, banId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	AdminRevokeBan(ctx context.Context, banId ResourceID, body AdminRevokeBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminCreatePostBanWithBody request with any body
+	AdminCreatePostBanWithBody(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AdminCreatePostBan(ctx context.Context, postId PostID, body AdminCreatePostBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminGetPostContext request
+	AdminGetPostContext(ctx context.Context, postId PostID, params *AdminGetPostContextParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminRevealPostIPWithBody request with any body
 	AdminRevealPostIPWithBody(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -456,6 +646,9 @@ type ClientInterface interface {
 
 	// AdminListReports request
 	AdminListReports(ctx context.Context, params *AdminListReportsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdminGetSession request
+	AdminGetSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminCloseThreadWithBody request with any body
 	AdminCloseThreadWithBody(ctx context.Context, threadId ThreadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -515,6 +708,42 @@ type ClientInterface interface {
 	Readiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+func (c *Client) AdminGetAttachment(ctx context.Context, attachmentId AttachmentID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminGetAttachmentRequest(c.Server, attachmentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminListAudit(ctx context.Context, params *AdminListAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminListAuditRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminListBans(ctx context.Context, params *AdminListBansParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminListBansRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) AdminCreateBanWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminCreateBanRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -553,6 +782,42 @@ func (c *Client) AdminRevokeBanWithBody(ctx context.Context, banId ResourceID, c
 
 func (c *Client) AdminRevokeBan(ctx context.Context, banId ResourceID, body AdminRevokeBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminRevokeBanRequest(c.Server, banId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminCreatePostBanWithBody(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminCreatePostBanRequestWithBody(c.Server, postId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminCreatePostBan(ctx context.Context, postId PostID, body AdminCreatePostBanJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminCreatePostBanRequest(c.Server, postId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminGetPostContext(ctx context.Context, postId PostID, params *AdminGetPostContextParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminGetPostContextRequest(c.Server, postId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -613,6 +878,18 @@ func (c *Client) AdminSetPostVisibility(ctx context.Context, postId PostID, body
 
 func (c *Client) AdminListReports(ctx context.Context, params *AdminListReportsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminListReportsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminGetSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminGetSessionRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -875,6 +1152,186 @@ func (c *Client) Readiness(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
+// NewAdminGetAttachmentRequest generates requests for AdminGetAttachment
+func NewAdminGetAttachmentRequest(server string, attachmentId AttachmentID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "attachment_id", runtime.ParamLocationPath, attachmentId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/attachments/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminListAuditRequest generates requests for AdminListAudit
+func NewAdminListAuditRequest(server string, params *AdminListAuditParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/audit")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminListBansRequest generates requests for AdminListBans
+func NewAdminListBansRequest(server string, params *AdminListBansParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/bans")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "state", runtime.ParamLocationQuery, *params.State); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAdminCreateBanRequest calls the generic AdminCreateBan builder with application/json body
 func NewAdminCreateBanRequest(server string, body AdminCreateBanJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -958,6 +1415,125 @@ func NewAdminRevokeBanRequestWithBody(server string, banId ResourceID, contentTy
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminCreatePostBanRequest calls the generic AdminCreatePostBan builder with application/json body
+func NewAdminCreatePostBanRequest(server string, postId PostID, body AdminCreatePostBanJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdminCreatePostBanRequestWithBody(server, postId, "application/json", bodyReader)
+}
+
+// NewAdminCreatePostBanRequestWithBody generates requests for AdminCreatePostBan with any type of body
+func NewAdminCreatePostBanRequestWithBody(server string, postId PostID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "post_id", runtime.ParamLocationPath, postId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/posts/%s/bans", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdminGetPostContextRequest generates requests for AdminGetPostContext
+func NewAdminGetPostContextRequest(server string, postId PostID, params *AdminGetPostContextParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "post_id", runtime.ParamLocationPath, postId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/posts/%s/context", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1111,6 +1687,33 @@ func NewAdminListReportsRequest(server string, params *AdminListReportsParams) (
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAdminGetSessionRequest generates requests for AdminGetSession
+func NewAdminGetSessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -1867,6 +2470,15 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// AdminGetAttachmentWithResponse request
+	AdminGetAttachmentWithResponse(ctx context.Context, attachmentId AttachmentID, reqEditors ...RequestEditorFn) (*AdminGetAttachmentResponse, error)
+
+	// AdminListAuditWithResponse request
+	AdminListAuditWithResponse(ctx context.Context, params *AdminListAuditParams, reqEditors ...RequestEditorFn) (*AdminListAuditResponse, error)
+
+	// AdminListBansWithResponse request
+	AdminListBansWithResponse(ctx context.Context, params *AdminListBansParams, reqEditors ...RequestEditorFn) (*AdminListBansResponse, error)
+
 	// AdminCreateBanWithBodyWithResponse request with any body
 	AdminCreateBanWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateBanResponse, error)
 
@@ -1876,6 +2488,14 @@ type ClientWithResponsesInterface interface {
 	AdminRevokeBanWithBodyWithResponse(ctx context.Context, banId ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRevokeBanResponse, error)
 
 	AdminRevokeBanWithResponse(ctx context.Context, banId ResourceID, body AdminRevokeBanJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRevokeBanResponse, error)
+
+	// AdminCreatePostBanWithBodyWithResponse request with any body
+	AdminCreatePostBanWithBodyWithResponse(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreatePostBanResponse, error)
+
+	AdminCreatePostBanWithResponse(ctx context.Context, postId PostID, body AdminCreatePostBanJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreatePostBanResponse, error)
+
+	// AdminGetPostContextWithResponse request
+	AdminGetPostContextWithResponse(ctx context.Context, postId PostID, params *AdminGetPostContextParams, reqEditors ...RequestEditorFn) (*AdminGetPostContextResponse, error)
 
 	// AdminRevealPostIPWithBodyWithResponse request with any body
 	AdminRevealPostIPWithBodyWithResponse(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRevealPostIPResponse, error)
@@ -1889,6 +2509,9 @@ type ClientWithResponsesInterface interface {
 
 	// AdminListReportsWithResponse request
 	AdminListReportsWithResponse(ctx context.Context, params *AdminListReportsParams, reqEditors ...RequestEditorFn) (*AdminListReportsResponse, error)
+
+	// AdminGetSessionWithResponse request
+	AdminGetSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminGetSessionResponse, error)
 
 	// AdminCloseThreadWithBodyWithResponse request with any body
 	AdminCloseThreadWithBodyWithResponse(ctx context.Context, threadId ThreadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCloseThreadResponse, error)
@@ -1948,6 +2571,74 @@ type ClientWithResponsesInterface interface {
 	ReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReadinessResponse, error)
 }
 
+type AdminGetAttachmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminGetAttachmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminGetAttachmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminListAuditResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminAuditPage
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminListAuditResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminListAuditResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminListBansResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminBanPage
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminListBansResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminListBansResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type AdminCreateBanResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1987,6 +2678,52 @@ func (r AdminRevokeBanResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AdminRevokeBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminCreatePostBanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *Ban
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminCreatePostBanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminCreatePostBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminGetPostContextResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminPostContext
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminGetPostContextResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminGetPostContextResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2061,6 +2798,29 @@ func (r AdminListReportsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AdminListReportsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminGetSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminSession
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminGetSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminGetSessionResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2414,6 +3174,33 @@ func (r ReadinessResponse) StatusCode() int {
 	return 0
 }
 
+// AdminGetAttachmentWithResponse request returning *AdminGetAttachmentResponse
+func (c *ClientWithResponses) AdminGetAttachmentWithResponse(ctx context.Context, attachmentId AttachmentID, reqEditors ...RequestEditorFn) (*AdminGetAttachmentResponse, error) {
+	rsp, err := c.AdminGetAttachment(ctx, attachmentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminGetAttachmentResponse(rsp)
+}
+
+// AdminListAuditWithResponse request returning *AdminListAuditResponse
+func (c *ClientWithResponses) AdminListAuditWithResponse(ctx context.Context, params *AdminListAuditParams, reqEditors ...RequestEditorFn) (*AdminListAuditResponse, error) {
+	rsp, err := c.AdminListAudit(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminListAuditResponse(rsp)
+}
+
+// AdminListBansWithResponse request returning *AdminListBansResponse
+func (c *ClientWithResponses) AdminListBansWithResponse(ctx context.Context, params *AdminListBansParams, reqEditors ...RequestEditorFn) (*AdminListBansResponse, error) {
+	rsp, err := c.AdminListBans(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminListBansResponse(rsp)
+}
+
 // AdminCreateBanWithBodyWithResponse request with arbitrary body returning *AdminCreateBanResponse
 func (c *ClientWithResponses) AdminCreateBanWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateBanResponse, error) {
 	rsp, err := c.AdminCreateBanWithBody(ctx, contentType, body, reqEditors...)
@@ -2446,6 +3233,32 @@ func (c *ClientWithResponses) AdminRevokeBanWithResponse(ctx context.Context, ba
 		return nil, err
 	}
 	return ParseAdminRevokeBanResponse(rsp)
+}
+
+// AdminCreatePostBanWithBodyWithResponse request with arbitrary body returning *AdminCreatePostBanResponse
+func (c *ClientWithResponses) AdminCreatePostBanWithBodyWithResponse(ctx context.Context, postId PostID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreatePostBanResponse, error) {
+	rsp, err := c.AdminCreatePostBanWithBody(ctx, postId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminCreatePostBanResponse(rsp)
+}
+
+func (c *ClientWithResponses) AdminCreatePostBanWithResponse(ctx context.Context, postId PostID, body AdminCreatePostBanJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreatePostBanResponse, error) {
+	rsp, err := c.AdminCreatePostBan(ctx, postId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminCreatePostBanResponse(rsp)
+}
+
+// AdminGetPostContextWithResponse request returning *AdminGetPostContextResponse
+func (c *ClientWithResponses) AdminGetPostContextWithResponse(ctx context.Context, postId PostID, params *AdminGetPostContextParams, reqEditors ...RequestEditorFn) (*AdminGetPostContextResponse, error) {
+	rsp, err := c.AdminGetPostContext(ctx, postId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminGetPostContextResponse(rsp)
 }
 
 // AdminRevealPostIPWithBodyWithResponse request with arbitrary body returning *AdminRevealPostIPResponse
@@ -2489,6 +3302,15 @@ func (c *ClientWithResponses) AdminListReportsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseAdminListReportsResponse(rsp)
+}
+
+// AdminGetSessionWithResponse request returning *AdminGetSessionResponse
+func (c *ClientWithResponses) AdminGetSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminGetSessionResponse, error) {
+	rsp, err := c.AdminGetSession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminGetSessionResponse(rsp)
 }
 
 // AdminCloseThreadWithBodyWithResponse request with arbitrary body returning *AdminCloseThreadResponse
@@ -2674,6 +3496,98 @@ func (c *ClientWithResponses) ReadinessWithResponse(ctx context.Context, reqEdit
 	return ParseReadinessResponse(rsp)
 }
 
+// ParseAdminGetAttachmentResponse parses an HTTP response from a AdminGetAttachmentWithResponse call
+func ParseAdminGetAttachmentResponse(rsp *http.Response) (*AdminGetAttachmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminGetAttachmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminListAuditResponse parses an HTTP response from a AdminListAuditWithResponse call
+func ParseAdminListAuditResponse(rsp *http.Response) (*AdminListAuditResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminListAuditResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminAuditPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminListBansResponse parses an HTTP response from a AdminListBansWithResponse call
+func ParseAdminListBansResponse(rsp *http.Response) (*AdminListBansResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminListBansResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminBanPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseAdminCreateBanResponse parses an HTTP response from a AdminCreateBanWithResponse call
 func ParseAdminCreateBanResponse(rsp *http.Response) (*AdminCreateBanResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2721,6 +3635,72 @@ func ParseAdminRevokeBanResponse(rsp *http.Response) (*AdminRevokeBanResponse, e
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminCreatePostBanResponse parses an HTTP response from a AdminCreatePostBanWithResponse call
+func ParseAdminCreatePostBanResponse(rsp *http.Response) (*AdminCreatePostBanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminCreatePostBanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Ban
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminGetPostContextResponse parses an HTTP response from a AdminGetPostContextWithResponse call
+func ParseAdminGetPostContextResponse(rsp *http.Response) (*AdminGetPostContextResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminGetPostContextResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminPostContext
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2814,6 +3794,39 @@ func ParseAdminListReportsResponse(rsp *http.Response) (*AdminListReportsRespons
 			NextCursor *Cursor  `json:"next_cursor,omitempty"`
 			Reports    []Report `json:"reports"`
 		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminGetSessionResponse parses an HTTP response from a AdminGetSessionWithResponse call
+func ParseAdminGetSessionResponse(rsp *http.Response) (*AdminGetSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminGetSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSession
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

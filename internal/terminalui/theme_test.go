@@ -1,4 +1,4 @@
-package tui
+package terminalui
 
 import (
 	"os"
@@ -40,15 +40,15 @@ drightbottom = ┘
 	if name != "mc:cat" {
 		t.Fatalf("name=%q", name)
 	}
-	colors := catalog.palette(name)
-	if colors.background != "#101018" || colors.foreground != "#f0f0f8" || colors.accent != "#88ccff" || colors.selectionBackground != "#88ccff" {
+	colors := catalog.Palette(name)
+	if colors.Background != "#101018" || colors.Foreground != "#f0f0f8" || colors.Accent != "#88ccff" || colors.SelectionBackground != "#88ccff" {
 		t.Fatalf("imported palette=%+v", colors)
 	}
-	if colors.lines.leftTop != "┌" || colors.lines.horizontal != "─" {
-		t.Fatalf("imported lines=%+v", colors.lines)
+	if colors.Lines.LeftTop != "┌" || colors.Lines.Horizontal != "─" {
+		t.Fatalf("imported lines=%+v", colors.Lines)
 	}
-	if catalog.setting(name) != path {
-		t.Fatalf("custom path was not retained: %q", catalog.setting(name))
+	if catalog.Setting(name) != path {
+		t.Fatalf("custom path was not retained: %q", catalog.Setting(name))
 	}
 	options := catalog.Options()
 	if options[len(options)-1].Label != "Cat Theme" {

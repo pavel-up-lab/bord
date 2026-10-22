@@ -92,6 +92,37 @@ func TestPrepareRepositoryFailureLeavesNonPublicOrphan(t *testing.T) {
 	}
 }
 
+func TestModerationFetchRequiresReferenceAndVerifiesBlob(t *testing.T) {
+	repo := newFakeRepository()
+	blobs := &fakeBlobs{data: make(map[string][]byte)}
+	service := Service{Repository: repo, Blobs: blobs, Tx: passthroughTx{}, Clock: fixedClock{time.Now()}, Random: bytes.NewReader(bytes.Repeat([]byte{3}, 32))}
+	record, err := service.Prepare(context.Background(), validInput("safe image"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.FetchForModeration(context.Background(), record.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unattached moderation fetch=%v", err)
+	}
+	record, err = service.Attach(context.Background(), record.ID, "post-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	download, err := service.FetchForModeration(context.Background(), record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = download.Body.Close()
+	blobs.data[record.BlobKey] = []byte("tampered!!")
+	if _, err := service.FetchForModeration(context.Background(), record.ID); err == nil || err.Error() != "attachment: blob digest mismatch" {
+		t.Fatalf("digest mismatch=%v", err)
+	}
+	record.MediaType = "text/html"
+	repo.records[record.ID] = record
+	if _, err := service.FetchForModeration(context.Background(), record.ID); err == nil || err.Error() != "attachment: unsafe media type" {
+		t.Fatalf("unsafe media type=%v", err)
+	}
+}
+
 func TestReconcilerPassesOnlyLiveReferencesAndDryRun(t *testing.T) {
 	repo := newFakeRepository()
 	repo.records["live"] = Record{ID: "live", BlobKey: "keep", State: Attached}
@@ -197,6 +228,9 @@ func (r *fakeRepository) PublicByID(ctx context.Context, id domain.AttachmentID)
 		return Record{}, ErrNotFound
 	}
 	return v, nil
+}
+func (r *fakeRepository) ModerationByID(ctx context.Context, id domain.AttachmentID) (Record, error) {
+	return r.PublicByID(ctx, id)
 }
 func (r *fakeRepository) MarkDeleted(_ context.Context, id domain.AttachmentID, at time.Time) (Record, error) {
 	v, ok := r.records[id]

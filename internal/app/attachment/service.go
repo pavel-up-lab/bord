@@ -1,6 +1,7 @@
 package attachment
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -63,6 +64,8 @@ type Repository interface {
 	Attach(context.Context, domain.AttachmentID, domain.PostID) (Record, error)
 	// PublicByID also verifies visibility of the associated post.
 	PublicByID(context.Context, domain.AttachmentID) (Record, error)
+	// ModerationByID accepts only records referenced by visible or hidden posts.
+	ModerationByID(context.Context, domain.AttachmentID) (Record, error)
 	MarkDeleted(context.Context, domain.AttachmentID, time.Time) (Record, error)
 	ReferencedBlobKeys(context.Context) (map[string]struct{}, error)
 }
@@ -143,6 +146,35 @@ func (s Service) Fetch(ctx context.Context, id domain.AttachmentID) (Download, e
 		return Download{}, errors.New("attachment: blob size mismatch")
 	}
 	return Download{Record: record, Body: body}, nil
+}
+
+func (s Service) FetchForModeration(ctx context.Context, id domain.AttachmentID) (Download, error) {
+	if err := s.valid(); err != nil {
+		return Download{}, err
+	}
+	record, err := s.Repository.ModerationByID(ctx, id)
+	if err != nil {
+		return Download{}, err
+	}
+	if record.MediaType != "image/jpeg" && record.MediaType != "image/png" {
+		return Download{}, errors.New("attachment: unsafe media type")
+	}
+	body, size, err := s.Blobs.Open(ctx, record.BlobKey, record.MediaType)
+	if err != nil {
+		return Download{}, err
+	}
+	defer body.Close()
+	if size != record.Size || record.Size < 0 || record.Size > 10<<20 {
+		return Download{}, errors.New("attachment: blob size mismatch")
+	}
+	data, err := io.ReadAll(io.LimitReader(body, record.Size+1))
+	if err != nil {
+		return Download{}, err
+	}
+	if int64(len(data)) != record.Size || sha256.Sum256(data) != record.SHA256 {
+		return Download{}, errors.New("attachment: blob digest mismatch")
+	}
+	return Download{Record: record, Body: io.NopCloser(bytes.NewReader(data))}, nil
 }
 
 func (s Service) Delete(ctx context.Context, id domain.AttachmentID) error {

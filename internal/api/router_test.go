@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bord/internal/domain"
+	"bord/internal/security"
 )
 
 type publicFake struct {
@@ -74,12 +75,27 @@ func (a *extendedAbuseFake) CheckSession(_ context.Context, operation, _, sessio
 	return nil
 }
 
-func (a *adminFake) Authenticate(_ context.Context, credential, requestID string) error {
+func (a *adminFake) Authenticate(_ context.Context, credential, requestID string) (AdminPrincipal, error) {
 	a.credential, a.requestID = credential, requestID
-	return nil
+	return AdminPrincipal{ID: "test-admin", Role: security.RoleAdministrator, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 func (*adminFake) ListReports(context.Context, string, int) (Page[AdminReport], error) {
 	return Page[AdminReport]{Items: []AdminReport{}}, nil
+}
+func (*adminFake) GetPostContext(context.Context, string, string, int) (AdminPostContext, error) {
+	return AdminPostContext{Posts: []Post{}}, nil
+}
+func (*adminFake) OpenAttachment(context.Context, string) (io.ReadCloser, Attachment, error) {
+	return io.NopCloser(strings.NewReader("png")), Attachment{ID: "attach_1", MediaType: "image/png", Size: 3}, nil
+}
+func (*adminFake) ListBans(context.Context, string, string, int) (Page[AdminBan], error) {
+	return Page[AdminBan]{Items: []AdminBan{}}, nil
+}
+func (*adminFake) ListAudit(context.Context, string, int) (Page[AdminAuditEntry], error) {
+	return Page[AdminAuditEntry]{Items: []AdminAuditEntry{{ID: "audit_01", Action: "post.visibility", Outcome: "failure", RequestID: "request-123", CreatedAt: time.Now()}}}, nil
+}
+func (*adminFake) CreatePostBan(context.Context, string, PostBanRequest, string) (Ban, error) {
+	return Ban{ID: "ban_0002", ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 func (*adminFake) SetPostVisibility(context.Context, string, bool, string, string) error { return nil }
 func (*adminFake) CloseThread(context.Context, string, string, string) error             { return nil }
@@ -287,13 +303,28 @@ func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 	_, trusted, _ := net.ParseCIDR("192.0.2.0/24")
 	config := Config{Admin: admin, CursorCodec: codec, TrustedProxies: []*net.IPNet{trusted}}
 	public := NewPublicRouter(config)
-	w := httptest.NewRecorder()
-	public.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/v1/reports", nil))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("admin route exposed publicly: %d", w.Code)
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/admin/v1/reports"},
+		{http.MethodGet, "/admin/v1/session"},
+		{http.MethodGet, "/admin/v1/posts/post_001/context"},
+		{http.MethodGet, "/admin/v1/attachments/attach_1"},
+		{http.MethodPut, "/admin/v1/posts/post_001/visibility"},
+		{http.MethodPost, "/admin/v1/threads/thread_1/close"},
+		{http.MethodGet, "/admin/v1/bans"},
+		{http.MethodPost, "/admin/v1/bans"},
+		{http.MethodDelete, "/admin/v1/bans/ban_0001"},
+		{http.MethodGet, "/admin/v1/audit"},
+		{http.MethodPost, "/admin/v1/posts/post_001/ip"},
+		{http.MethodPost, "/admin/v1/posts/post_001/bans"},
+	} {
+		w := httptest.NewRecorder()
+		public.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("admin route %s %s exposed publicly: %d", route.method, route.path, w.Code)
+		}
 	}
 	management := NewManagementRouter(config)
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	management.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/boards", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("public route exposed on management listener: %d", w.Code)
@@ -305,6 +336,13 @@ func TestManagementListenerPolicyAndAuditCorrelation(t *testing.T) {
 	management.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || admin.credential != "credential-value" || admin.requestID != "request-123" {
 		t.Fatalf("admin request not correlated: %d %#v", w.Code, admin)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/admin/v1/session", nil)
+	req.Header.Set("Authorization", "Bearer credential-value")
+	w = httptest.NewRecorder()
+	management.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"test-admin"`) || !strings.Contains(w.Body.String(), `"role":"administrator"`) || strings.Contains(w.Body.String(), "credential-value") {
+		t.Fatalf("unsafe session response: %d %s", w.Code, w.Body.String())
 	}
 }
 

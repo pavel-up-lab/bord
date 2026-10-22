@@ -25,6 +25,12 @@ TARGETS = (
     ("bord", "darwin", "arm64"),
     ("bord", "windows", "amd64"),
     ("bord", "windows", "arm64"),
+    ("bord-admin", "linux", "amd64"),
+    ("bord-admin", "linux", "arm64"),
+    ("bord-admin", "darwin", "amd64"),
+    ("bord-admin", "darwin", "arm64"),
+    ("bord-admin", "windows", "amd64"),
+    ("bord-admin", "windows", "arm64"),
     ("bord-server", "linux", "amd64"),
 )
 
@@ -63,7 +69,10 @@ def main() -> None:
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", default="dist")
     parser.add_argument("--tui-only", action="store_true", help="package only cross-platform bord clients")
+    parser.add_argument("--admin-only", action="store_true", help="package only cross-platform bord-admin clients")
     options = parser.parse_args()
+    if options.tui_only and options.admin_only:
+        parser.error("--tui-only and --admin-only are mutually exclusive")
     if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?", options.version) is None:
         parser.error("version must be a safe semantic version beginning with v")
 
@@ -82,7 +91,11 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="bord-release-") as temporary:
         temp = Path(temporary)
-        targets = tuple(target for target in TARGETS if not options.tui_only or target[0] == "bord")
+        targets = tuple(
+            target for target in TARGETS
+            if (not options.tui_only or target[0] == "bord")
+            and (not options.admin_only or target[0] == "bord-admin")
+        )
         for command, goos, goarch in targets:
             name = f"{command}_{options.version}_{goos}_{goarch}"
             stage = temp / name
@@ -105,6 +118,8 @@ def main() -> None:
             shutil.copy2(root / "THIRD_PARTY_NOTICES", stage / "THIRD_PARTY_NOTICES")
             if command == "bord":
                 shutil.copy2(root / "docs" / "tui.md", stage / "README.md")
+            elif command == "bord-admin":
+                shutil.copy2(root / "docs" / "admin-tui.md", stage / "README.md")
             archive = output / (name + (".zip" if goos == "windows" else ".tar.gz"))
             (archive_zip if goos == "windows" else archive_tar)(stage, archive, epoch)
 
@@ -113,11 +128,13 @@ def main() -> None:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         checksums.append(f"{digest}  {path.name}\n")
     (output / "SHA256SUMS").write_text("".join(checksums), encoding="ascii")
-    if options.tui_only:
+    if options.tui_only or options.admin_only:
+        product = "Bord Admin TUI" if options.admin_only else "Bord TUI"
+        executable = "bord-admin" if options.admin_only else "bord"
         (output / "README.txt").write_text(
-            "Bord TUI " + options.version + "\n\n"
+            product + " " + options.version + "\n\n"
             "Choose the archive matching your operating system and CPU architecture.\n"
-            "Extract it and run bord (bord.exe on Windows). The complete Russian\n"
+            f"Extract it and run {executable} ({executable}.exe on Windows). The complete Russian\n"
             "installation and usage guide is included as README.md in every archive.\n\n"
             "Verify the downloaded archive against SHA256SUMS before extraction.\n",
             encoding="utf-8",

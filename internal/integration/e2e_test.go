@@ -159,9 +159,12 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	if _, err = runtime.DB.Exec(`CREATE TRIGGER reject_test_audit BEFORE INSERT ON moderation_actions WHEN NEW.action='post.visibility' BEGIN SELECT RAISE(ABORT, 'test audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err = runtime.Admin.Authenticate(ctx, credential, "atomic-audit-test"); err != nil {
+	principal, authErr := runtime.Admin.Authenticate(ctx, credential, "atomic-audit-test")
+	if authErr != nil {
+		err = authErr
 		t.Fatal(err)
 	}
+	ctx = api.WithAdminPrincipal(ctx, principal)
 	if err = runtime.Admin.SetPostVisibility(ctx, replied.PostID, false, "atomic audit check", "atomic-audit-test"); err == nil {
 		t.Fatal("moderation succeeded despite rejected audit append")
 	}

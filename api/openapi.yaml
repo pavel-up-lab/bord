@@ -141,6 +141,35 @@ paths:
       responses:
         '200': {description: Reports, content: {application/json: {schema: {type: object, required: [reports], properties: {reports: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Report'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}}}}
         default: {$ref: '#/components/responses/Error'}
+  /admin/v1/session:
+    get:
+      operationId: adminGetSession
+      tags: [admin]
+      security: [{adminBearer: []}]
+      responses:
+        '200': {description: Current administrative identity, content: {application/json: {schema: {$ref: '#/components/schemas/AdminSession'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/posts/{post_id}/context:
+    get:
+      operationId: adminGetPostContext
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters:
+        - {$ref: '#/components/parameters/PostID'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        '200': {description: Moderation context without source network data, content: {application/json: {schema: {$ref: '#/components/schemas/AdminPostContext'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/v1/attachments/{attachment_id}:
+    get:
+      operationId: adminGetAttachment
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/AttachmentID'}]
+      responses:
+        '200': {description: Validated moderation image, headers: {X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}, Content-Disposition: {schema: {type: string}}}, content: {image/jpeg: {schema: {type: string, format: binary}}, image/png: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Error'}
   /admin/v1/posts/{post_id}/visibility:
     put:
       operationId: adminSetPostVisibility
@@ -158,12 +187,32 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
       responses: {'204': {description: Closed}, default: {$ref: '#/components/responses/Error'}}
   /admin/v1/bans:
+    get:
+      operationId: adminListBans
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/PageLimit'}
+        - {name: state, in: query, schema: {type: string, enum: [active, history, all], default: active}}
+      responses:
+        '200': {description: Safe ban history, content: {application/json: {schema: {$ref: '#/components/schemas/AdminBanPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: adminCreateBan
       tags: [admin]
       security: [{adminBearer: []}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateBan'}}}}
       responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Ban'}}}}, default: {$ref: '#/components/responses/Error'}}
+  /admin/v1/audit:
+    get:
+      operationId: adminListAudit
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/PageLimit'}]
+      responses:
+        '200': {description: Sanitized moderation audit, content: {application/json: {schema: {$ref: '#/components/schemas/AdminAuditPage'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /admin/v1/bans/{ban_id}:
     delete:
       operationId: adminRevokeBan
@@ -180,6 +229,14 @@ paths:
       parameters: [{$ref: '#/components/parameters/PostID'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
       responses: {'200': {description: Revealed only to authorized administrator, content: {application/json: {schema: {type: object, additionalProperties: false, required: [ip], properties: {ip: {type: string, format: ip}}}}}}, default: {$ref: '#/components/responses/Error'}}
+  /admin/v1/posts/{post_id}/bans:
+    post:
+      operationId: adminCreatePostBan
+      tags: [admin]
+      security: [{adminBearer: []}]
+      parameters: [{$ref: '#/components/parameters/PostID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreatePostBan'}}}}
+      responses: {'201': {description: Created without disclosing the post subject, content: {application/json: {schema: {$ref: '#/components/schemas/Ban'}}}}, default: {$ref: '#/components/responses/Error'}}
 components:
   securitySchemes:
     adminBearer: {type: http, scheme: bearer}
@@ -219,9 +276,19 @@ components:
     ChallengeRequest: {type: object, additionalProperties: false, required: [purpose], properties: {purpose: {type: string, enum: [create_thread, create_post, report]}}}
     Challenge: {type: object, additionalProperties: false, required: [token, difficulty, expires_at], properties: {token: {type: string, maxLength: 2048}, difficulty: {type: integer, minimum: 1, maximum: 30}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
     Report: {type: object, additionalProperties: false, required: [id, post_id, reason, created_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, post_id: {$ref: '#/components/schemas/PostID'}, reason: {type: string}, created_at: {$ref: '#/components/schemas/Timestamp'}}}
+    AdminRole: {type: string, enum: [reports, moderator, administrator]}
+    AdminSession: {type: object, additionalProperties: false, required: [id, role, expires_at], properties: {id: {type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}, role: {$ref: '#/components/schemas/AdminRole'}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
+    AdminBoardSummary: {type: object, additionalProperties: false, required: [id, slug, title], properties: {id: {$ref: '#/components/schemas/ResourceID'}, slug: {type: string, maxLength: 32}, title: {type: string, maxLength: 100}}}
+    AdminThreadSummary: {type: object, additionalProperties: false, required: [id, closed], properties: {id: {$ref: '#/components/schemas/ThreadID'}, closed: {type: boolean}}}
+    AdminPostContext: {type: object, additionalProperties: false, required: [board, thread, target_post_id, posts], properties: {board: {$ref: '#/components/schemas/AdminBoardSummary'}, thread: {$ref: '#/components/schemas/AdminThreadSummary'}, target_post_id: {$ref: '#/components/schemas/PostID'}, posts: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Post'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
     Reason: {type: object, additionalProperties: false, required: [reason], properties: {reason: {type: string, minLength: 3, maxLength: 500}}}
     SetVisibility: {type: object, additionalProperties: false, required: [visible, reason], properties: {visible: {type: boolean}, reason: {type: string, minLength: 3, maxLength: 500}}}
     CreateBan: {type: object, additionalProperties: false, required: [subject_type, subject, operations, expires_at, reason], properties: {subject_type: {type: string, enum: [ip, prefix, lookup]}, subject: {type: string, maxLength: 256}, board: {type: string, maxLength: 32}, operations: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string}}, expires_at: {$ref: '#/components/schemas/Timestamp'}, reason: {type: string, minLength: 3, maxLength: 500}}}
+    CreatePostBan: {type: object, additionalProperties: false, required: [operations, expires_at, reason], properties: {operations: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string, enum: [create_thread, create_post, delete_post, report]}}, expires_at: {$ref: '#/components/schemas/Timestamp'}, reason: {type: string, minLength: 3, maxLength: 500}}}
     Ban: {type: object, additionalProperties: false, required: [id, expires_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
+    AdminBan: {type: object, additionalProperties: false, required: [id, subject_type, subject, operation, reason, created_at, expires_at, state], properties: {id: {$ref: '#/components/schemas/ResourceID'}, subject_type: {type: string, enum: [ip, lookup, prefix]}, subject: {type: string, maxLength: 256}, operation: {type: string, enum: [create_thread, create_post, delete_post, report]}, reason: {type: string, maxLength: 500}, created_at: {$ref: '#/components/schemas/Timestamp'}, expires_at: {$ref: '#/components/schemas/Timestamp'}, revoked_at: {$ref: '#/components/schemas/Timestamp'}, state: {type: string, enum: [active, expired, revoked]}}}
+    AdminBanPage: {type: object, additionalProperties: false, required: [bans], properties: {bans: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AdminBan'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
+    AdminAuditEntry: {type: object, additionalProperties: false, required: [id, action, outcome, request_id, created_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, actor_id: {type: string, maxLength: 64}, action: {type: string, maxLength: 100}, target_id: {type: string, maxLength: 64}, reason: {type: string, maxLength: 500}, outcome: {type: string, enum: [success, failure]}, error_code: {$ref: '#/components/schemas/ErrorCode'}, request_id: {type: string, minLength: 8, maxLength: 128}, created_at: {$ref: '#/components/schemas/Timestamp'}}}
+    AdminAuditPage: {type: object, additionalProperties: false, required: [entries], properties: {entries: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AdminAuditEntry'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
     ErrorCode: {type: string, enum: [validation_failed, board_not_found, thread_not_found, post_not_found, attachment_not_found, thread_closed, unauthorized, forbidden, rate_limited, challenge_required, invalid_challenge, idempotency_conflict, payload_too_large, conflict, service_unavailable, internal_error]}
     Error: {type: object, additionalProperties: false, required: [code, message, request_id], properties: {code: {$ref: '#/components/schemas/ErrorCode'}, message: {type: string, maxLength: 500}, request_id: {type: string, minLength: 8, maxLength: 128}, fields: {type: object, additionalProperties: {type: string}}, retry_after: {type: integer, minimum: 1}}}

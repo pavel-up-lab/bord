@@ -929,7 +929,7 @@ func TestUntrustedTerminalControlsAreNeutralized(t *testing.T) {
 func TestSanitizeTerminalTextCSIOSC52C0C1(t *testing.T) {
 	input := "ok\x1b[2J\x1b]52;c;c2VjcmV0\a\x00\u0085\u009b31m\nline"
 	got := SanitizeTerminalText(input)
-	if strings.ContainsFunc(got, unsafeTerminalRune) || !strings.Contains(got, "line") {
+	if strings.ContainsFunc(got, func(r rune) bool { return r < 0x20 || r >= 0x7f && r <= 0x9f }) || !strings.Contains(got, "line") {
 		t.Fatalf("unsafe sanitized output %q", got)
 	}
 }
@@ -1299,7 +1299,7 @@ func TestPrepareKittyImageConvertsJPEGToPNG(t *testing.T) {
 
 func TestKittyViewerCommandWritesDirectProtocol(t *testing.T) {
 	var output bytes.Buffer
-	command := &kittyViewerCommand{data: []byte("image"), columns: 10, rows: 4}
+	command := &kittyViewerCommand{Data: []byte("image"), Columns: 10, Rows: 4}
 	command.SetStdin(strings.NewReader("\n"))
 	command.SetStdout(&output)
 	command.SetStderr(io.Discard)

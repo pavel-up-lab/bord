@@ -109,7 +109,7 @@ func New(config Config) (*Runtime, error) {
 		_ = blobs.Close()
 		return nil, err
 	}
-	admin, err := newAdmin(config.DB, config.Clock, keyring, config.LookupKey)
+	admin, err := newAdmin(config.DB, config.Clock, keyring, config.LookupKey, attachments)
 	if err != nil {
 		_ = blobs.Close()
 		return nil, err
@@ -457,6 +457,12 @@ func (r *attachmentRepo) ByID(ctx context.Context, id domain.AttachmentID) (atta
 func (r *attachmentRepo) PublicByID(ctx context.Context, id domain.AttachmentID) (attachment.Record, error) {
 	return r.get(ctx, id, true)
 }
+func (r *attachmentRepo) ModerationByID(ctx context.Context, id domain.AttachmentID) (attachment.Record, error) {
+	q := `SELECT a.id,a.state,a.media_type,a.size_bytes,a.sha256,a.width,a.height,a.safe_filename,a.created_at,coalesce(a.deleted_at,'')
+		FROM attachments a JOIN posts p ON (p.status='visible' AND p.attachment_id=a.id) OR (p.status='hidden' AND p.hidden_attachment_id=a.id)
+		WHERE a.id=? AND a.state='attached'`
+	return r.scanAttachment(ctx, q, id)
+}
 func (r *attachmentRepo) get(ctx context.Context, id domain.AttachmentID, public bool) (attachment.Record, error) {
 	q := `SELECT a.id,a.state,a.media_type,a.size_bytes,a.sha256,a.width,a.height,a.safe_filename,a.created_at,coalesce(a.deleted_at,'') FROM attachments a`
 	if public {
@@ -464,10 +470,13 @@ func (r *attachmentRepo) get(ctx context.Context, id domain.AttachmentID, public
 	} else {
 		q += ` WHERE a.id=?`
 	}
+	return r.scanAttachment(ctx, q, id)
+}
+func (r *attachmentRepo) scanAttachment(ctx context.Context, query string, id domain.AttachmentID) (attachment.Record, error) {
 	var a attachment.Record
 	var hash []byte
 	var created, deleted string
-	e := r.repo.QueryRowContext(ctx, q, id).Scan(&a.ID, &a.State, &a.MediaType, &a.Size, &hash, &a.Width, &a.Height, &a.Filename, &created, &deleted)
+	e := r.repo.QueryRowContext(ctx, query, id).Scan(&a.ID, &a.State, &a.MediaType, &a.Size, &hash, &a.Width, &a.Height, &a.Filename, &created, &deleted)
 	if errors.Is(e, sql.ErrNoRows) {
 		return a, attachment.ErrNotFound
 	}

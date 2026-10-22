@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"bord/api/generated"
+	"bord/internal/terminalui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -14,17 +15,18 @@ const mouseWheelStep = 1
 // Bubble Tea reports zero-based cell coordinates, which map directly onto the
 // exact-width lines emitted by View.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.width <= 0 || m.height <= 0 || msg.X < 0 || msg.Y < 0 || msg.X >= m.width || msg.Y >= m.height {
+	zone := terminalui.MouseZoneAt(m.width, m.height, msg.X, msg.Y)
+	if zone == terminalui.MouseOutside {
 		return m, nil
 	}
 	if m.themeMenu {
 		return m.activateThemeMenuMouse(msg)
 	}
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
-		if msg.Y == 0 {
+		if zone == terminalui.MouseTopBar {
 			return m.activateTop(msg.X)
 		}
-		if msg.Y == m.height-1 {
+		if zone == terminalui.MouseCommandBar {
 			return m.activateCommand(msg.X)
 		}
 	}
@@ -116,17 +118,9 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 		// different (especially destructive) action.
 		return m, nil
 	}
-	compact := m.compactCommandBar(m.width)
-	offset := 0
-	for i, label := range labels {
-		width := commandLabelWidth(label, compact)
-		if x >= offset && x < minInt(m.width, offset+width) {
-			return m.updateKey(keys[i])
-		}
-		offset += width
-		if i < len(labels)-1 {
-			offset++ // one background-colored separator cell
-		}
+	index, ok := terminalui.CommandIndexAt(labels, m.width, x)
+	if ok {
+		return m.updateKey(keys[index])
 	}
 	return m, nil
 }
@@ -135,11 +129,7 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 // key without padding and " action " with one trailing cell; the compact form
 // renders the source label as-is.
 func commandLabelWidth(label string, compact bool) int {
-	width := textWidth(label)
-	if !compact && strings.Contains(label, " ") {
-		width++
-	}
-	return width
+	return terminalui.CommandLabelWidth(label, compact)
 }
 
 func (m Model) commandKeys() []tea.KeyMsg {
