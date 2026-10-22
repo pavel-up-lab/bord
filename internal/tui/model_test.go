@@ -720,6 +720,92 @@ func TestPostScreenF8HitBoxMatchesButtonAndNeverQuits(t *testing.T) {
 	}
 }
 
+func TestPostScreenBottomButtonsAreClickable(t *testing.T) {
+	newModel := func() Model {
+		m := NewModel(context.Background(), &fakeService{})
+		m.width, m.height, m.loading = 120, 24, false
+		m.screen, m.focus, m.activeThread = PostScreen, FocusContent, "thread_1"
+		m.posts = []generated.Post{{Id: "post_1"}}
+		return m
+	}
+	clickCommand := func(m Model, index int) (Model, tea.Cmd) {
+		x := 0
+		for _, label := range m.commandLabels()[:index] {
+			x += commandLabelWidth(label, false) + 1
+		}
+		updated, cmd := m.Update(tea.MouseMsg{X: x, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		return updated.(Model), cmd
+	}
+	if got, _ := clickCommand(newModel(), 0); got.screen != ThreadScreen {
+		t.Fatalf("Back click screen=%v", got.screen)
+	}
+	if got, _ := clickCommand(newModel(), 1); got.err == nil || got.screen != PostScreen {
+		t.Fatalf("Image click screen=%v err=%v", got.screen, got.err)
+	}
+	if got, _ := clickCommand(newModel(), 2); got.screen != ComposerScreen || got.draft.ReplyTo != nil {
+		t.Fatalf("Reply Thread click screen=%v reply=%v", got.screen, got.draft.ReplyTo)
+	}
+	if got, _ := clickCommand(newModel(), 3); got.screen != ComposerScreen || got.draft.ReplyTo == nil || *got.draft.ReplyTo != "post_1" {
+		t.Fatalf("Reply Post click screen=%v reply=%v", got.screen, got.draft.ReplyTo)
+	}
+	if _, cmd := clickCommand(newModel(), 4); cmd == nil {
+		t.Fatal("Quit click returned no command")
+	}
+}
+
+func TestReplyComposerChromeButtonsBypassTextSelection(t *testing.T) {
+	body := "selectable source"
+	newModel := func(pane replyPane) Model {
+		m := NewModel(context.Background(), &fakeService{})
+		m.width, m.height, m.loading = 120, 24, false
+		m.boards = []generated.Board{{Slug: "general"}}
+		m.screen, m.focus, m.activeThread = ThreadScreen, FocusContent, "thread_1"
+		m.posts = []generated.Post{{Id: "post_1", Body: &body, State: generated.Visible}}
+		m.beginReplyComposer("post_1")
+		m.replyPane = pane
+		if pane == replySourcePane {
+			m.editor.Blur()
+			m.replyPostAnchor, m.replyPostCursor = 0, 6
+		}
+		return m
+	}
+	clickCommand := func(m Model, index int) (Model, tea.Cmd) {
+		x := 0
+		for _, label := range m.commandLabels()[:index] {
+			x += commandLabelWidth(label, false) + 1
+		}
+		updated, cmd := m.Update(tea.MouseMsg{X: x, Y: m.height - 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		return updated.(Model), cmd
+	}
+	if got, cmd := clickCommand(newModel(replyEditorPane), 0); cmd == nil || !got.loading {
+		t.Fatal("Send click was intercepted by editor pane")
+	}
+	if got, _ := clickCommand(newModel(replyEditorPane), 1); !got.attachmentPicking {
+		t.Fatal("Attach click was intercepted by editor pane")
+	}
+	if got, _ := clickCommand(newModel(replyEditorPane), 2); got.replyPane != replySourcePane {
+		t.Fatal("Source click did not switch pane")
+	}
+	if got, _ := clickCommand(newModel(replyEditorPane), 3); got.screen != ThreadScreen {
+		t.Fatalf("Cancel click screen=%v", got.screen)
+	}
+	if got, cmd := clickCommand(newModel(replySourcePane), 0); cmd == nil || !got.clipboardCopied {
+		t.Fatal("Copy click was intercepted by source pane")
+	}
+	if got, _ := clickCommand(newModel(replySourcePane), 1); got.replyPane != replyEditorPane {
+		t.Fatal("Reply click did not switch pane")
+	}
+	if got, _ := clickCommand(newModel(replySourcePane), 2); got.screen != ThreadScreen {
+		t.Fatalf("source Cancel click screen=%v", got.screen)
+	}
+	m := newModel(replyEditorPane)
+	themeX := textWidth(" BORD  [← Назад] ") + 1
+	updated, _ := m.Update(tea.MouseMsg{X: themeX, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := updated.(Model); !got.themeMenu {
+		t.Fatal("top theme click was intercepted by reply composer")
+	}
+}
+
 func TestCommandLabelsAndKeysStayAligned(t *testing.T) {
 	m := NewModel(context.Background(), &fakeService{})
 	for _, screen := range []Screen{CatalogScreen, ThreadScreen, PostScreen, AttachmentScreen, ComposerScreen, HelpScreen} {

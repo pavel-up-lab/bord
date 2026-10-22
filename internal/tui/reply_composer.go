@@ -268,6 +268,19 @@ func (m *Model) ensureReplyCursorVisible() {
 func (m Model) selectReplyPostMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd, bool) {
 	panelX, panelWidth := m.replySourcePanelGeometry()
 	inSource := msg.X >= panelX && msg.X < panelX+panelWidth
+	if m.replyPostDragging && (msg.Action == tea.MouseActionMotion || msg.Action == tea.MouseActionRelease) {
+		if offset, ok := m.replyOffsetAtMouse(msg.X, msg.Y); ok {
+			m.replyPostCursor = offset
+		}
+		if msg.Action == tea.MouseActionRelease {
+			m.replyPostDragging = false
+		}
+		return m, nil, true
+	}
+	inWorkspace := msg.Y >= 1 && msg.Y < m.height-2
+	if !inWorkspace {
+		return m, nil, false
+	}
 	if !m.isNarrow() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && !inSource {
 		m.replyPane, m.replyPostDragging, m.clipboardCopied = replyEditorPane, false, false
 		m.editor.Focus()
@@ -296,15 +309,6 @@ func (m Model) selectReplyPostMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd, bool)
 			return m, nil, true
 		}
 		m.replyPostAnchor, m.replyPostCursor, m.replyPostDragging = offset, offset, true
-		return m, nil, true
-	}
-	if m.replyPostDragging && (msg.Action == tea.MouseActionMotion || msg.Action == tea.MouseActionRelease) {
-		if offset, ok := m.replyOffsetAtMouse(msg.X, msg.Y); ok {
-			m.replyPostCursor = offset
-		}
-		if msg.Action == tea.MouseActionRelease {
-			m.replyPostDragging = false
-		}
 		return m, nil, true
 	}
 	return m, nil, false

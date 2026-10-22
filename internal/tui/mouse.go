@@ -17,6 +17,17 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.width <= 0 || m.height <= 0 || msg.X < 0 || msg.Y < 0 || msg.X >= m.width || msg.Y >= m.height {
 		return m, nil
 	}
+	if m.themeMenu {
+		return m.activateThemeMenuMouse(msg)
+	}
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		if msg.Y == 0 {
+			return m.activateTop(msg.X)
+		}
+		if msg.Y == m.height-1 {
+			return m.activateCommand(msg.X)
+		}
+	}
 	if m.screen == ComposerScreen && m.draft.ReplyTo != nil {
 		if updated, cmd, handled := m.selectReplyPostMouse(msg); handled {
 			return updated, cmd
@@ -32,17 +43,8 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.wheelAt(msg.X, msg.Y, delta)
 	}
-	if m.themeMenu {
-		return m.activateThemeMenuMouse(msg)
-	}
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
 		return m, nil
-	}
-	if msg.Y == 0 {
-		return m.activateTop(msg.X)
-	}
-	if msg.Y == m.height-1 {
-		return m.activateCommand(msg.X)
 	}
 	if m.screen == ComposerScreen {
 		if msg.Y > 1 && msg.Y < m.height-3 {
