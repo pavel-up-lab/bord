@@ -107,11 +107,12 @@ func (m Model) openCreateBoardModal() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	slug := textinput.New()
-	slug.Placeholder, slug.CharLimit, slug.Width = "slug", 32, 32
+	slug.Prompt, slug.Placeholder, slug.CharLimit = "", "например, games", 32
 	title := textinput.New()
-	title.Placeholder, title.CharLimit, title.Width = "Название", 100, 56
+	title.Prompt, title.Placeholder, title.CharLimit = "", "Название доски", 100
 	updated := m.openModal(modalCreateBoard, "")
 	updated.modal.slug, updated.modal.title = slug, title
+	updated.resizeModalFields()
 	updated.focusBoardModalField(0)
 	return updated, nil
 }
@@ -135,8 +136,21 @@ func (m Model) openBoardStateModal(enabled bool) (tea.Model, tea.Cmd) {
 func (m Model) openModal(kind modalKind, target string) Model {
 	editor := newReasonEditor()
 	m.modal = &modal{kind: kind, target: target, editor: editor}
+	m.resizeModalFields()
 	m.err, m.revealedIP = nil, ""
 	return m
+}
+
+func (m *Model) resizeModalFields() {
+	if m.modal == nil {
+		return
+	}
+	width := clamp(m.width-6, 1, 72)
+	m.modal.editor.SetWidth(width)
+	if m.modal.kind == modalCreateBoard {
+		m.modal.slug.Width = width
+		m.modal.title.Width = width
+	}
 }
 
 func (m Model) canModerate() bool {

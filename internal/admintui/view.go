@@ -211,31 +211,44 @@ func (m Model) boardRows() []string {
 
 func (m Model) modalRows(theme terminalui.Theme, width, height int) []string {
 	title := map[modalKind]string{modalHide: "Скрыть пост", modalRestore: "Восстановить пост", modalClose: "Закрыть тред", modalBan: "Создать блокировку", modalRevoke: "Отозвать блокировку", modalReveal: "Раскрыть IP — чувствительные данные", modalCreateBoard: "Создать доску", modalArchiveBoard: "Архивировать доску", modalRestoreBoard: "Восстановить доску"}[m.modal.kind]
-	rows := []string{"Действие: " + title, "Цель: " + terminalui.SanitizeTerminalText(m.modal.target), ""}
+	rows := []terminalui.Row{{Lines: []string{"Действие: " + title}}, {Lines: []string{"Цель: " + terminalui.SanitizeTerminalText(m.modal.target)}}, {Lines: []string{""}}}
 	if m.modal.kind == modalCreateBoard {
-		rows = []string{"Slug:", m.modal.slug.View(), "Название:", m.modal.title.View(), "Причина:"}
+		rows = []terminalui.Row{
+			{Lines: []string{boardFieldLabel(m.modal.field == 0, "1/3 Slug — адрес: a-z, 0-9 и дефис")}},
+			{Lines: []string{m.modal.slug.View()}, TrustedANSI: true},
+			{Lines: []string{boardFieldLabel(m.modal.field == 1, "2/3 Название — отображаемое имя доски")}},
+			{Lines: []string{m.modal.title.View()}, TrustedANSI: true},
+			{Lines: []string{boardFieldLabel(m.modal.field == 2, "3/3 Причина — запись для журнала аудита")}},
+		}
 	}
-	rows = append(rows, strings.Split(m.modal.editor.View(), "\n")...)
+	rows = append(rows, terminalui.Row{Lines: strings.Split(m.modal.editor.View(), "\n"), TrustedANSI: true})
 	if m.modal.kind == modalBan {
-		rows = append(rows, "Операции: "+strings.Join(m.modal.operations, ", ")+" • TTL: "+m.modal.ttl.String())
+		rows = append(rows, terminalui.Row{Lines: []string{"Операции: " + strings.Join(m.modal.operations, ", ") + " • TTL: " + m.modal.ttl.String()}})
 	}
 	if m.revealedIP != "" {
-		rows = append(rows, "", "IP: "+m.revealedIP, "Значение не копируется автоматически.")
+		rows = append(rows, terminalui.Row{Lines: []string{""}}, terminalui.Row{Lines: []string{"IP: " + m.revealedIP}}, terminalui.Row{Lines: []string{"Значение не копируется автоматически."}})
 	}
 	if m.modal.err != "" {
-		rows = append(rows, "", terminalui.SanitizeTerminalText(m.modal.err))
+		rows = append(rows, terminalui.Row{Lines: []string{""}}, terminalui.Row{Lines: []string{terminalui.SanitizeTerminalText(m.modal.err)}})
 	}
 	if m.modal.pending {
-		rows = append(rows, "", "Выполняется…")
+		rows = append(rows, terminalui.Row{Lines: []string{""}}, terminalui.Row{Lines: []string{"Выполняется…"}})
 	} else if m.modal.confirmed {
-		rows = append(rows, "", "Ctrl+S — подтвердить окончательно • Esc — отмена")
+		rows = append(rows, terminalui.Row{Lines: []string{""}}, terminalui.Row{Lines: []string{"Ctrl+S — подтвердить окончательно • Esc — отмена"}})
 	} else {
-		rows = append(rows, "", "Ctrl+S — перейти к подтверждению • Esc — отмена")
+		rows = append(rows, terminalui.Row{Lines: []string{""}}, terminalui.Row{Lines: []string{"Ctrl+S — перейти к подтверждению • Esc — отмена"}})
 	}
 	if m.modal.kind == modalCreateBoard {
-		rows = append(rows, "Tab/Enter — следующее поле")
+		rows = append(rows, terminalui.Row{Lines: []string{"Tab / Shift+Tab — выбрать поле • Enter — дальше"}})
 	}
-	return panel(theme, title, "ДЕЙСТВИЕ / ПРИЧИНА / ПОДТВЕРЖДЕНИЕ", rows, width, height, true)
+	return terminalui.Panel(theme, width, height, title, "ПОЛЯ / ПРИЧИНА / ПОДТВЕРЖДЕНИЕ", rows, true)
+}
+
+func boardFieldLabel(active bool, label string) string {
+	if active {
+		return "> " + label
+	}
+	return "  " + label
 }
 
 func (m Model) statusLine() string {

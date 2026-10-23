@@ -312,6 +312,38 @@ func TestCreateBoardModalValidationConfirmationRetryAndMouseFocus(t *testing.T) 
 	}
 }
 
+func TestCreateBoardModalIsResponsiveAndLabelsFields(t *testing.T) {
+	for _, width := range []int{34, 80, 140} {
+		m := loadedModel(t)
+		m.screen = BoardsScreen
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 22})
+		m = updated.(Model)
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+		m = updated.(Model)
+
+		if m.modal.slug.Width > max(1, width-6) || m.modal.title.Width > max(1, width-6) {
+			t.Fatalf("width=%d fields slug=%d title=%d", width, m.modal.slug.Width, m.modal.title.Width)
+		}
+		view := m.View()
+		for row, line := range strings.Split(view, "\n") {
+			if got := terminalui.TextWidth(line); got != width {
+				t.Fatalf("width=%d row=%d rendered=%d", width, row, got)
+			}
+		}
+		plain := ansi.Strip(view)
+		if strings.Contains(plain, "┃") {
+			t.Fatalf("width=%d contains textarea decoration: %q", width, plain)
+		}
+		if width >= 80 {
+			for _, fragment := range []string{"> 1/3 Slug — адрес", "2/3 Название", "3/3 Причина", "Tab / Shift+Tab — выбрать поле"} {
+				if !strings.Contains(plain, fragment) {
+					t.Fatalf("width=%d missing %q in %q", width, fragment, plain)
+				}
+			}
+		}
+	}
+}
+
 func TestArchiveRestoreRequireSecondConfirmationAndPreserveConflictState(t *testing.T) {
 	m := loadedModel(t)
 	m.screen, m.boards, m.boardIndex = BoardsScreen, fixtureService().boards.Items, 0

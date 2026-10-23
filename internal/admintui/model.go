@@ -226,6 +226,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.resizeModalFields()
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -679,9 +680,11 @@ func validReason(value string) bool {
 func newReasonEditor() textarea.Model {
 	editor := textarea.New()
 	editor.Placeholder = "Причина (3–500 символов)…"
+	editor.Prompt = ""
+	editor.ShowLineNumbers = false
 	editor.CharLimit = 500
 	editor.SetWidth(56)
-	editor.SetHeight(4)
+	editor.SetHeight(3)
 	editor.Focus()
 	return editor
 }
