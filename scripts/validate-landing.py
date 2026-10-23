@@ -87,6 +87,8 @@ def main() -> None:
         "F4</b> Search",
         "[Настройки ▾]",
         "Открыть вложение",
+        "четыре встроенные темы и импорт .ini-скинов Midnight Commander",
+        "установленные .ini-скины Midnight Commander добавляются в список автоматически",
         "актуальный iTerm2 и WezTerm",
         "brew upgrade --cask iterm2",
         "winget install --id wez.wezterm -e",
