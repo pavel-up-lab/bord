@@ -22,6 +22,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.themePicker.IsOpen() {
 		return m.activateThemeMenuMouse(msg)
 	}
+	if m.settingsOpen || m.imageSettings != nil {
+		return m.updateSettingsMouse(msg)
+	}
 	if m.report != nil {
 		return m.updateReportMouse(msg)
 	}
@@ -85,6 +88,7 @@ func (m Model) activateTop(x int) (tea.Model, tea.Cmd) {
 		key   tea.KeyMsg
 	}{
 		{m.themeControlLabel(), tea.KeyMsg{Type: tea.KeyF2}},
+		{"[Настройки ▾] ", tea.KeyMsg{Type: tea.KeyF6}},
 		{"[Справка]", tea.KeyMsg{Type: tea.KeyF1}},
 	} {
 		if x >= offset && x < minInt(m.width, offset+textWidth(item.label)) {

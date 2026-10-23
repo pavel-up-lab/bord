@@ -380,6 +380,86 @@ func TestThemePickerLayoutAndCancellationRegression(t *testing.T) {
 	}
 }
 
+func TestSettingsPopupAndImageModeModal(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{}).WithAttachmentViewer(InlineAuto, nil)
+	m.width, m.height, m.loading = 80, 24, false
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyF6})
+	m = updated.(Model)
+	if command != nil || !m.settingsOpen || !strings.Contains(m.View(), "Изображения") {
+		t.Fatalf("settings popup open=%v cmd=%v", m.settingsOpen, command)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.settingsOpen || m.imageSettings == nil || !strings.Contains(m.View(), "Настройки изображений") {
+		t.Fatal("image settings modal did not open")
+	}
+	assertDimensions(t, m.View(), 80, 24)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.imageSettings != nil || m.ImageModeSetting() != string(InlineANSI) || !strings.Contains(m.notice, "ANSI") {
+		t.Fatalf("modal=%#v mode=%q notice=%q", m.imageSettings, m.ImageModeSetting(), m.notice)
+	}
+}
+
+func TestImageSettingsModalFitsResponsiveLayouts(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 32, Height: 10}, {Width: 12, Height: 6}, {Width: 1, Height: 1}} {
+		m := NewModel(context.Background(), &fakeService{})
+		m.width, m.height, m.loading = size.Width, size.Height, false
+		m.openImageSettings()
+		assertDimensions(t, m.View(), max(1, size.Width), max(1, size.Height))
+	}
+}
+
+func TestSettingsAndImageModeCanBeSelectedWithMouse(t *testing.T) {
+	m := NewModel(context.Background(), &fakeService{}).WithAttachmentViewer(InlineAuto, nil)
+	m.width, m.height, m.loading = 80, 24, false
+	click := func(x, y int) tea.MouseMsg {
+		return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	}
+	updated, _ := m.Update(click(m.settingsAnchor()+1, 0))
+	m = updated.(Model)
+	if !m.settingsOpen {
+		t.Fatal("settings top button did not open")
+	}
+	x, _ := m.settingsMenuGeometry()
+	updated, _ = m.Update(click(x+2, 2))
+	m = updated.(Model)
+	if m.imageSettings == nil {
+		t.Fatal("image settings item did not open modal")
+	}
+	x, y, _, _ := m.imageSettingsGeometry()
+	updated, _ = m.Update(click(x+3, y+3))
+	m = updated.(Model)
+	if m.ImageModeSetting() != string(InlineW3M) {
+		t.Fatalf("image mode=%q", m.ImageModeSetting())
+	}
+}
+
+func TestANSIImageModeRendersInsideAttachmentScreen(t *testing.T) {
+	imageData := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	imageData.Set(0, 0, color.NRGBA{R: 255, A: 255})
+	imageData.Set(1, 0, color.NRGBA{G: 255, A: 255})
+	imageData.Set(0, 1, color.NRGBA{B: 255, A: 255})
+	imageData.Set(1, 1, color.NRGBA{R: 255, G: 255, A: 255})
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, imageData); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(context.Background(), &fakeService{}).WithAttachmentViewer(InlineANSI, nil)
+	m.width, m.height, m.loading, m.screen = 40, 16, false, AttachmentScreen
+	m.attachmentImage = encoded.Bytes()
+	m.renderAttachmentANSI()
+	view := m.View()
+	assertDimensions(t, view, 40, 16)
+	if !strings.Contains(view, "▀") || !strings.Contains(view, "38;2;255;0;0") {
+		t.Fatalf("ANSI image missing:\n%s", view)
+	}
+}
+
 func TestMouseCoordinatesAcrossLayouts(t *testing.T) {
 	body := "preview"
 	newModel := func(width, height int) Model {
@@ -704,7 +784,7 @@ func TestMouseMenusBackAndComposerControls(t *testing.T) {
 	if m.theme != ThemeAmber {
 		t.Fatalf("top theme click selected %q", m.theme)
 	}
-	updated, _ = m.Update(click(textWidth(" BORD  "+m.themeControlLabel())+1, 0))
+	updated, _ = m.Update(click(textWidth(" BORD  "+m.themeControlLabel()+"[Настройки ▾] ")+1, 0))
 	m = updated.(Model)
 	if m.screen != HelpScreen {
 		t.Fatalf("top help click screen=%v", m.screen)

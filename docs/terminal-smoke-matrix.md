@@ -21,6 +21,8 @@ make terminal-smoke
 | Полный keyboard flow и mock API | model/subprocess | model/subprocess | model/subprocess | `TestKeyboardOnlySmokeAndGracefulQuit`, `TestScriptedFlowAgainstMockServer` |
 | External opener | `xdg-open` | `open` | `rundll32.exe` file association | platform-specific `TestTerminalSmokeOpenerCommand`; argv передается без shell |
 | Kitty auto/override/off и fallback | model fixture | model fixture | model fixture | `TestKittyRendererAndFallback` и golden escape sequence |
+| ANSI half-block viewer | model fixture | model fixture | model fixture | `TestRenderANSIImageUsesBoundedHalfBlocks`, `TestANSIImageModeRendersInsideAttachmentScreen` |
+| w3m viewer | native command, если установлен | native command, если установлен | ожидаемый fallback | argv передаётся напрямую без shell; отсутствие команды обрабатывается как ошибка viewer |
 | Ошибка верхнего уровня и restoration | subprocess | subprocess | subprocess | `TestTerminalRestorationSubprocess` проверяет выход из alternate screen |
 | SIGTERM и restoration | native subprocess | native subprocess | неприменимо | `TestTerminalSmokeSignalRestoresAlternateScreen`; Windows использует keyboard/error fixtures |
 
@@ -39,6 +41,8 @@ runners. Обновлять эту формулировку на «провер�
 - полное управление с клавиатуры и текстовая информация о вложении;
 - Kitty graphics только при положительном capability detection либо явном
   `--inline=kitty`; `--inline=off` всегда запрещает inline rendering;
+- `--inline=ansi` использует только true-color ANSI и Unicode half-block ячейки;
+  `--inline=w3m` требует отдельно установленную команду `w3m`;
 - внешний opener является гарантированным fallback и запускается напрямую,
   без интерпретации имени файла shell;
 - штатный выход, `Ctrl+C`, ошибка ввода и SIGTERM на Unix завершают программу с

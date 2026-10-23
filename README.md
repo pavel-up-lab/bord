@@ -362,7 +362,7 @@ bord --server https://board.example.org
 --server URL       адрес backend; иначе BORD_SERVER, затем сохранённое значение
 --config PATH      путь к локальному state.json
 --theme NAME|PATH  встроенная тема, имя или путь к MC skin .ini
---inline MODE      auto, kitty или off
+--inline MODE      auto, kitty, w3m, ansi или off
 --timeout DURATION HTTP timeout, по умолчанию 15s
 --version          версия клиента
 ```
@@ -386,8 +386,9 @@ $env:BORD_SERVER = "https://board.example.org"
 
 `--inline=auto` использует прямой Kitty image viewer в автоматически
 распознанном Kitty terminal и возвращается в TUI по `Enter`,
-`--inline=kitty` принудительно выбирает Kitty protocol, `--inline=off` оставляет
-текстовую карточку и внешний opener. Для внешнего открытия используются
+`--inline=kitty` принудительно выбирает Kitty protocol, `--inline=w3m` запускает
+установленный `w3m`, `--inline=ansi` рисует изображение цветными текстовыми
+ячейками прямо в Bord, а `--inline=off` оставляет текстовую карточку и внешний opener. Для внешнего открытия используются
 `xdg-open`, `open` или Windows file association без запуска shell. Для WezTerm
 и других совместимых терминалов Kitty protocol можно включить через
 `--inline kitty`.
@@ -441,6 +442,8 @@ idempotency key и не создаёт дубликат.
 ### Общие команды
 
 - `t` / `F2` — выпадающий список встроенных и найденных MC-тем;
+- `s` / `F6` — меню настроек; пункт «Изображения» открывает выбор нативного,
+  `w3m` или ANSI-просмотра;
 - `?` / `F1` — справка;
 - `q`, `Ctrl+C` или `F10` — выход;
 - колесо мыши — прокрутка панели под указателем;

@@ -38,7 +38,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags.SetOutput(safeTerminalWriter{stderr})
 	server := flags.String("server", "", "адрес сервера")
 	statePath := flags.String("config", "", "путь к локальному состоянию")
-	inline := flags.String("inline", "", "inline-графика: auto, kitty или off")
+	inline := flags.String("inline", "", "изображения: auto, kitty, w3m, ansi или off")
 	themeFlag := flags.String("theme", "", "тема: встроенное имя, MC skin или путь к .ini")
 	timeout := flags.Duration("timeout", 15*time.Second, "таймаут HTTP")
 	showVersion := flags.Bool("version", false, "показать версию")

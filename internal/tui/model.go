@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"net/http"
 	"os"
@@ -63,14 +64,14 @@ type Service interface {
 }
 
 type KeyMap struct {
-	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, DeletePost, Report, Attachment, PickAttachment, Help, Theme, Quit, Send, Cancel string
+	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, DeletePost, Report, Attachment, PickAttachment, Help, Theme, Settings, Quit, Send, Cancel string
 }
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up: "up,k", Down: "down,j", PageUp: "pgup", PageDown: "pgdown", Switch: "tab", Open: "enter", Back: "esc", Refresh: "r,f5", Search: "/,f4",
 		NewThread: "n,f7", Reply: "p,f7", ReplyPost: "P,shift+p,f8", DeletePost: "d,delete", Report: "R,shift+r", Attachment: "o", PickAttachment: "ctrl+o", Help: "?,f1", Quit: "q,ctrl+c,f10", Send: "ctrl+s", Cancel: "esc",
-		Theme: "t,f2",
+		Theme: "t,f2", Settings: "s,f6",
 	}
 }
 
@@ -107,12 +108,17 @@ type Model struct {
 	theme                                                ThemeName
 	themes                                               ThemeCatalog
 	themePicker                                          terminalui.ThemePicker
+	settingsOpen                                         bool
+	imageSettings                                        *imageSettingsModal
+	imageMode                                            InlineMode
 	replyPane                                            replyPane
 	replyPostCursor, replyPostAnchor, replyPostScroll    int
 	replyPostDragging                                    bool
 	clipboardOSC                                         string
 	clipboardCopied                                      bool
 	attachmentData                                       []byte
+	attachmentImage                                      []byte
+	attachmentANSI                                       []string
 	attachmentFile, attachmentID, attachmentWarning      string
 	attachmentRenderer                                   KittyRenderer
 	attachmentCache                                      *client.Cache
@@ -174,7 +180,7 @@ type AttachmentSelectedMsg struct {
 
 type attachmentLoadedMsg struct {
 	id, path, warning string
-	data              []byte
+	data, original    []byte
 	err               error
 }
 
@@ -192,12 +198,16 @@ func NewModel(ctx context.Context, api Service) Model {
 	editor.CharLimit = 10000
 	editor.SetWidth(60)
 	editor.SetHeight(8)
-	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), replyPostAnchor: -1}
+	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), imageMode: InlineAuto, replyPostAnchor: -1}
 }
 
 // WithAttachmentViewer wires verified downloads to Kitty inline graphics and
 // the platform opener fallback.
 func (m Model) WithAttachmentViewer(mode InlineMode, cache *client.Cache) Model {
+	if !terminalui.ValidInlineMode(mode) {
+		mode = InlineAuto
+	}
+	m.imageMode = mode
 	m.attachmentRenderer = KittyRenderer{Capability: EnvironmentCapabilities{}, Mode: mode}
 	m.attachmentCache = cache
 	m.openExternal = client.OpenExternal
@@ -236,6 +246,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.configureEditorWidth()
 		m.editor.SetHeight(max(1, msg.Height-10))
 		m.resizeReportEditor()
+		m.renderAttachmentANSI()
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -364,7 +375,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
-			m.attachmentData, m.attachmentFile, m.attachmentWarning = msg.data, msg.path, msg.warning
+			m.attachmentData, m.attachmentImage, m.attachmentFile, m.attachmentWarning = msg.data, msg.original, msg.path, msg.warning
+			m.renderAttachmentANSI()
+			if m.imageMode == InlineW3M && msg.path != "" {
+				return m, m.viewAttachmentW3M()
+			}
 			if len(msg.data) > 0 && m.attachmentRenderer.Available() {
 				return m, m.viewAttachmentInline()
 			}
@@ -392,6 +407,12 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.report != nil {
 		return m.updateReportKey(msg)
 	}
+	if m.imageSettings != nil {
+		return m.updateImageSettingsKey(key)
+	}
+	if m.settingsOpen {
+		return m.updateSettingsMenuKey(key)
+	}
 	m.notice = ""
 	if m.themePicker.IsOpen() {
 		return m.updateThemeMenuKey(key)
@@ -411,6 +432,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if matches(key, m.keys.Theme) && (m.screen != ComposerScreen || key == "f2") {
 		m.openThemeMenu()
+		return m, nil
+	}
+	if matches(key, m.keys.Settings) && (m.screen != ComposerScreen || key == "f6") {
+		m.openSettingsMenu()
 		return m, nil
 	}
 	if m.screen == ComposerScreen {
@@ -590,8 +615,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case matches(key, m.keys.Report) && m.screen == PostScreen:
 		m.openReportForm()
 	case matches(key, m.keys.Attachment):
-		if m.screen == AttachmentScreen && len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
-			return m, m.viewAttachmentInline()
+		if m.screen == AttachmentScreen {
+			if m.imageMode == InlineW3M && m.attachmentFile != "" {
+				return m, m.viewAttachmentW3M()
+			}
+			if len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
+				return m, m.viewAttachmentInline()
+			}
 		}
 		if m.screen == ThreadScreen || m.screen == PostScreen {
 			post, ok := m.currentPost()
@@ -833,6 +863,8 @@ func (m *Model) uploadAttachment(path string) tea.Cmd {
 
 func (m *Model) clearAttachmentViewer() {
 	m.attachmentData = nil
+	m.attachmentImage = nil
+	m.attachmentANSI = nil
 	m.attachmentFile = ""
 	m.attachmentID = ""
 	m.attachmentWarning = ""
@@ -851,7 +883,7 @@ func (m Model) loadAttachment(meta generated.Attachment) tea.Cmd {
 		if err != nil {
 			return attachmentLoadedMsg{id: id, err: err}
 		}
-		return attachmentLoadedMsg{id: id, path: prepared.Path, data: prepared.Inline, warning: prepared.Warning}
+		return attachmentLoadedMsg{id: id, path: prepared.Path, data: prepared.Inline, original: prepared.Original, warning: prepared.Warning}
 	}
 }
 
@@ -883,6 +915,30 @@ func (m Model) viewAttachmentInline() tea.Cmd {
 		}
 		return attachmentInlineClosedMsg{}
 	})
+}
+
+func (m Model) viewAttachmentW3M() tea.Cmd {
+	viewer := &terminalui.W3MViewerCommand{Context: m.ctx, Path: m.attachmentFile}
+	return tea.Exec(viewer, func(err error) tea.Msg {
+		if err != nil {
+			return attachmentInlineClosedMsg{err: errors.New("не удалось открыть изображение через w3m")}
+		}
+		return attachmentInlineClosedMsg{}
+	})
+}
+
+func (m *Model) renderAttachmentANSI() {
+	if m.imageMode != InlineANSI || len(m.attachmentImage) == 0 {
+		m.attachmentANSI = nil
+		return
+	}
+	lines, err := terminalui.RenderANSIImage(m.attachmentImage, max(1, m.width-4), max(1, m.height-8), color.RGBA{})
+	if err != nil {
+		m.attachmentANSI = nil
+		m.attachmentWarning = "ANSI-показ недоступен"
+		return
+	}
+	m.attachmentANSI = lines
 }
 
 func (m *Model) watchEvents() tea.Cmd {
@@ -933,7 +989,13 @@ func (m Model) View() string {
 		lines = append(lines, paint(colors.Background, colors.Foreground, "", w))
 	}
 	if m.themePicker.IsOpen() {
-		lines = m.themePicker.Overlay(lines, m.themes, colors, m.width, m.height, textWidth(" BORD  "))
+		lines = m.themePicker.Overlay(lines, m.themes, colors, m.width, m.height, m.themeAnchor())
+	}
+	if m.settingsOpen {
+		lines = m.overlaySettingsMenu(lines, colors)
+	}
+	if m.imageSettings != nil {
+		lines = m.overlayImageSettings(lines, colors)
 	}
 	if m.report != nil {
 		lines = m.overlayReport(lines, colors)
@@ -1008,7 +1070,18 @@ func (m Model) topBarLeft() string {
 	if m.screen == PostScreen {
 		left += "[Пожаловаться] "
 	}
-	return left + m.themeControlLabel() + "[Справка]"
+	return left + m.themeControlLabel() + "[Настройки ▾] [Справка]"
+}
+
+func (m Model) themeAnchor() int {
+	anchor := " BORD  "
+	if m.canGoBack() {
+		anchor += "[← Назад] "
+	}
+	if m.screen == PostScreen {
+		anchor += "[Пожаловаться] "
+	}
+	return textWidth(anchor)
 }
 
 func (m Model) themeControlLabel() string {
@@ -1021,6 +1094,7 @@ func (m Model) themeControlLabel() string {
 }
 
 func (m *Model) openThemeMenu() {
+	m.settingsOpen = false
 	m.themePicker.Open(m.themes, m.theme, m.height)
 }
 
@@ -1032,7 +1106,7 @@ func (m Model) updateThemeMenuKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) themeMenuGeometry() (int, int, int) {
-	return m.themePicker.Geometry(m.themes, m.width, m.height, textWidth(" BORD  "))
+	return m.themePicker.Geometry(m.themes, m.width, m.height, m.themeAnchor())
 }
 
 func (m Model) workspace(t theme, width, height int) []string {
@@ -1148,9 +1222,14 @@ func (m Model) attachmentRows() []displayRow {
 	if m.err != nil {
 		return []displayRow{{Lines: []string{"Ошибка: " + SanitizeTerminalText(m.err.Error()), "", "Esc  вернуться к посту"}}}
 	}
+	if m.imageMode == InlineANSI && len(m.attachmentANSI) > 0 {
+		return []displayRow{{Lines: m.attachmentANSI, TrustedANSI: true}, {Lines: []string{"Enter  открыть системным приложением • Esc вернуться"}}}
+	}
 	lines := []string{}
 	if len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
 		lines = append(lines, "Kitty-просмотр закрыт.", "o      показать изображение снова", "Enter  открыть системным приложением")
+	} else if m.imageMode == InlineW3M {
+		lines = append(lines, "w3m-просмотр закрыт.", "o      показать изображение снова", "Enter  открыть системным приложением")
 	} else {
 		lines = append(lines, "Inline-графика недоступна в этом терминале.", "Enter  открыть системным приложением")
 	}
@@ -1185,7 +1264,7 @@ func (m Model) helpLines() []displayRow {
 	return []displayRow{{Lines: []string{
 		"↑/k ↓/j   навигация / прокрутка полного поста", "PgUp/PgDn  страницы списков / соседний полный пост", "Tab        сменить панель", "Enter      открыть тред / полный пост", "Esc        назад / закрыть",
 		"n / F7     новый тред (только каталог)", "p / F7     ответ в открытый тред", "P / F8     ответ на выделенный пост", "d / Delete удалить свой пост", "R          пожаловаться на открытый пост",
-		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t / F2     список встроенных и MC-тем", "?          эта справка", "q Ctrl+C   выход",
+		"r /        обновить / поиск", "o Ctrl+O   открыть / прикрепить", "t / F2     список встроенных и MC-тем", "s / F6     настройки", "?          эта справка", "q Ctrl+C   выход",
 		"Ответ      Tab — исходный пост; Shift+стрелки — выделить; Ctrl+C — копировать", "Мышь       один клик открывает; drag выделяет текст исходного поста", "F8         ответить на выделенный/открытый пост", "Колесо     навигация или прокрутка",
 	}}}
 }
@@ -1555,6 +1634,9 @@ func (m Model) Theme() ThemeName { return m.theme }
 
 // ThemeSetting returns a rediscoverable name or path for local-state persistence.
 func (m Model) ThemeSetting() string { return m.themes.Setting(m.theme) }
+
+// ImageModeSetting returns the selected attachment viewer for persistence.
+func (m Model) ImageModeSetting() string { return string(m.imageMode) }
 
 // Close cancels public HTTP/SSE work owned by this model.
 func (m Model) Close() {

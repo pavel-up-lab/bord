@@ -111,6 +111,7 @@ func (m Model) updateChild(mode Mode, message tea.Msg) (tea.Model, tea.Cmd) {
 	updated, command := m.user.Update(message)
 	m.user = updated.(tui.Model)
 	m.admin = m.admin.WithThemes(m.themes, terminalui.ThemeName(m.user.Theme()))
+	m.admin = m.admin.WithImageMode(terminalui.InlineMode(m.user.ImageModeSetting()))
 	return m, tag(UserMode, command)
 }
 

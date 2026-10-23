@@ -156,6 +156,14 @@ func (m Model) WithThemes(catalog terminalui.ThemeCatalog, selected terminalui.T
 
 func (m Model) WithImageViewer(viewer ImageViewer) Model { m.viewer = viewer; return m }
 
+func (m Model) WithImageMode(mode terminalui.InlineMode) Model {
+	if viewer, ok := m.viewer.(TerminalImageViewer); ok {
+		viewer.Renderer.Mode = mode
+		m.viewer = viewer
+	}
+	return m
+}
+
 func (m Model) WithSession(session adminclient.Session) Model { m.session = session; return m }
 
 func (m Model) Init() tea.Cmd {

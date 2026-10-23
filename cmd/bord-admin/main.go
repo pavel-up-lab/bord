@@ -46,7 +46,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	server := flags.String("server", "", "адрес публичного API для режима Пользователь")
 	credentialFile := flags.String("credential-file", "", "путь к защищенному credential-файлу")
 	themeFlag := flags.String("theme", "", "тема: встроенное имя, MC skin или путь к .ini")
-	inline := flags.String("inline", "", "inline-графика: auto, kitty или off")
+	inline := flags.String("inline", "", "изображения: auto, kitty, w3m, ansi или off")
 	timeout := flags.Duration("timeout", 15*time.Second, "таймаут HTTP")
 	showVersion := flags.Bool("version", false, "показать версию")
 	if err := flags.Parse(args); err != nil {
@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *inline != "" {
 		switch *inline {
-		case "auto", "kitty", "off":
+		case "auto", "kitty", "w3m", "ansi", "off":
 			state.InlineMode = *inline
 		default:
 			return errors.New("недопустимый --inline")
@@ -149,11 +149,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		state.Theme = result.ThemeSetting()
 		state.View = result.Admin().ViewSetting()
 		state.Mode = result.ModeSetting()
+		state.InlineMode = result.User().ImageModeSetting()
 		if saveErr := publicRuntime.SaveUserData(result.User()); saveErr != nil {
 			return saveErr
 		}
 	}
-	state.InlineMode = string(terminalui.InlineMode(state.InlineMode))
 	if err := store.Save(state); err != nil {
 		return err
 	}

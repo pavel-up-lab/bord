@@ -44,7 +44,7 @@ func Bootstrap(ctx context.Context, options Options) (*Runtime, error) {
 		state.Server = "http://localhost:8080"
 	}
 	if options.Inline != "" {
-		if options.Inline != "auto" && options.Inline != "kitty" && options.Inline != "off" {
+		if !terminalui.ValidInlineMode(terminalui.InlineMode(options.Inline)) {
 			return nil, fmt.Errorf("недопустимый --inline")
 		}
 		state.InlineMode = options.Inline
@@ -71,7 +71,7 @@ func Bootstrap(ctx context.Context, options Options) (*Runtime, error) {
 	if state.Theme == "" {
 		state.Theme = string(terminalui.ThemeClassic)
 	}
-	if state.InlineMode != "auto" && state.InlineMode != "kitty" && state.InlineMode != "off" {
+	if !terminalui.ValidInlineMode(terminalui.InlineMode(state.InlineMode)) {
 		state.InlineMode = "auto"
 	}
 	theme, err := themes.Resolve(state.Theme)
@@ -112,6 +112,7 @@ func (r *Runtime) Save(model tui.Model) error {
 	// The ordinary store owns user capabilities only. Integrated admin mode
 	// persists presentation in admin state, so callers may overwrite Theme.
 	r.State.Theme = model.ThemeSetting()
+	r.State.InlineMode = model.ImageModeSetting()
 	return r.Store.Save(r.State)
 }
 

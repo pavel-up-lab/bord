@@ -2,14 +2,17 @@ package terminalui
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/jpeg"
 	"image/png"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -18,8 +21,32 @@ type InlineMode string
 const (
 	InlineAuto  InlineMode = "auto"
 	InlineKitty InlineMode = "kitty"
+	InlineW3M   InlineMode = "w3m"
+	InlineANSI  InlineMode = "ansi"
 	InlineOff   InlineMode = "off"
 )
+
+func ValidInlineMode(mode InlineMode) bool {
+	switch mode {
+	case InlineAuto, InlineKitty, InlineW3M, InlineANSI, InlineOff:
+		return true
+	default:
+		return false
+	}
+}
+
+func InlineModeLabel(mode InlineMode) string {
+	switch mode {
+	case InlineW3M:
+		return "w3m"
+	case InlineANSI:
+		return "ANSI"
+	case InlineOff:
+		return "Системный просмотрщик"
+	default:
+		return "Нативный протокол терминала"
+	}
+}
 
 type Capabilities interface{ KittyGraphics() bool }
 type EnvironmentCapabilities struct{}
@@ -44,6 +71,66 @@ type KittyViewerCommand struct {
 	stdin         io.Reader
 	stdout        io.Writer
 	stderr        io.Writer
+}
+
+// W3MViewerCommand opens a verified cached image without invoking a shell.
+type W3MViewerCommand struct {
+	Context        context.Context
+	Path           string
+	stdin          io.Reader
+	stdout, stderr io.Writer
+}
+
+// ANSIViewerCommand renders an image as ordinary true-color text cells while
+// Bubble Tea temporarily yields the terminal.
+type ANSIViewerCommand struct {
+	Data          []byte
+	Columns, Rows int
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+}
+
+func (c *ANSIViewerCommand) SetStdin(r io.Reader)  { c.stdin = r }
+func (c *ANSIViewerCommand) SetStdout(w io.Writer) { c.stdout = w }
+func (c *ANSIViewerCommand) SetStderr(w io.Writer) { c.stderr = w }
+func (c *ANSIViewerCommand) Run() error {
+	if c.stdin == nil || c.stdout == nil {
+		return errors.New("terminal streams unavailable")
+	}
+	lines, err := RenderANSIImage(c.Data, max(1, c.Columns), max(1, c.Rows-2), color.RGBA{})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(c.stdout, "\x1b[2J\x1b[H\x1b[?25l%s\n\x1b[0mEnter — вернуться в Bord", strings.Join(lines, "\n")); err != nil {
+		return err
+	}
+	defer fmt.Fprint(c.stdout, "\x1b[2J\x1b[H\x1b[?25h")
+	var input [1]byte
+	_, err = c.stdin.Read(input[:])
+	return err
+}
+
+func (c *W3MViewerCommand) SetStdin(r io.Reader)  { c.stdin = r }
+func (c *W3MViewerCommand) SetStdout(w io.Writer) { c.stdout = w }
+func (c *W3MViewerCommand) SetStderr(w io.Writer) { c.stderr = w }
+func (c *W3MViewerCommand) Run() error {
+	if c.Path == "" {
+		return errors.New("w3m image path unavailable")
+	}
+	ctx := c.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	command := exec.CommandContext(ctx, "w3m", c.Path)
+	command.Stdin, command.Stdout, command.Stderr = c.stdin, c.stdout, c.stderr
+	if err := command.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return errors.New("w3m is not installed")
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *KittyViewerCommand) SetStdin(r io.Reader)  { c.stdin = r }
@@ -92,6 +179,60 @@ func PrepareKittyImage(data []byte, mediaType string) ([]byte, error) {
 		return nil, errors.New("encode inline image")
 	}
 	return encoded.Bytes(), nil
+}
+
+// RenderANSIImage converts bounded JPEG/PNG data into true-color half blocks.
+// It uses only ordinary ANSI text cells and therefore needs no image protocol.
+func RenderANSIImage(data []byte, columns, rows int, background color.RGBA) ([]string, error) {
+	if columns <= 0 || rows <= 0 {
+		return nil, errors.New("invalid ANSI image area")
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 || config.Width > 6000 || config.Height > 6000 || int64(config.Width)*int64(config.Height) > 16_000_000 {
+		return nil, errors.New("invalid ANSI image dimensions")
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, errors.New("decode ANSI image")
+	}
+	maxPixelHeight := rows * 2
+	scale := minFloat(float64(columns)/float64(config.Width), float64(maxPixelHeight)/float64(config.Height))
+	width := max(1, min(columns, int(float64(config.Width)*scale)))
+	height := max(1, min(maxPixelHeight, int(float64(config.Height)*scale)))
+	result := make([]string, 0, (height+1)/2)
+	bounds := decoded.Bounds()
+	for y := 0; y < height; y += 2 {
+		var line strings.Builder
+		for x := 0; x < width; x++ {
+			top := sampleImage(decoded, bounds, x, y, width, height, background)
+			bottom := background
+			if y+1 < height {
+				bottom = sampleImage(decoded, bounds, x, y+1, width, height, background)
+			}
+			fmt.Fprintf(&line, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀", top.R, top.G, top.B, bottom.R, bottom.G, bottom.B)
+		}
+		line.WriteString("\x1b[0m")
+		result = append(result, line.String())
+	}
+	return result, nil
+}
+
+func sampleImage(source image.Image, bounds image.Rectangle, x, y, width, height int, background color.RGBA) color.RGBA {
+	sourceX := bounds.Min.X + min(bounds.Dx()-1, x*bounds.Dx()/max(1, width))
+	sourceY := bounds.Min.Y + min(bounds.Dy()-1, y*bounds.Dy()/max(1, height))
+	r, g, b, a := source.At(sourceX, sourceY).RGBA()
+	blend := func(component uint32, matte uint8) uint8 {
+		value := component + uint32(matte)*257*(65535-a)/65535
+		return uint8(min(65535, int(value)) >> 8)
+	}
+	return color.RGBA{R: blend(r, background.R), G: blend(g, background.G), B: blend(b, background.B), A: 255}
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (r KittyRenderer) Available() bool {

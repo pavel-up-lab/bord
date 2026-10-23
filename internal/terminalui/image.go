@@ -2,6 +2,7 @@ package terminalui
 
 import (
 	"errors"
+	"image/color"
 	"mime"
 )
 
@@ -17,6 +18,7 @@ type ImageMetadata struct {
 type PreparedImage struct {
 	Path, Warning string
 	Inline        []byte
+	Original      []byte
 }
 
 func VerifyAndCacheImage(cache ImageCache, renderer KittyRenderer, meta ImageMetadata, body []byte, responseType string) (PreparedImage, error) {
@@ -34,8 +36,14 @@ func VerifyAndCacheImage(cache ImageCache, renderer KittyRenderer, meta ImageMet
 	if err != nil {
 		return PreparedImage{}, err
 	}
-	result := PreparedImage{Path: path}
-	if renderer.Available() {
+	result := PreparedImage{Path: path, Original: append([]byte(nil), body...)}
+	if renderer.Mode == InlineANSI {
+		if _, err = RenderANSIImage(body, 1, 1, color.RGBA{}); err != nil {
+			result.Warning = "ANSI-показ недоступен: " + err.Error()
+		} else {
+			result.Inline = append([]byte(nil), body...)
+		}
+	} else if renderer.Available() {
 		result.Inline, err = PrepareKittyImage(body, mediaType)
 		if err != nil {
 			result.Warning = "Inline-показ недоступен: " + err.Error()
