@@ -209,6 +209,20 @@ h1 span { color: var(--cyan); text-shadow: 5px 5px 0 #0b287e; }
 .workflow-step strong { color: var(--cyan); text-transform: uppercase; }
 .workflow-step p { margin: .4rem 0 0; color: var(--muted); font-size: .85rem; }
 
+.images-section { padding-top: 5rem; }
+.compatibility-note { margin-bottom: 2rem; padding: 1.2rem 1.4rem; border: 1px solid var(--amber); color: var(--cyan-soft); background: rgba(255, 176, 0, .08); }
+.compatibility-note strong { color: var(--amber); text-transform: uppercase; }
+.image-guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border: 1px solid var(--line); background: var(--line); }
+.image-guide { min-width: 0; padding: 1.6rem; background: var(--navy); }
+.image-guide h3 { margin: .5rem 0 1rem; color: var(--cyan); text-transform: uppercase; }
+.image-guide > p, .image-guide li { color: var(--muted); font-size: .86rem; }
+.image-guide ol { min-height: 9rem; margin: 0; padding-left: 1.2rem; }
+.image-guide li { margin-bottom: .65rem; }
+.image-guide code { color: var(--green); }
+.compact-command { margin-top: 1.5rem; }
+.compact-command pre { min-height: 8.5rem; font-size: .78rem; }
+.image-guide .guide-note { margin: 1rem 0 0; color: var(--cyan-soft); font-size: .75rem; }
+
 .privacy-section { padding-top: 2rem; }
 .privacy-box { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; padding: clamp(2rem, 5vw, 4rem); border: 2px solid var(--green); background: linear-gradient(135deg, rgba(17, 90, 64, .3), rgba(2, 10, 56, .8)); box-shadow: 10px 10px 0 #01051d; }
 .privacy-box h2 { margin: 0; font-size: clamp(2rem, 4vw, 3.5rem); letter-spacing: -.05em; text-transform: uppercase; }
@@ -234,6 +248,8 @@ footer a { color: var(--cyan); text-decoration: none; }
   .hero { grid-template-columns: 1fr; padding-top: 4rem; }
   .terminal-window { max-width: 720px; width: 100%; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
+  .image-guide-grid { grid-template-columns: 1fr; }
+  .image-guide ol, .compact-command pre { min-height: 0; }
   .split-heading, .privacy-box { grid-template-columns: 1fr; gap: 2rem; }
 }
 
@@ -247,7 +263,7 @@ footer a { color: var(--cyan); text-decoration: none; }
   .button { width: 100%; }
   .terminal-grid { grid-template-columns: 1fr; min-height: 330px; }
   .terminal-boards { display: none; }
-  .feature-grid, .workflow-grid { grid-template-columns: 1fr; }
+  .feature-grid, .workflow-grid, .image-guide-grid { grid-template-columns: 1fr; }
   .feature-card { min-height: 210px; }
   .install-section { padding-inline: 14px; }
   .workflow-step { grid-template-columns: 1fr; gap: .9rem; }

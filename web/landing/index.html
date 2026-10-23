@@ -22,6 +22,7 @@
       <a href="#features">Возможности</a>
       <a href="#install">Установка</a>
       <a href="#controls">Управление</a>
+      <a href="#images">Изображения</a>
       <a href="#privacy">Приватность</a>
       <a href="https://github.com/pavel-up-lab/bord" target="_blank" rel="noopener noreferrer">GitHub</a>
     </nav>
@@ -51,7 +52,7 @@
 
       <div class="terminal-window" aria-label="Пример интерфейса Bord TUI">
         <div class="terminal-titlebar">
-          <span>BORD&nbsp;&nbsp; [Тема: Classic ▾] [Справка]</span>
+          <span>BORD&nbsp;&nbsp; [Тема: Classic ▾] [Настройки ▾] [Справка]</span>
           <span>Каталог</span>
         </div>
         <div class="terminal-grid">
@@ -87,7 +88,7 @@
           </div>
         </div>
         <div class="terminal-status">/bred/ Каталог • 2 threads • тема:classic • Tab панели • ? справка</div>
-        <div class="terminal-keys"><span><b>F1</b> Help</span><span><b>F2</b> Theme</span><span><b>F4</b> Search</span><span><b>F5</b> Refresh</span><span><b>F7</b> New Thread</span><span><b>F10</b> Quit</span></div>
+        <div class="terminal-keys"><span><b>F1</b> Help</span><span><b>F2</b> Theme</span><span><b>F4</b> Search</span><span><b>F5</b> Refresh</span><span><b>F6</b> Settings</span><span><b>F7</b> New Thread</span><span><b>F10</b> Quit</span></div>
       </div>
     </section>
 
@@ -225,13 +226,76 @@
           <span class="keycap">T / F2</span>
           <div><strong>Сменить тему</strong><p>Classic, amber, green и monochrome.</p></div>
         </div>
+        <div class="workflow-step">
+          <span class="keycap">S / F6</span>
+          <div><strong>Настроить изображения</strong><p>Выберите нативный протокол, w3m или универсальный ANSI-просмотр.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section images-section" id="images">
+      <div class="section-heading split-heading">
+        <div>
+          <p class="eyebrow">04 // IMAGES</p>
+          <h2>Картинки<br>в терминале.</h2>
+        </div>
+        <p>В Bord откройте <strong>Настройки → Изображения</strong>. Нативный режим использует Kitty graphics protocol, ANSI работает без графического протокола, а w3m требует отдельной установки.</p>
+      </div>
+
+      <div class="compatibility-note">
+        <strong>Важно:</strong> Kitty protocol включается в терминальном эмуляторе, а не в shell. iTerm2 и Windows Terminal его не поддерживают; для них выберите ANSI либо запустите Bord в совместимом терминале.
+      </div>
+
+      <div class="image-guide-grid">
+        <article class="image-guide">
+          <p class="eyebrow">LINUX // KITTY</p>
+          <h3>Kitty или WezTerm</h3>
+          <ol>
+            <li>Установите Kitty пакетным менеджером.</li>
+            <li>Запустите терминал <code>kitty</code>.</li>
+            <li>Откройте Bord — режим «Нативный» определит Kitty автоматически.</li>
+          </ol>
+          <div class="command-block compact-command">
+            <div class="command-header"><span>LINUX.SH</span></div>
+            <pre><code>sudo apt install kitty
+kitty
+bord --inline kitty</code></pre>
+          </div>
+          <p class="guide-note">Для Fedora используйте <code>sudo dnf install kitty</code>, для Arch — <code>sudo pacman -S kitty</code>.</p>
+        </article>
+
+        <article class="image-guide">
+          <p class="eyebrow">macOS // iTerm2</p>
+          <h3>Нужен другой терминал</h3>
+          <p>В iTerm2 нельзя включить Kitty graphics protocol. Установите Kitty или WezTerm и запустите Bord внутри него. Если хотите остаться в iTerm2, выберите режим ANSI.</p>
+          <div class="command-block compact-command">
+            <div class="command-header"><span>MACOS.SH</span></div>
+            <pre><code>brew install --cask kitty
+open -a kitty
+bord --inline kitty</code></pre>
+          </div>
+          <p class="guide-note">В самом iTerm2: <code>S / F6 → Изображения → ANSI</code>.</p>
+        </article>
+
+        <article class="image-guide">
+          <p class="eyebrow">WINDOWS // POWERSHELL</p>
+          <h3>PowerShell внутри WezTerm</h3>
+          <p>PowerShell — это shell, а Windows Terminal не поддерживает Kitty protocol. Установите WezTerm, откройте в нём PowerShell и запускайте Bord там.</p>
+          <div class="command-block compact-command">
+            <div class="command-header"><span>POWERSHELL</span></div>
+            <pre><code>winget install wez.wezterm
+# Откройте WezTerm → PowerShell
+.\bord.exe --inline kitty</code></pre>
+          </div>
+          <p class="guide-note">В Windows Terminal используйте <code>S / F6 → Изображения → ANSI</code>.</p>
+        </article>
       </div>
     </section>
 
     <section class="section privacy-section" id="privacy">
       <div class="privacy-box">
         <div>
-          <p class="eyebrow">04 // PRIVACY</p>
+          <p class="eyebrow">05 // PRIVACY</p>
           <h2>Анонимность — не декоративная функция.</h2>
         </div>
         <div class="privacy-copy">

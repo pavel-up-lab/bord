@@ -58,7 +58,7 @@ def main() -> None:
     parser.close()
 
     require(parser.inline_scripts == 0 and parser.inline_styles == 0, "CSP requires external scripts and styles")
-    require({"top", "features", "install", "controls", "privacy"} <= parser.ids, "required landing sections missing")
+    require({"top", "features", "install", "controls", "images", "privacy"} <= parser.ids, "required landing sections missing")
     require(
         {"data-download-link", "data-download-name", "data-install-command", "data-run-command", "data-copy-run"}
         <= parser.markers,
@@ -85,6 +85,10 @@ def main() -> None:
         "THREAD / REPLIES / UPDATED / PREVIEW",
         "тема:classic • Tab панели • ? справка",
         "F4</b> Search",
+        "[Настройки ▾]",
+        "iTerm2 и Windows Terminal его не поддерживают",
+        "winget install wez.wezterm",
+        "sudo apt install kitty",
     ):
         require(fragment in html, f"current TUI preview fragment missing: {fragment}")
     require("prefers-reduced-motion" in css, "reduced-motion fallback missing")
