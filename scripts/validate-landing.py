@@ -79,7 +79,7 @@ def main() -> None:
         "http://" not in html_without_github + css + app and "https://" not in html_without_github + css + app,
         "landing source contains an unapproved fixed domain",
     )
-    require(html.count(GITHUB_URL) == 2, "GitHub links must be present in navigation and hero actions")
+    require(html.count(GITHUB_URL) == 1, "GitHub link must be present only in navigation")
     for fragment in (
         "РАЗДЕЛ / THREADS / НАЗВАНИЕ",
         "THREAD / REPLIES / UPDATED / PREVIEW",
