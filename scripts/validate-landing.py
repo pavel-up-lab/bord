@@ -86,6 +86,7 @@ def main() -> None:
         "тема:classic • Tab панели • ? справка",
         "F4</b> Search",
         "[Настройки ▾]",
+        "Открыть вложение",
         "актуальный iTerm2 и WezTerm",
         "brew upgrade --cask iterm2",
         "winget install --id wez.wezterm -e",
