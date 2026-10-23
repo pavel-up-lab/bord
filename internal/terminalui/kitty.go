@@ -54,7 +54,7 @@ type EnvironmentCapabilities struct{}
 func (EnvironmentCapabilities) KittyGraphics() bool {
 	term := strings.ToLower(os.Getenv("TERM"))
 	program := strings.ToLower(os.Getenv("TERM_PROGRAM"))
-	return strings.Contains(term, "kitty") || program == "kitty" || os.Getenv("KITTY_WINDOW_ID") != ""
+	return strings.Contains(term, "kitty") || program == "kitty" || program == "iterm.app" || program == "wezterm" || os.Getenv("KITTY_WINDOW_ID") != ""
 }
 
 type KittyRenderer struct {

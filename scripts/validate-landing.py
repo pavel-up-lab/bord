@@ -86,8 +86,9 @@ def main() -> None:
         "тема:classic • Tab панели • ? справка",
         "F4</b> Search",
         "[Настройки ▾]",
-        "iTerm2 и Windows Terminal его не поддерживают",
-        "winget install wez.wezterm",
+        "актуальный iTerm2 и WezTerm",
+        "brew upgrade --cask iterm2",
+        "winget install --id wez.wezterm -e",
         "sudo apt install kitty",
     ):
         require(fragment in html, f"current TUI preview fragment missing: {fragment}")

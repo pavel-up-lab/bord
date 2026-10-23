@@ -51,6 +51,29 @@ func TestInlineModesIncludeSettingsChoices(t *testing.T) {
 	}
 }
 
+func TestEnvironmentCapabilitiesDetectKittyGraphicsTerminals(t *testing.T) {
+	for _, test := range []struct {
+		name, term, program, windowID string
+		want                          bool
+	}{
+		{name: "kitty TERM", term: "xterm-kitty", want: true},
+		{name: "kitty program", program: "kitty", want: true},
+		{name: "iTerm2", program: "iTerm.app", want: true},
+		{name: "WezTerm", program: "WezTerm", want: true},
+		{name: "kitty window", windowID: "7", want: true},
+		{name: "plain xterm", term: "xterm-256color", want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("TERM", test.term)
+			t.Setenv("TERM_PROGRAM", test.program)
+			t.Setenv("KITTY_WINDOW_ID", test.windowID)
+			if got := (EnvironmentCapabilities{}).KittyGraphics(); got != test.want {
+				t.Fatalf("KittyGraphics()=%v want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestANSIViewerCommandRestoresTerminal(t *testing.T) {
 	source := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	source.Set(0, 0, color.NRGBA{R: 255, A: 255})

@@ -385,13 +385,14 @@ $env:BORD_SERVER = "https://board.example.org"
 публикации, утечка — передачу этой возможности другому лицу.
 
 `--inline=auto` использует прямой Kitty image viewer в автоматически
-распознанном Kitty terminal и возвращается в TUI по `Enter`,
+распознанных Kitty, iTerm2 и WezTerm и возвращается в TUI по `Enter`,
 `--inline=kitty` принудительно выбирает Kitty protocol, `--inline=w3m` запускает
 установленный `w3m`, `--inline=ansi` рисует изображение цветными текстовыми
 ячейками прямо в Bord, а `--inline=off` оставляет текстовую карточку и внешний opener. Для внешнего открытия используются
-`xdg-open`, `open` или Windows file association без запуска shell. Для WezTerm
-и других совместимых терминалов Kitty protocol можно включить через
-`--inline kitty`.
+`xdg-open`, `open` или Windows file association без запуска shell. iTerm2
+поддерживает Kitty graphics protocol напрямую; WezTerm также распознаётся
+автоматически. Для других совместимых терминалов протокол можно включить через
+`--inline kitty`. В Windows Terminal используйте `--inline ansi`.
 
 ## Ретро landing
 

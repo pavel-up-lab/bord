@@ -17,7 +17,7 @@ var imageModeOptions = []struct {
 	mode        InlineMode
 	label, help string
 }{
-	{InlineAuto, "Нативный", "Kitty и совместимые нативные протоколы; текущий режим"},
+	{InlineAuto, "Нативный", "Kitty graphics protocol в Kitty и совместимых терминалах"},
 	{InlineW3M, "w3m", "Внешний терминальный просмотрщик w3m должен быть установлен"},
 	{InlineANSI, "ANSI", "Цветные текстовые ячейки без графического протокола"},
 }

@@ -243,7 +243,7 @@
       </div>
 
       <div class="compatibility-note">
-        <strong>Важно:</strong> Kitty protocol включается в терминальном эмуляторе, а не в shell. iTerm2 и Windows Terminal его не поддерживают; для них выберите ANSI либо запустите Bord в совместимом терминале.
+        <strong>Совместимость:</strong> Bord передаёт PNG через Kitty graphics protocol. Его понимают Kitty, актуальный iTerm2 и WezTerm. Windows Terminal этот протокол не поддерживает — используйте ANSI или WezTerm.
       </div>
 
       <div class="image-guide-grid">
@@ -266,28 +266,28 @@ bord --inline kitty</code></pre>
 
         <article class="image-guide">
           <p class="eyebrow">macOS // iTerm2</p>
-          <h3>Нужен другой терминал</h3>
-          <p>В iTerm2 нельзя включить Kitty graphics protocol. Установите Kitty или WezTerm и запустите Bord внутри него. Если хотите остаться в iTerm2, выберите режим ANSI.</p>
+          <h3>Работает нативно</h3>
+          <p>Актуальный iTerm2 поддерживает Kitty graphics protocol. Обновите iTerm2 и запустите Bord с нативным протоколом. Отдельный Kitty устанавливать не нужно.</p>
           <div class="command-block compact-command">
             <div class="command-header"><span>MACOS.SH</span></div>
-            <pre><code>brew install --cask kitty
-open -a kitty
+            <pre><code>brew upgrade --cask iterm2
 bord --inline kitty</code></pre>
           </div>
-          <p class="guide-note">В самом iTerm2: <code>S / F6 → Изображения → ANSI</code>.</p>
+          <p class="guide-note">Следующая сборка распознает iTerm2 автоматически. Если изображение не появилось, проверьте без tmux; ANSI остаётся универсальным fallback.</p>
         </article>
 
         <article class="image-guide">
           <p class="eyebrow">WINDOWS // POWERSHELL</p>
           <h3>PowerShell внутри WezTerm</h3>
-          <p>PowerShell — это shell, а Windows Terminal не поддерживает Kitty protocol. Установите WezTerm, откройте в нём PowerShell и запускайте Bord там.</p>
+          <p>PowerShell — это shell, а картинки рисует терминал. Windows Terminal пока не поддерживает используемый Bord протокол: там выберите ANSI. Для нативного качества запустите PowerShell внутри WezTerm.</p>
           <div class="command-block compact-command">
             <div class="command-header"><span>POWERSHELL</span></div>
-            <pre><code>winget install wez.wezterm
-# Откройте WezTerm → PowerShell
-.\bord.exe --inline kitty</code></pre>
+            <pre><code>winget install --id wez.wezterm -e
+wezterm start -- pwsh.exe -NoLogo
+# В открывшемся WezTerm:
+bord.exe --inline kitty</code></pre>
           </div>
-          <p class="guide-note">В Windows Terminal используйте <code>S / F6 → Изображения → ANSI</code>.</p>
+          <p class="guide-note">Следующая сборка распознает WezTerm автоматически. В Windows Terminal используйте <code>S / F6 → Изображения → ANSI</code>.</p>
         </article>
       </div>
     </section>
