@@ -1,10 +1,8 @@
 package terminalui
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -113,42 +111,15 @@ func (t TTYProbeTransport) Exchange(ctx context.Context, query []byte) ([]byte, 
 		return nil, err
 	}
 	defer term.Restore(t.Input.Fd(), state) //nolint:errcheck -- best-effort terminal restoration after probe
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := t.Input.SetReadDeadline(deadline); err != nil {
-			return nil, err
-		}
-		defer t.Input.SetReadDeadline(time.Time{}) //nolint:errcheck -- clear best-effort deadline
-	}
 	if _, err = t.Output.Write(query); err != nil {
 		return nil, err
 	}
-	var response bytes.Buffer
-	buffer := make([]byte, 256)
-	for response.Len() < 4096 {
-		n, readErr := t.Input.Read(buffer)
-		if n > 0 {
-			response.Write(buffer[:n])
-			text := response.String()
-			if strings.Contains(text, "_Gi="+kittyProbeID+";") && strings.Contains(text, "c") {
-				return response.Bytes(), nil
-			}
-		}
-		if readErr != nil {
-			if errors.Is(readErr, os.ErrDeadlineExceeded) || errors.Is(readErr, context.DeadlineExceeded) {
-				return response.Bytes(), ctx.Err()
-			}
-			if errors.Is(readErr, io.EOF) {
-				return response.Bytes(), nil
-			}
-			return response.Bytes(), readErr
-		}
-		select {
-		case <-ctx.Done():
-			return response.Bytes(), ctx.Err()
-		default:
-		}
-	}
-	return response.Bytes(), nil
+	return readProbeResponse(ctx, t.Input)
+}
+
+func probeResponseComplete(response []byte) bool {
+	text := string(response)
+	return strings.Contains(text, "_Gi="+kittyProbeID+";") && strings.Contains(text, "c")
 }
 
 func DetectTerminalCapabilities(ctx context.Context, input, output *os.File) TerminalCapabilities {

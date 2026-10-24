@@ -3,6 +3,7 @@ package terminalui
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -69,5 +70,40 @@ func TestTerminalProbeQueryIsBoundedAndContainsBothProtocols(t *testing.T) {
 	query := kittyProbe + deviceProbe
 	if len(query) > 256 || !strings.Contains(query, "a=q") || !strings.HasSuffix(query, "\x1b[c") {
 		t.Fatalf("query=%q", query)
+	}
+}
+
+func TestReadProbeResponseUsesBoundedReadyRead(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	response := []byte("\x1b_Gi=" + kittyProbeID + ";OK\x1b\\\x1b[?1;4c")
+	go func() {
+		_, _ = writer.Write(response)
+		_ = writer.Close()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := readProbeResponse(ctx, reader)
+	if err != nil || string(got) != string(response) {
+		t.Fatalf("response=%q err=%v", got, err)
+	}
+}
+
+func TestReadProbeResponseTimesOutWithoutInput(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = readProbeResponse(ctx, reader)
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second {
+		t.Fatalf("err=%v duration=%s", err, time.Since(started))
 	}
 }
