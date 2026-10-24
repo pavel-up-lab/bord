@@ -21,6 +21,7 @@ const (
 	AuditScreen
 	BoardsScreen
 	HelpScreen
+	AttachmentScreen
 )
 
 type Focus uint8
@@ -49,7 +50,9 @@ type Service interface {
 }
 
 type ImageViewer interface {
-	View(context.Context, terminalui.ImageMetadata, []byte, string, int, int) tea.Cmd
+	Render(terminalui.ImageMetadata, []byte, string, int, int) (ImageView, error)
+	Clear() string
+	Open(context.Context, string, bool) tea.Cmd
 }
 
 type Model struct {
@@ -77,13 +80,19 @@ type Model struct {
 	banState                                                            string
 	boardState                                                          string
 
-	requestID    uint64
-	loading      bool
-	err          error
-	status       string
-	modal        *modal
-	revealedIP   string
-	attachmentID string
+	requestID                 uint64
+	loading                   bool
+	err                       error
+	status                    string
+	modal                     *modal
+	revealedIP                string
+	attachmentID              string
+	attachmentMeta            terminalui.ImageMetadata
+	attachmentBody            []byte
+	attachmentType            string
+	attachmentView            ImageView
+	terminalControl           string
+	terminalControlGeneration uint64
 }
 
 type sessionMsg struct {
@@ -135,6 +144,7 @@ type attachmentMsg struct {
 	err       error
 }
 type viewerClosedMsg struct{ err error }
+type clearTerminalControlMsg struct{ generation uint64 }
 
 func NewModel(ctx context.Context, service Service) Model {
 	if ctx == nil {
@@ -162,6 +172,22 @@ func (m Model) WithImageMode(mode terminalui.InlineMode) Model {
 		m.viewer = viewer
 	}
 	return m
+}
+
+func (m Model) DetachTerminalImage() (Model, string) {
+	cleanup := ""
+	if m.viewer != nil {
+		cleanup = m.viewer.Clear()
+	}
+	if m.attachmentView.Backend == "Kitty placeholders" || m.attachmentView.Backend == "Sixel" {
+		m.attachmentView.Lines = nil
+		m.attachmentView.Backend = ""
+	}
+	return m, cleanup
+}
+
+func (m Model) RefreshTerminalImage() (Model, tea.Cmd) {
+	return m, m.renderAttachment()
 }
 
 func (m Model) WithSession(session adminclient.Session) Model { m.session = session; return m }
@@ -194,6 +220,12 @@ func (m Model) Screen() Screen              { return m.screen }
 func (m Model) ThemeSetting() string        { return m.themes.Setting(m.theme) }
 func (m Model) Theme() terminalui.ThemeName { return m.theme }
 func (m Model) Role() string                { return string(m.session.Role) }
+func (m Model) ImageModeSetting() string {
+	if viewer, ok := m.viewer.(TerminalImageViewer); ok {
+		return string(viewer.Renderer.Mode)
+	}
+	return ""
+}
 func (m Model) ViewSetting() string {
 	switch m.screen {
 	case BansScreen:
@@ -227,7 +259,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeModalFields()
-		return m, nil
+		return m, m.renderAttachment()
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 	case tea.MouseMsg:
@@ -345,12 +377,57 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = errors.New("просмотрщик вложений недоступен")
 			return m, nil
 		}
-		return m, m.viewer.View(m.ctx, msg.meta, msg.body, msg.mediaType, max(1, m.width-2), max(1, m.height-4))
+		m.attachmentMeta, m.attachmentBody, m.attachmentType = msg.meta, msg.body, msg.mediaType
+		return m, m.renderAttachment()
 	case viewerClosedMsg:
 		m.err = msg.err
 		return m, nil
+	case clearTerminalControlMsg:
+		if msg.generation == m.terminalControlGeneration {
+			m.terminalControl = ""
+		}
 	}
 	return m, nil
+}
+
+func (m *Model) renderAttachment() tea.Cmd {
+	if m.screen != AttachmentScreen || m.loading || len(m.attachmentBody) == 0 || m.viewer == nil {
+		return nil
+	}
+	view, err := m.viewer.Render(m.attachmentMeta, m.attachmentBody, m.attachmentType, max(1, m.width-4), max(1, m.height-8))
+	if err != nil {
+		m.err = err
+		m.attachmentView = ImageView{}
+		return nil
+	}
+	m.err = nil
+	m.attachmentView = view
+	return m.queueTerminalControl(view.Control)
+}
+
+func (m *Model) clearAttachment() tea.Cmd {
+	cleanup := ""
+	if m.viewer != nil {
+		cleanup = m.viewer.Clear()
+	}
+	m.attachmentID = ""
+	m.attachmentMeta = terminalui.ImageMetadata{}
+	m.attachmentBody = nil
+	m.attachmentType = ""
+	m.attachmentView = ImageView{}
+	m.loading = false
+	m.err = nil
+	return m.queueTerminalControl(cleanup)
+}
+
+func (m *Model) queueTerminalControl(control string) tea.Cmd {
+	if control == "" {
+		return nil
+	}
+	m.terminalControl = control
+	m.terminalControlGeneration++
+	generation := m.terminalControlGeneration
+	return func() tea.Msg { return clearTerminalControlMsg{generation: generation} }
 }
 
 func (m Model) beginRequest() (Model, uint64, context.Context) {
@@ -490,6 +567,25 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if m.themePicker.IsOpen() {
 		return m.updateThemeMenu(key)
+	}
+	if m.screen == AttachmentScreen {
+		switch key {
+		case "ctrl+c", "q", "f10":
+			m.Close()
+			return m, tea.Quit
+		case "esc":
+			m.screen = m.previous
+			return m, m.clearAttachment()
+		case "enter":
+			if m.viewer != nil && m.attachmentView.Path != "" {
+				return m, m.viewer.Open(m.ctx, m.attachmentView.Path, false)
+			}
+		case "o":
+			if m.viewer != nil && m.attachmentView.Path != "" {
+				return m, m.viewer.Open(m.ctx, m.attachmentView.Path, true)
+			}
+		}
+		return m, nil
 	}
 	switch key {
 	case "ctrl+c", "q", "f10":

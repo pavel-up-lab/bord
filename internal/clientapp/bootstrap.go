@@ -18,6 +18,8 @@ type Options struct {
 	Timeout                          time.Duration
 	HTTPClient                       *http.Client
 	Themes                           terminalui.ThemeCatalog
+	Capabilities                     terminalui.Capabilities
+	ImageSession                     *terminalui.ImageSession
 }
 
 type Runtime struct {
@@ -91,7 +93,7 @@ func Bootstrap(ctx context.Context, options Options) (*Runtime, error) {
 		return nil, err
 	}
 	model := tui.NewModel(ctx, posting).WithLastBoard(state.LastBoard).WithThemes(themes, theme).
-		WithAttachmentViewer(tui.InlineMode(state.InlineMode), cache)
+		WithAttachmentEnvironment(tui.InlineMode(state.InlineMode), cache, options.Capabilities, options.ImageSession)
 	return &Runtime{Model: model, State: state, Store: store, storedTheme: storedTheme}, nil
 }
 

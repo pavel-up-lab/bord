@@ -225,11 +225,11 @@
         </div>
         <div class="workflow-step">
           <span class="keycap">S / F6</span>
-          <div><strong>Настроить изображения</strong><p>Выберите нативный протокол, w3m или универсальный ANSI-просмотр.</p></div>
+          <div><strong>Настроить изображения</strong><p>Выберите Auto, Kitty, Sixel, ANSI, w3m или системное открытие.</p></div>
         </div>
         <div class="workflow-step">
           <span class="keycap">O</span>
-          <div><strong>Открыть вложение</strong><p>Покажите изображение выбранного поста в терминале или системном просмотрщике.</p></div>
+          <div><strong>Открыть вложение</strong><p>Покажите изображение прямо внутри TUI; внешний просмотрщик запускается только явно.</p></div>
         </div>
       </div>
     </section>
@@ -240,11 +240,11 @@
           <p class="eyebrow">04 // IMAGES</p>
           <h2>Картинки<br>в терминале.</h2>
         </div>
-        <p>В Bord откройте <strong>Настройки → Изображения</strong>. Нативный режим использует Kitty graphics protocol, ANSI работает без графического протокола, а w3m требует отдельной установки.</p>
+        <p>В Bord откройте <strong>Настройки → Изображения</strong>. Auto выбирает Kitty placeholders, затем Sixel и ANSI. Изображение остаётся внутри TUI, а w3m и системный просмотрщик запускаются только явно.</p>
       </div>
 
       <div class="compatibility-note">
-        <strong>Совместимость:</strong> Bord передаёт PNG через Kitty graphics protocol. Его понимают Kitty, актуальный iTerm2 и WezTerm. Windows Terminal этот протокол не поддерживает — используйте ANSI или WezTerm.
+        <strong>Совместимость:</strong> Kitty, актуальный iTerm2 и WezTerm используют Kitty placeholders; Windows Terminal — Sixel; ANSI остаётся встроенным fallback без внешних программ.
       </div>
 
       <div class="image-guide-grid">
@@ -254,7 +254,7 @@
           <ol>
             <li>Установите Kitty пакетным менеджером.</li>
             <li>Запустите терминал <code>kitty</code>.</li>
-            <li>Откройте Bord — режим «Нативный» определит Kitty автоматически.</li>
+            <li>Откройте Bord — режим Auto подтвердит Kitty и выберет его автоматически.</li>
           </ol>
           <div class="command-block compact-command">
             <div class="command-header"><span>LINUX.SH</span></div>
@@ -274,21 +274,21 @@ bord --inline kitty</code></pre>
             <pre><code>brew upgrade --cask iterm2
 bord --inline kitty</code></pre>
           </div>
-          <p class="guide-note">Следующая сборка распознает iTerm2 автоматически. Если изображение не появилось, проверьте без tmux; ANSI остаётся универсальным fallback.</p>
+          <p class="guide-note">Bord проверяет поддержку до отправки графики. Если изображение не появилось, проверьте без tmux; ANSI остаётся универсальным fallback.</p>
         </article>
 
         <article class="image-guide">
           <p class="eyebrow">WINDOWS // POWERSHELL</p>
-          <h3>PowerShell внутри WezTerm</h3>
-          <p>PowerShell — это shell, а картинки рисует терминал. Windows Terminal пока не поддерживает используемый Bord протокол: там выберите ANSI. Для нативного качества запустите PowerShell внутри WezTerm.</p>
+          <h3>Windows Terminal или WezTerm</h3>
+          <p>PowerShell — это shell, а картинки рисует терминал. Windows Terminal использует Sixel; WezTerm поддерживает Kitty placeholders. В обоих случаях оставьте Auto.</p>
           <div class="command-block compact-command">
             <div class="command-header"><span>POWERSHELL</span></div>
             <pre><code>winget install --id wez.wezterm -e
 wezterm start -- pwsh.exe -NoLogo
 # В открывшемся WezTerm:
-bord.exe --inline kitty</code></pre>
+bord.exe --inline auto</code></pre>
           </div>
-          <p class="guide-note">Следующая сборка распознает WezTerm автоматически. В Windows Terminal используйте <code>S / F6 → Изображения → ANSI</code>.</p>
+          <p class="guide-note">Для явного выбора в Windows Terminal используйте <code>--inline sixel</code>; неподтверждённый режим безопасно перейдёт на ANSI.</p>
         </article>
       </div>
     </section>

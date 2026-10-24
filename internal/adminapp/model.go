@@ -22,14 +22,17 @@ type taggedMsg struct {
 	mode Mode
 	msg  tea.Msg
 }
+type clearTerminalControlMsg struct{ generation uint64 }
 
 type Model struct {
-	admin  admintui.Model
-	user   tui.Model
-	mode   Mode
-	width  int
-	height int
-	themes terminalui.ThemeCatalog
+	admin                     admintui.Model
+	user                      tui.Model
+	mode                      Mode
+	width                     int
+	height                    int
+	themes                    terminalui.ThemeCatalog
+	terminalControl           string
+	terminalControlGeneration uint64
 }
 
 func New(admin admintui.Model, user tui.Model, themes terminalui.ThemeCatalog, mode string) Model {
@@ -76,22 +79,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m.updateChild(msg.mode, msg.msg)
+	case clearTerminalControlMsg:
+		if msg.generation == m.terminalControlGeneration {
+			m.terminalControl = ""
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "f3", "ctrl+left", "ctrl+right":
-			m.toggle()
-			return m, nil
+			return m, m.toggle()
 		case "alt+a":
-			m.mode = AdminMode
-			return m, nil
+			return m, m.switchMode(AdminMode)
 		case "alt+u":
-			m.mode = UserMode
-			return m, nil
+			return m, m.switchMode(UserMode)
 		}
 	case tea.MouseMsg:
 		if msg.Y == 0 && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			m.clickMode(msg.X)
-			return m, nil
+			return m, m.clickMode(msg.X)
 		}
 		if msg.Y > 0 {
 			msg.Y--
@@ -115,27 +119,53 @@ func (m Model) updateChild(mode Mode, message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tag(UserMode, command)
 }
 
-func (m *Model) toggle() {
+func (m *Model) toggle() tea.Cmd {
 	if m.mode == AdminMode {
-		m.mode = UserMode
-	} else {
-		m.mode = AdminMode
+		return m.switchMode(UserMode)
 	}
+	return m.switchMode(AdminMode)
 }
 
-func (m *Model) clickMode(x int) {
+func (m *Model) clickMode(x int) tea.Cmd {
 	adminLabel, userLabel := " [Администрирование] ", " [Пользователь] "
 	if m.width < 40 {
 		adminLabel, userLabel = " [A Admin] ", " [U User] "
 	}
 	adminWidth := terminalui.TextWidth(adminLabel)
 	if x < adminWidth {
-		m.mode = AdminMode
-		return
+		return m.switchMode(AdminMode)
 	}
 	if x < adminWidth+terminalui.TextWidth(userLabel) {
-		m.mode = UserMode
+		return m.switchMode(UserMode)
 	}
+	return nil
+}
+
+func (m *Model) switchMode(target Mode) tea.Cmd {
+	if target == m.mode {
+		return nil
+	}
+	cleanup := ""
+	if m.mode == AdminMode {
+		m.admin, cleanup = m.admin.DetachTerminalImage()
+	} else {
+		m.user, cleanup = m.user.DetachTerminalImage()
+	}
+	m.mode = target
+	var refresh tea.Cmd
+	if target == AdminMode {
+		m.admin, refresh = m.admin.RefreshTerminalImage()
+	} else {
+		m.user, refresh = m.user.RefreshTerminalImage()
+	}
+	var clear tea.Cmd
+	if cleanup != "" {
+		m.terminalControl = cleanup
+		m.terminalControlGeneration++
+		generation := m.terminalControlGeneration
+		clear = func() tea.Msg { return clearTerminalControlMsg{generation: generation} }
+	}
+	return tea.Batch(clear, tag(target, refresh))
 }
 
 func (m Model) View() string {
@@ -150,6 +180,9 @@ func (m Model) View() string {
 		user = "▶ " + user
 	}
 	bar := terminalui.TopBar(palette, " "+admin+"  "+user, "F3 режим ", max(1, m.width))
+	if m.terminalControl != "" {
+		bar = m.terminalControl + bar
+	}
 	body := m.admin.View()
 	if m.mode == UserMode {
 		body = m.user.View()

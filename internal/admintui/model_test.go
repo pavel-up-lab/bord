@@ -530,12 +530,22 @@ func TestBanAndAuditViewsPaginateWithoutSensitiveFields(t *testing.T) {
 }
 
 type viewerFake struct {
-	calls int
-	meta  terminalui.ImageMetadata
+	calls, opens, clears int
+	meta                 terminalui.ImageMetadata
+	err                  error
 }
 
-func (v *viewerFake) View(context.Context, terminalui.ImageMetadata, []byte, string, int, int) tea.Cmd {
+func (v *viewerFake) Render(meta terminalui.ImageMetadata, _ []byte, _ string, _, _ int) (ImageView, error) {
 	v.calls++
+	v.meta = meta
+	if v.err != nil {
+		return ImageView{}, v.err
+	}
+	return ImageView{Lines: []string{"frame"}, Backend: "fake", Path: "/tmp/image", Control: "upload"}, nil
+}
+func (v *viewerFake) Clear() string { v.clears++; return "cleanup" }
+func (v *viewerFake) Open(context.Context, string, bool) tea.Cmd {
+	v.opens++
 	return func() tea.Msg { return viewerClosedMsg{} }
 }
 
@@ -550,13 +560,40 @@ func TestAttachmentUsesSharedViewerAndReturnsToMouseModel(t *testing.T) {
 	}
 	updated, viewerCmd := m.Update(cmd())
 	m = updated.(Model)
-	if viewer.calls != 1 || viewerCmd == nil {
-		t.Fatalf("viewer calls=%d command=%v", viewer.calls, viewerCmd != nil)
+	if viewer.calls != 1 || viewerCmd == nil || m.screen != AttachmentScreen || !strings.Contains(m.View(), "frame") || !strings.Contains(m.View(), "upload") {
+		t.Fatalf("viewer calls=%d command=%v screen=%v view=%q", viewer.calls, viewerCmd != nil, m.screen, m.View())
 	}
 	updated, _ = m.Update(viewerCmd())
 	m = updated.(Model)
+	if strings.Contains(m.View(), "upload") || !strings.Contains(m.View(), "Режим: fake") {
+		t.Fatalf("control not consumed or frame lost: %q", m.View())
+	}
+	updated, openCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if openCmd == nil || viewer.opens != 1 {
+		t.Fatal("explicit external open missing")
+	}
+	updated, _ = m.Update(openCmd())
+	m = updated.(Model)
+	updated, cleanupCmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if cleanupCmd == nil || m.screen != ReportsScreen || viewer.clears != 1 || !strings.Contains(m.View(), "cleanup") {
+		t.Fatalf("cleanup missing: cmd=%v screen=%v clears=%d", cleanupCmd, m.screen, viewer.clears)
+	}
 	updated, _ = m.Update(tea.MouseMsg{X: 30, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if updated.(Model).screen != BansScreen {
-		t.Fatal("mouse handling was not restored after viewer")
+		t.Fatal("mouse handling was not preserved after attachment screen")
+	}
+}
+
+func TestAttachmentRendererErrorStaysInTUI(t *testing.T) {
+	m := loadedModel(t)
+	m.viewer = &viewerFake{err: errors.New("render failed")}
+	updated, cmd := m.openAttachment()
+	m = updated.(Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.screen != AttachmentScreen || m.err == nil || !strings.Contains(m.View(), "Ошибка") {
+		t.Fatalf("screen=%v err=%v view=%q", m.screen, m.err, m.View())
 	}
 }

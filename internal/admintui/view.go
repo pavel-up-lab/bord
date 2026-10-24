@@ -29,6 +29,9 @@ func (m Model) View() string {
 	if m.themePicker.IsOpen() {
 		lines = m.themePicker.Overlay(lines, m.themes, theme, m.width, m.height, m.themePickerAnchor())
 	}
+	if m.terminalControl != "" && len(lines) > 0 {
+		lines[0] = m.terminalControl + lines[0]
+	}
 	return strings.Join(lines[:height], "\n")
 }
 
@@ -61,6 +64,8 @@ func (m Model) screenTitle() string {
 		return "Доски: " + m.boardState
 	case HelpScreen:
 		return "Справка"
+	case AttachmentScreen:
+		return "Вложение"
 	}
 	return ""
 }
@@ -70,6 +75,8 @@ func (m Model) workspace(theme terminalui.Theme, width, height int) []string {
 		return m.modalRows(theme, width, height)
 	}
 	switch m.screen {
+	case AttachmentScreen:
+		return m.attachmentWorkspace(theme, width, height)
 	case ReportsScreen:
 		return m.reportWorkspace(theme, width, height)
 	case BansScreen:
@@ -82,6 +89,28 @@ func (m Model) workspace(theme terminalui.Theme, width, height int) []string {
 		return panel(theme, "Справка", "КЛАВИША / ДЕЙСТВИЕ", []string{"1 / 2 / 3 / 4 — Жалобы / Блокировки / Аудит / Доски", "↑/↓, PgUp/PgDn — навигация", "Tab — переключить панель", "Enter — открыть / следующая страница", "H/U — скрыть/восстановить пост", "C — закрыть тред", "B — блокировка по посту", "X — отозвать блокировку", "I — раскрыть IP (administrator)", "A — открыть вложение", "Доски: N создать, D архивировать, U восстановить", "F6 — фильтр состояния текущего списка", "F2 — тема, F5 — обновить, F10 — выход"}, width, height, true)
 	}
 	return blank(theme, width, height)
+}
+
+func (m Model) attachmentWorkspace(theme terminalui.Theme, width, height int) []string {
+	if m.loading {
+		return terminalui.Panel(theme, width, height, "Вложение", "ИЗОБРАЖЕНИЕ", []terminalui.Row{{Lines: []string{"Загрузка и проверка вложения…"}}}, true)
+	}
+	if m.err != nil {
+		return terminalui.Panel(theme, width, height, "Вложение", "ОШИБКА", []terminalui.Row{{Lines: []string{"Ошибка: " + safeError(m.err), "", "Esc — вернуться"}}}, true)
+	}
+	rows := []terminalui.Row{}
+	if len(m.attachmentView.Lines) > 0 {
+		rows = append(rows, terminalui.Row{Lines: m.attachmentView.Lines, TrustedANSI: m.attachmentView.TrustedANSI})
+	}
+	rows = append(rows, terminalui.Row{Lines: []string{"Режим: " + m.attachmentView.Backend}})
+	if m.attachmentView.Warning != "" {
+		rows = append(rows, terminalui.Row{Lines: []string{m.attachmentView.Warning}})
+	}
+	if strings.HasPrefix(m.attachmentView.Backend, "w3m") {
+		rows = append(rows, terminalui.Row{Lines: []string{"O — открыть через w3m"}})
+	}
+	rows = append(rows, terminalui.Row{Lines: []string{"Enter — открыть системным приложением • Esc — назад"}})
+	return terminalui.Panel(theme, width, height, "Вложение", "ИЗОБРАЖЕНИЕ • ФАКТИЧЕСКИЙ BACKEND", rows, true)
 }
 
 func (m Model) reportWorkspace(theme terminalui.Theme, width, height int) []string {
@@ -272,6 +301,12 @@ func (m Model) commandLabels() []string {
 		return []string{"Ctrl+S Далее", "Esc Отмена"}
 	}
 	switch m.screen {
+	case AttachmentScreen:
+		labels := []string{"Enter Open"}
+		if strings.HasPrefix(m.attachmentView.Backend, "w3m") {
+			labels = append(labels, "O w3m")
+		}
+		return append(labels, "Esc Back", "F10 Quit")
 	case ReportsScreen:
 		labels := []string{"F1 Help", "F2 Theme", "F5 Refresh"}
 		if !m.canModerate() {

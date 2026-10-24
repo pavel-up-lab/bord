@@ -28,6 +28,7 @@ import (
 	"bord/internal/events"
 	"bord/internal/integration"
 	storage "bord/internal/storage/sqlite"
+	"bord/internal/terminalui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -393,7 +394,14 @@ func TestSettingsPopupAndImageModeModal(t *testing.T) {
 	if m.settingsOpen || m.imageSettings == nil || !strings.Contains(m.View(), "Настройки изображений") {
 		t.Fatal("image settings modal did not open")
 	}
+	for _, label := range []string{"Auto", "Kitty", "Sixel", "ANSI", "w3m", "System"} {
+		if !strings.Contains(m.View(), label) {
+			t.Fatalf("image settings missing %q", label)
+		}
+	}
 	assertDimensions(t, m.View(), 80, 24)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -432,7 +440,7 @@ func TestSettingsAndImageModeCanBeSelectedWithMouse(t *testing.T) {
 		t.Fatal("image settings item did not open modal")
 	}
 	x, y, _, _ := m.imageSettingsGeometry()
-	updated, _ = m.Update(click(x+3, y+3))
+	updated, _ = m.Update(click(x+3, y+6))
 	m = updated.(Model)
 	if m.ImageModeSetting() != string(InlineW3M) {
 		t.Fatalf("image mode=%q", m.ImageModeSetting())
@@ -452,7 +460,7 @@ func TestANSIImageModeRendersInsideAttachmentScreen(t *testing.T) {
 	m := NewModel(context.Background(), &fakeService{}).WithAttachmentViewer(InlineANSI, nil)
 	m.width, m.height, m.loading, m.screen = 40, 16, false, AttachmentScreen
 	m.attachmentImage = encoded.Bytes()
-	m.renderAttachmentANSI()
+	m.renderAttachmentFrame()
 	view := m.View()
 	assertDimensions(t, view, 40, 16)
 	if !strings.Contains(view, "▀") || !strings.Contains(view, "38;2;255;0;0") {
@@ -1434,6 +1442,10 @@ func TestKittyRendererAndFallback(t *testing.T) {
 		t.Fatal("unknown terminal must fall back")
 	}
 	r.Mode = InlineKitty
+	if _, ok := r.Render([]byte("image"), 10, 4); ok {
+		t.Fatal("unsupported forced Kitty mode must fall back")
+	}
+	r.Capability = staticCapability(true)
 	got, ok := r.Render([]byte("image"), 10, 4)
 	if !ok || got != "\x1b_Ga=T,f=100,c=10,r=4,m=0;aW1hZ2U=\x1b\\" {
 		t.Fatalf("%q %v", got, ok)
@@ -1468,6 +1480,7 @@ func TestAttachmentViewerVerifiesRendersAndOpens(t *testing.T) {
 	m.posts = []generated.Post{{Id: "post_1", State: generated.Visible, Attachment: &meta}}
 	m.attachmentCache = client.NewCache(t.TempDir())
 	m.attachmentRenderer = KittyRenderer{Capability: staticCapability(true), Mode: InlineAuto}
+	m.imageSession = terminalui.NewImageSession(io.Discard)
 	var opened string
 	m.openExternal = func(_ context.Context, path string) error { opened = path; return nil }
 
@@ -1481,12 +1494,21 @@ func TestAttachmentViewerVerifiesRendersAndOpens(t *testing.T) {
 	if m.err != nil || m.attachmentFile == "" || filepath.Ext(m.attachmentFile) != ".png" || len(m.attachmentData) == 0 {
 		t.Fatalf("attachment load: err=%v file=%q inline=%d", m.err, m.attachmentFile, len(m.attachmentData))
 	}
-	if inlineCmd == nil {
-		t.Fatal("direct Kitty viewer did not start")
+	if inlineCmd == nil || !strings.Contains(m.View(), "\x1b_Ga=T") || !strings.Contains(m.View(), "\U0010eeee") || !strings.Contains(m.View(), "Kitty placeholders") {
+		t.Fatalf("inline Kitty frame missing: cmd=%v view=%q", inlineCmd, m.View())
 	}
-	if strings.Contains(m.View(), "\x1b_G") {
-		t.Fatal("Kitty image sequence must not pass through Bubble Tea View")
+	updated, _ = m.Update(inlineCmd())
+	m = updated.(Model)
+	if strings.Contains(m.View(), "\x1b_Ga=T") || !strings.Contains(m.View(), "\U0010eeee") {
+		t.Fatal("upload control was not consumed independently of placeholders")
 	}
+	updated, inlineCmd = m.Update(tea.WindowSizeMsg{Width: 70, Height: 20})
+	m = updated.(Model)
+	if inlineCmd == nil || !strings.Contains(m.View(), "a=d,d=I") || !strings.Contains(m.View(), "a=T") {
+		t.Fatalf("resize did not replace placement: cmd=%v view=%q", inlineCmd, m.View())
+	}
+	updated, _ = m.Update(inlineCmd())
+	m = updated.(Model)
 
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
@@ -1498,10 +1520,10 @@ func TestAttachmentViewerVerifiesRendersAndOpens(t *testing.T) {
 	if m.err != nil || opened != m.attachmentFile {
 		t.Fatalf("opened=%q file=%q err=%v", opened, m.attachmentFile, m.err)
 	}
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
-	if m.screen != PostScreen || m.attachmentFile != "" || len(m.attachmentData) != 0 {
-		t.Fatalf("attachment back did not restore post: screen=%v file=%q", m.screen, m.attachmentFile)
+	if m.screen != PostScreen || m.attachmentFile != "" || len(m.attachmentData) != 0 || cmd == nil || !strings.Contains(m.View(), "a=d,d=I") {
+		t.Fatalf("attachment back did not restore post and cleanup: screen=%v file=%q cmd=%v", m.screen, m.attachmentFile, cmd)
 	}
 }
 
@@ -1519,6 +1541,57 @@ func TestAttachmentViewerRejectsChecksumMismatch(t *testing.T) {
 	m = updated.(Model)
 	if m.err == nil || m.attachmentFile != "" {
 		t.Fatalf("checksum mismatch accepted: file=%q err=%v", m.attachmentFile, m.err)
+	}
+}
+
+func TestAttachmentViewerFallsBackToANSIWhenKittyFrameFails(t *testing.T) {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.screen, m.loading = 40, 16, AttachmentScreen, false
+	m.attachmentID = "attachment_1"
+	m.attachmentImage = encoded.Bytes()
+	m.attachmentData = []byte("invalid prepared PNG")
+	m.attachmentRenderer = KittyRenderer{Capability: staticCapability(true), Mode: InlineAuto}
+	m.imageMode = InlineAuto
+	m.imageSession = terminalui.NewImageSession(io.Discard)
+	cmd := m.renderAttachmentFrame()
+	if cmd == nil || m.attachmentBackend != "ANSI fallback" || len(m.attachmentANSI) == 0 || !strings.Contains(m.attachmentWarning, "Kitty") {
+		t.Fatalf("backend=%q ansi=%d warning=%q cmd=%v", m.attachmentBackend, len(m.attachmentANSI), m.attachmentWarning, cmd)
+	}
+	if view := m.View(); strings.Contains(view, "a=T") || !strings.Contains(view, "ANSI fallback") {
+		t.Fatalf("unsafe backend error view: %q", view)
+	}
+}
+
+func TestAttachmentViewerRendersSixelInsideFrame(t *testing.T) {
+	var encoded bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 4, 2))
+	img.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(context.Background(), &fakeService{})
+	m.width, m.height, m.screen, m.loading = 40, 16, AttachmentScreen, false
+	m.attachmentID, m.attachmentImage = "attachment_1", encoded.Bytes()
+	m.imageMode = InlineAuto
+	m.attachmentRenderer = KittyRenderer{Capability: terminalui.TerminalCapabilities{Sixel: true}, Mode: InlineAuto}
+	m.imageSession = terminalui.NewImageSession(io.Discard)
+	if cmd := m.renderAttachmentFrame(); cmd != nil {
+		t.Fatal("Sixel does not require an out-of-band cleanup command")
+	}
+	view := m.View()
+	assertDimensions(t, view, 40, 16)
+	if m.attachmentBackend != "Sixel" || !strings.Contains(view, "\x1bP0;1;8q") || !strings.Contains(view, "Режим: Sixel") {
+		t.Fatalf("Sixel frame missing: backend=%q view=%q", m.attachmentBackend, view)
+	}
+	first := m.attachmentFrame[0]
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 18})
+	m = updated.(Model)
+	if m.attachmentFrame[0] == first {
+		t.Fatal("resize did not regenerate Sixel generation")
 	}
 }
 

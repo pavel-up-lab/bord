@@ -47,6 +47,12 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.screen == AttachmentScreen {
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && zone == terminalui.MouseCommandBar {
+			return m.activateCommand(msg.X)
+		}
+		return m, nil
+	}
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 		if zone == terminalui.MouseTopBar {
 			return m.activateTop(msg.X)

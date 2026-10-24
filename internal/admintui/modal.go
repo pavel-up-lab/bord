@@ -313,6 +313,8 @@ func (m Model) openAttachment() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	meta := terminalui.ImageMetadata{ID: post.Attachment.Id, SHA256: post.Attachment.Sha256, MediaType: string(post.Attachment.MediaType), Size: post.Attachment.Size}
+	m.previous, m.screen = m.screen, AttachmentScreen
+	m.attachmentID = meta.ID
 	m, id, ctx := m.beginRequest()
 	return m, func() tea.Msg {
 		body, mediaType, err := m.service.Attachment(ctx, meta.ID)

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"bord/internal/adminapp"
 	"bord/internal/client"
+	"bord/internal/terminalui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -30,6 +32,31 @@ func TestVersionAndFlagsNeverExposeCredential(t *testing.T) {
 	err := run(context.Background(), []string{"--credential", secret}, &stdout, &stderr)
 	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(stderr.String(), secret) {
 		t.Fatalf("unsafe flag error=%v stderr=%q", err, stderr.String())
+	}
+}
+
+func TestAdminRunClosesSharedImageSessionOnProgramError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("BORD_ADMIN_CREDENTIAL", "admin.secret")
+	management := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":"root","role":"administrator","expires_at":"2027-01-01T00:00:00Z"}`)
+	}))
+	defer management.Close()
+	t.Setenv("BORD_ADMIN_MANAGEMENT", management.URL)
+	originalRun, originalPrepare := runProgram, prepareTerminal
+	t.Cleanup(func() { runProgram, prepareTerminal = originalRun, originalPrepare })
+	var cleanup bytes.Buffer
+	prepareTerminal = func(context.Context, io.Writer) (terminalui.TerminalCapabilities, *terminalui.ImageSession) {
+		session := terminalui.NewImageSession(&cleanup)
+		session.Activate(terminalui.NativeKitty, "test", 10, 4)
+		return terminalui.TerminalCapabilities{}, session
+	}
+	runProgram = func(context.Context, tea.Model, io.Writer) (tea.Model, error) {
+		return nil, errors.New("render failed")
+	}
+	if err := run(context.Background(), nil, io.Discard, io.Discard); err == nil || !strings.Contains(cleanup.String(), "a=d") {
+		t.Fatalf("err=%v cleanup=%q", err, cleanup.String())
 	}
 }
 

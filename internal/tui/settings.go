@@ -17,9 +17,12 @@ var imageModeOptions = []struct {
 	mode        InlineMode
 	label, help string
 }{
-	{InlineAuto, "Нативный", "Kitty graphics protocol в Kitty и совместимых терминалах"},
-	{InlineW3M, "w3m", "Внешний терминальный просмотрщик w3m должен быть установлен"},
+	{InlineAuto, "Auto", "Kitty → Sixel → ANSI по подтверждённым возможностям"},
+	{InlineKitty, "Kitty", "Unicode placeholders; без поддержки используется ANSI"},
+	{InlineSixel, "Sixel", "Windows Terminal и совместимые; иначе ANSI"},
 	{InlineANSI, "ANSI", "Цветные текстовые ячейки без графического протокола"},
+	{InlineW3M, "w3m", "Только явное открытие; программа должна быть установлена"},
+	{InlineOff, "System", "Только явное открытие системным приложением"},
 }
 
 func (m *Model) openSettingsMenu() {
@@ -31,7 +34,7 @@ func (m *Model) openImageSettings() {
 	m.settingsOpen = false
 	modal := &imageSettingsModal{}
 	for index, option := range imageModeOptions {
-		if option.mode == m.imageMode || option.mode == InlineAuto && m.imageMode == InlineKitty {
+		if option.mode == m.imageMode {
 			modal.index = index
 			break
 		}
@@ -61,25 +64,31 @@ func (m Model) updateImageSettingsKey(key string) (tea.Model, tea.Cmd) {
 	case "down", "j", "tab":
 		m.imageSettings.index = (m.imageSettings.index + 1) % len(imageModeOptions)
 	case "enter":
-		m.setImageMode(imageModeOptions[m.imageSettings.index].mode)
+		cmd := m.setImageMode(imageModeOptions[m.imageSettings.index].mode)
 		m.imageSettings = nil
 		m.notice = "Режим изображений: " + terminalui.InlineModeLabel(m.imageMode)
+		return m, cmd
 	}
 	return m, nil
 }
 
-func (m *Model) setImageMode(mode InlineMode) {
+func (m *Model) setImageMode(mode InlineMode) tea.Cmd {
 	if !terminalui.ValidInlineMode(mode) {
-		return
+		return nil
 	}
 	changed := m.imageMode != mode
 	m.imageMode = mode
 	m.attachmentRenderer.Mode = mode
-	if changed && m.screen == AttachmentScreen {
-		m.screen = m.previous
-		m.clearAttachmentViewer()
+	if !changed || m.screen != AttachmentScreen {
+		return nil
 	}
-	m.renderAttachmentANSI()
+	backend := terminalui.SelectImageBackend(mode, m.attachmentRenderer.Capability).Backend
+	if backend == terminalui.BackendANSI || backend == terminalui.BackendW3M || backend == terminalui.BackendOff {
+		if m.imageSession != nil {
+			m.queueTerminalControl(m.imageSession.Clear())
+		}
+	}
+	return m.renderAttachmentFrame()
 }
 
 func (m Model) settingsAnchor() int {
@@ -114,7 +123,7 @@ func (m Model) overlaySettingsMenu(lines []string, colors theme) []string {
 
 func (m Model) imageSettingsGeometry() (x, y, width, height int) {
 	width = minInt(max(1, m.width), minInt(72, max(28, m.width-4)))
-	height = minInt(max(1, m.height), 10)
+	height = minInt(max(1, m.height), len(imageModeOptions)+5)
 	x, y = max(0, (m.width-width)/2), max(0, (m.height-height)/2)
 	return
 }
@@ -154,10 +163,10 @@ func (m Model) updateSettingsMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.imageSettings.index = msg.Y - (y + 2)
-		m.setImageMode(imageModeOptions[m.imageSettings.index].mode)
+		cmd := m.setImageMode(imageModeOptions[m.imageSettings.index].mode)
 		m.imageSettings = nil
 		m.notice = "Режим изображений: " + terminalui.InlineModeLabel(m.imageMode)
-		return m, nil
+		return m, cmd
 	}
 	if m.settingsOpen {
 		x, width := m.settingsMenuGeometry()

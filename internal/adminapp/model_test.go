@@ -2,6 +2,7 @@ package adminapp
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -182,6 +183,29 @@ func TestThemeSelectionSynchronizesBothPersistentChildren(t *testing.T) {
 	app = updated.(Model)
 	if app.user.ThemeSetting() != app.admin.ThemeSetting() {
 		t.Fatal("user theme did not flow to admin")
+	}
+}
+
+func TestImageModeSynchronizesAndModeSwitchQueuesCleanup(t *testing.T) {
+	themes := terminalui.DiscoverThemes()
+	session := terminalui.NewImageSession(io.Discard)
+	capabilities := terminalui.TerminalCapabilities{KittyPlaceholders: true, Sixel: true}
+	viewer := admintui.TerminalImageViewer{Renderer: terminalui.KittyRenderer{Capability: capabilities, Mode: terminalui.InlineAuto}, Session: session, Sixel: &terminalui.SixelRenderer{}}
+	admin := admintui.NewModel(context.Background(), adminService{}).WithImageViewer(viewer)
+	user := tui.NewModel(context.Background(), &publicService{}).WithAttachmentEnvironment(tui.InlineSixel, nil, capabilities, session)
+	app := New(admin, user, themes, "user")
+
+	updated, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	app = updated.(Model)
+	if app.admin.ImageModeSetting() != "sixel" {
+		t.Fatalf("admin image mode=%q", app.admin.ImageModeSetting())
+	}
+
+	handle := session.Activate(terminalui.NativeKitty, "active-user-image", 20, 8)
+	updated, cmd := app.Update(tea.KeyMsg{Type: tea.KeyF3})
+	app = updated.(Model)
+	if cmd == nil || app.mode != AdminMode || !strings.Contains(app.View(), "i="+fmt.Sprint(handle.ID)) || !strings.Contains(app.View(), "a=d") {
+		t.Fatalf("mode=%v cmd=%v view=%q", app.mode, cmd, app.View())
 	}
 }
 

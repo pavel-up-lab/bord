@@ -41,12 +41,12 @@ func TestRenderANSIImageRejectsInvalidInput(t *testing.T) {
 }
 
 func TestInlineModesIncludeSettingsChoices(t *testing.T) {
-	for _, mode := range []InlineMode{InlineAuto, InlineKitty, InlineW3M, InlineANSI, InlineOff} {
+	for _, mode := range []InlineMode{InlineAuto, InlineKitty, InlineSixel, InlineW3M, InlineANSI, InlineOff} {
 		if !ValidInlineMode(mode) {
 			t.Fatalf("mode %q rejected", mode)
 		}
 	}
-	if ValidInlineMode("sixel") {
+	if ValidInlineMode("regis") {
 		t.Fatal("unknown mode accepted")
 	}
 }

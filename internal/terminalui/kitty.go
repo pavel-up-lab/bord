@@ -21,6 +21,7 @@ type InlineMode string
 const (
 	InlineAuto  InlineMode = "auto"
 	InlineKitty InlineMode = "kitty"
+	InlineSixel InlineMode = "sixel"
 	InlineW3M   InlineMode = "w3m"
 	InlineANSI  InlineMode = "ansi"
 	InlineOff   InlineMode = "off"
@@ -28,7 +29,7 @@ const (
 
 func ValidInlineMode(mode InlineMode) bool {
 	switch mode {
-	case InlineAuto, InlineKitty, InlineW3M, InlineANSI, InlineOff:
+	case InlineAuto, InlineKitty, InlineSixel, InlineW3M, InlineANSI, InlineOff:
 		return true
 	default:
 		return false
@@ -37,8 +38,14 @@ func ValidInlineMode(mode InlineMode) bool {
 
 func InlineModeLabel(mode InlineMode) string {
 	switch mode {
+	case InlineAuto:
+		return "Auto (Kitty → Sixel → ANSI)"
 	case InlineW3M:
 		return "w3m"
+	case InlineKitty:
+		return "Kitty placeholders"
+	case InlineSixel:
+		return "Sixel"
 	case InlineANSI:
 		return "ANSI"
 	case InlineOff:
@@ -56,6 +63,8 @@ func (EnvironmentCapabilities) KittyGraphics() bool {
 	program := strings.ToLower(os.Getenv("TERM_PROGRAM"))
 	return strings.Contains(term, "kitty") || program == "kitty" || program == "iterm.app" || program == "wezterm" || os.Getenv("KITTY_WINDOW_ID") != ""
 }
+
+func (EnvironmentCapabilities) SixelGraphics() bool { return false }
 
 type KittyRenderer struct {
 	Capability Capabilities
@@ -141,7 +150,7 @@ func (c *KittyViewerCommand) Run() error {
 	if c.stdin == nil || c.stdout == nil {
 		return errors.New("terminal streams unavailable")
 	}
-	rendered, ok := (KittyRenderer{Mode: InlineKitty}).Render(c.Data, c.Columns, c.Rows)
+	rendered, ok := (KittyRenderer{Capability: TerminalCapabilities{KittyPlaceholders: true}, Mode: InlineKitty}).Render(c.Data, c.Columns, c.Rows)
 	if !ok {
 		return errors.New("inline image unavailable")
 	}
@@ -236,7 +245,7 @@ func minFloat(a, b float64) float64 {
 }
 
 func (r KittyRenderer) Available() bool {
-	return r.Mode == InlineKitty || (r.Mode == InlineAuto && r.Capability != nil && r.Capability.KittyGraphics())
+	return SelectImageBackend(r.Mode, r.Capability).Backend == BackendKitty
 }
 func (r KittyRenderer) Render(data []byte, columns, rows int) (string, bool) {
 	if !r.Available() || len(data) == 0 || columns <= 0 || rows <= 0 {

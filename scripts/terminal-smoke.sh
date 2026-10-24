@@ -11,6 +11,12 @@ trap 'rm -rf "$tmp"' EXIT
 
 echo "terminal smoke host: ${host_os}/${host_arch}"
 go test ./internal/client ./internal/clientapp ./internal/adminclient ./internal/terminalui ./internal/tui ./internal/admintui ./internal/adminapp ./cmd/bord ./cmd/bord-admin
+go test ./internal/tui -run 'TestAttachmentViewer(VerifiesRendersAndOpens|RendersSixelInsideFrame)'
+go test ./internal/admintui -run 'TestAttachment(UsesSharedViewerAndReturnsToMouseModel|RendererErrorStaysInTUI)'
+if grep -Eq 'KittyViewerCommand|ANSIViewerCommand' internal/tui/model.go internal/admintui/viewer.go; then
+  echo "automatic attachment viewer command remains in a TUI model" >&2
+  exit 1
+fi
 
 host_binary="$tmp/bord"
 if [[ "$host_os" == windows ]]; then

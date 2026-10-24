@@ -10,7 +10,7 @@ import (
 func TestAdminStateIsAtomicPrivateAndContainsNoCredential(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config", "admin.json")
 	store := NewStateStore(path)
-	first := State{Management: "http://127.0.0.1:8081", Server: "https://bord.example", Theme: "classic", View: "reports", Mode: "user", InlineMode: "auto"}
+	first := State{Management: "http://127.0.0.1:8081", Server: "https://bord.example", Theme: "classic", View: "reports", Mode: "user", InlineMode: "sixel"}
 	if err := store.Save(first); err != nil {
 		t.Fatal(err)
 	}

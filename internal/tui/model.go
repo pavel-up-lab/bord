@@ -119,8 +119,14 @@ type Model struct {
 	attachmentData                                       []byte
 	attachmentImage                                      []byte
 	attachmentANSI                                       []string
+	attachmentFrame                                      []string
+	attachmentBackend                                    string
 	attachmentFile, attachmentID, attachmentWarning      string
 	attachmentRenderer                                   KittyRenderer
+	sixelRenderer                                        *terminalui.SixelRenderer
+	imageSession                                         *terminalui.ImageSession
+	terminalControl                                      string
+	terminalControlGeneration                            uint64
 	attachmentCache                                      *client.Cache
 	openExternal                                         func(context.Context, string) error
 	report                                               *reportForm
@@ -187,6 +193,7 @@ type attachmentLoadedMsg struct {
 type attachmentOpenedMsg struct{ err error }
 type attachmentInlineClosedMsg struct{ err error }
 type clearClipboardOSCMsg struct{}
+type clearTerminalControlMsg struct{ generation uint64 }
 
 func NewModel(ctx context.Context, api Service) Model {
 	if ctx == nil {
@@ -198,20 +205,47 @@ func NewModel(ctx context.Context, api Service) Model {
 	editor.CharLimit = 10000
 	editor.SetWidth(60)
 	editor.SetHeight(8)
-	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), imageMode: InlineAuto, replyPostAnchor: -1}
+	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), imageMode: InlineAuto, replyPostAnchor: -1, sixelRenderer: &terminalui.SixelRenderer{}}
 }
 
 // WithAttachmentViewer wires verified downloads to Kitty inline graphics and
 // the platform opener fallback.
 func (m Model) WithAttachmentViewer(mode InlineMode, cache *client.Cache) Model {
+	return m.WithAttachmentEnvironment(mode, cache, EnvironmentCapabilities{}, nil)
+}
+
+func (m Model) WithAttachmentEnvironment(mode InlineMode, cache *client.Cache, capabilities terminalui.Capabilities, session *terminalui.ImageSession) Model {
 	if !terminalui.ValidInlineMode(mode) {
 		mode = InlineAuto
 	}
+	if capabilities == nil {
+		capabilities = terminalui.TerminalCapabilities{}
+	}
 	m.imageMode = mode
-	m.attachmentRenderer = KittyRenderer{Capability: EnvironmentCapabilities{}, Mode: mode}
+	m.attachmentRenderer = KittyRenderer{Capability: capabilities, Mode: mode}
+	m.imageSession = session
 	m.attachmentCache = cache
 	m.openExternal = client.OpenExternal
 	return m
+}
+
+// DetachTerminalImage releases native resources before the integrated admin
+// application hides this model. The verified attachment remains available for
+// a later refresh.
+func (m Model) DetachTerminalImage() (Model, string) {
+	cleanup := ""
+	if m.imageSession != nil {
+		cleanup = m.imageSession.Clear()
+	}
+	if m.attachmentBackend == "Kitty placeholders" || m.attachmentBackend == "Sixel" {
+		m.attachmentFrame = nil
+		m.attachmentBackend = ""
+	}
+	return m, cleanup
+}
+
+func (m Model) RefreshTerminalImage() (Model, tea.Cmd) {
+	return m, m.renderAttachmentFrame()
 }
 
 // WithTheme selects a validated presentation theme.
@@ -246,8 +280,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.configureEditorWidth()
 		m.editor.SetHeight(max(1, msg.Height-10))
 		m.resizeReportEditor()
-		m.renderAttachmentANSI()
-		return m, nil
+		return m, m.renderAttachmentFrame()
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 	case tea.MouseMsg:
@@ -376,13 +409,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
 			m.attachmentData, m.attachmentImage, m.attachmentFile, m.attachmentWarning = msg.data, msg.original, msg.path, msg.warning
-			m.renderAttachmentANSI()
-			if m.imageMode == InlineW3M && msg.path != "" {
-				return m, m.viewAttachmentW3M()
-			}
-			if len(msg.data) > 0 && m.attachmentRenderer.Available() {
-				return m, m.viewAttachmentInline()
-			}
+			return m, m.renderAttachmentFrame()
 		}
 	case attachmentOpenedMsg:
 		if m.screen == AttachmentScreen {
@@ -398,6 +425,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case clearClipboardOSCMsg:
 		m.clipboardOSC = ""
+	case clearTerminalControlMsg:
+		if msg.generation == m.terminalControlGeneration {
+			m.terminalControl = ""
+		}
 	}
 	return m, nil
 }
@@ -526,7 +557,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen, m.postScroll = ThreadScreen, 0
 		} else if m.screen == AttachmentScreen {
 			m.screen = m.previous
-			m.clearAttachmentViewer()
+			return m, m.clearAttachmentViewer()
 		} else if m.screen == ThreadScreen {
 			m.screen, m.activeThread, m.posts = CatalogScreen, "", nil
 			return m, m.loadThreads(false)
@@ -619,9 +650,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.imageMode == InlineW3M && m.attachmentFile != "" {
 				return m, m.viewAttachmentW3M()
 			}
-			if len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
-				return m, m.viewAttachmentInline()
-			}
+			return m, nil
 		}
 		if m.screen == ThreadScreen || m.screen == PostScreen {
 			post, ok := m.currentPost()
@@ -630,10 +659,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.previous, m.screen = m.screen, AttachmentScreen
-			m.clearAttachmentViewer()
+			cleanup := m.clearAttachmentViewer()
 			m.attachmentID = post.Attachment.Id
 			m.loading, m.err = true, nil
-			return m, m.loadAttachment(*post.Attachment)
+			return m, tea.Batch(cleanup, m.loadAttachment(*post.Attachment))
 		}
 	case matches(key, m.keys.Search):
 		m.searching, m.searchQuery, m.err = true, "", nil
@@ -861,15 +890,22 @@ func (m *Model) uploadAttachment(path string) tea.Cmd {
 	}
 }
 
-func (m *Model) clearAttachmentViewer() {
+func (m *Model) clearAttachmentViewer() tea.Cmd {
+	cleanup := ""
+	if m.imageSession != nil {
+		cleanup = m.imageSession.Clear()
+	}
 	m.attachmentData = nil
 	m.attachmentImage = nil
 	m.attachmentANSI = nil
+	m.attachmentFrame = nil
+	m.attachmentBackend = ""
 	m.attachmentFile = ""
 	m.attachmentID = ""
 	m.attachmentWarning = ""
 	m.loading = false
 	m.err = nil
+	return m.queueTerminalControl(cleanup)
 }
 
 func (m Model) loadAttachment(meta generated.Attachment) tea.Cmd {
@@ -903,20 +939,6 @@ func (m Model) openAttachment() tea.Cmd {
 	}
 }
 
-func (m Model) viewAttachmentInline() tea.Cmd {
-	viewer := &kittyViewerCommand{
-		Data:    m.attachmentData,
-		Columns: max(1, m.width-2),
-		Rows:    max(1, m.height-4),
-	}
-	return tea.Exec(viewer, func(err error) tea.Msg {
-		if err != nil {
-			return attachmentInlineClosedMsg{err: errors.New("не удалось показать изображение в Kitty")}
-		}
-		return attachmentInlineClosedMsg{}
-	})
-}
-
 func (m Model) viewAttachmentW3M() tea.Cmd {
 	viewer := &terminalui.W3MViewerCommand{Context: m.ctx, Path: m.attachmentFile}
 	return tea.Exec(viewer, func(err error) tea.Msg {
@@ -927,18 +949,95 @@ func (m Model) viewAttachmentW3M() tea.Cmd {
 	})
 }
 
-func (m *Model) renderAttachmentANSI() {
-	if m.imageMode != InlineANSI || len(m.attachmentImage) == 0 {
-		m.attachmentANSI = nil
-		return
+func (m *Model) renderAttachmentFrame() tea.Cmd {
+	if m.screen != AttachmentScreen || m.loading || len(m.attachmentImage) == 0 {
+		return nil
 	}
-	lines, err := terminalui.RenderANSIImage(m.attachmentImage, max(1, m.width-4), max(1, m.height-8), color.RGBA{})
+	m.attachmentANSI, m.attachmentFrame, m.attachmentBackend = nil, nil, ""
+	columns, rows := max(1, m.width-4), max(1, m.height-8)
+	selection := terminalui.SelectImageBackend(m.imageMode, m.attachmentRenderer.Capability)
+	if selection.Warning != "" {
+		m.attachmentWarning = selection.Warning
+	}
+	if selection.Backend == terminalui.BackendKitty && m.imageSession != nil {
+		if len(m.attachmentData) == 0 {
+			mediaType := http.DetectContentType(m.attachmentImage)
+			if prepared, err := terminalui.PrepareKittyImage(m.attachmentImage, mediaType); err == nil {
+				m.attachmentData = prepared
+			}
+		}
+		handle := m.imageSession.Activate(terminalui.NativeKitty, m.attachmentID, columns, rows)
+		frame, err := terminalui.RenderKittyFrame(m.attachmentData, handle.ID, columns, rows)
+		if err == nil {
+			m.attachmentFrame = frame.Lines
+			m.attachmentBackend = "Kitty placeholders"
+			if handle.Changed {
+				return m.queueTerminalControl(handle.Cleanup + frame.Control)
+			}
+			return nil
+		}
+		cleanup := m.imageSession.Clear()
+		m.attachmentWarning = "Kitty-показ недоступен; используется ANSI"
+		m.queueTerminalControl(cleanup)
+		selection.Backend = terminalui.BackendANSI
+	}
+	if selection.Backend == terminalui.BackendSixel && m.imageSession != nil {
+		if m.sixelRenderer == nil {
+			m.sixelRenderer = &terminalui.SixelRenderer{}
+		}
+		handle := m.imageSession.Activate(terminalui.NativeSixel, m.attachmentID, columns, rows)
+		frame, err := m.sixelRenderer.Render(m.attachmentImage, m.attachmentID, columns, rows, handle.Generation)
+		if err == nil && len(frame.Lines) > 0 {
+			m.attachmentFrame = frame.Lines
+			m.attachmentFrame[0] = frame.Control + m.attachmentFrame[0]
+			m.attachmentBackend = "Sixel"
+			return m.queueTerminalControl(handle.Cleanup)
+		}
+		m.attachmentWarning = "Sixel-показ недоступен; используется ANSI"
+		m.imageSession.Clear()
+		selection.Backend = terminalui.BackendANSI
+	}
+	if selection.Backend == terminalui.BackendKitty || selection.Backend == terminalui.BackendSixel {
+		m.attachmentWarning = "Нативный показ недоступен; используется ANSI"
+		selection.Backend = terminalui.BackendANSI
+	}
+	if selection.Backend == terminalui.BackendW3M {
+		m.attachmentBackend = "w3m (по клавише O)"
+		return nil
+	}
+	if selection.Backend == terminalui.BackendOff {
+		m.attachmentBackend = "Системный просмотрщик (Enter)"
+		return nil
+	}
+	lines, err := terminalui.RenderANSIImage(m.attachmentImage, columns, rows, color.RGBA{})
 	if err != nil {
-		m.attachmentANSI = nil
 		m.attachmentWarning = "ANSI-показ недоступен"
-		return
+		return m.terminalControlCmd()
 	}
 	m.attachmentANSI = lines
+	if m.imageMode == InlineANSI && selection.Warning == "" {
+		m.attachmentBackend = "ANSI"
+	} else {
+		m.attachmentBackend = "ANSI fallback"
+	}
+	return m.terminalControlCmd()
+}
+
+func (m *Model) queueTerminalControl(control string) tea.Cmd {
+	if control == "" {
+		return nil
+	}
+	m.terminalControl = control
+	m.terminalControlGeneration++
+	return m.terminalControlCmd()
+}
+
+func (m Model) terminalControlCmd() tea.Cmd {
+	if m.terminalControl == "" {
+		return nil
+	}
+	generation := m.terminalControlGeneration
+	return func() tea.Msg { return clearTerminalControlMsg{generation: generation} }
 }
 
 func (m *Model) watchEvents() tea.Cmd {
@@ -1002,6 +1101,9 @@ func (m Model) View() string {
 	}
 	if m.clipboardOSC != "" && len(lines) > 0 {
 		lines[0] = m.clipboardOSC + lines[0]
+	}
+	if m.terminalControl != "" && len(lines) > 0 {
+		lines[0] = m.terminalControl + lines[0]
 	}
 	return strings.Join(lines[:h], "\n")
 }
@@ -1222,16 +1324,27 @@ func (m Model) attachmentRows() []displayRow {
 	if m.err != nil {
 		return []displayRow{{Lines: []string{"Ошибка: " + SanitizeTerminalText(m.err.Error()), "", "Esc  вернуться к посту"}}}
 	}
-	if m.imageMode == InlineANSI && len(m.attachmentANSI) > 0 {
-		return []displayRow{{Lines: m.attachmentANSI, TrustedANSI: true}, {Lines: []string{"Enter  открыть системным приложением • Esc вернуться"}}}
+	if len(m.attachmentFrame) > 0 {
+		return []displayRow{
+			{Lines: m.attachmentFrame, TrustedANSI: true},
+			{Lines: []string{"Режим: " + m.attachmentBackend}},
+			{Lines: []string{"Enter  открыть системным приложением • Esc вернуться"}},
+		}
+	}
+	if len(m.attachmentANSI) > 0 {
+		return []displayRow{
+			{Lines: m.attachmentANSI, TrustedANSI: true},
+			{Lines: []string{"Режим: " + m.attachmentBackend}},
+			{Lines: []string{"Enter  открыть системным приложением • Esc вернуться"}},
+		}
 	}
 	lines := []string{}
-	if len(m.attachmentData) > 0 && m.attachmentRenderer.Available() {
-		lines = append(lines, "Kitty-просмотр закрыт.", "o      показать изображение снова", "Enter  открыть системным приложением")
-	} else if m.imageMode == InlineW3M {
-		lines = append(lines, "w3m-просмотр закрыт.", "o      показать изображение снова", "Enter  открыть системным приложением")
+	if m.imageMode == InlineW3M {
+		lines = append(lines, "Режим: "+m.attachmentBackend, "o      открыть через w3m", "Enter  открыть системным приложением")
+	} else if m.imageMode == InlineOff {
+		lines = append(lines, "Режим: "+m.attachmentBackend, "Enter  открыть системным приложением")
 	} else {
-		lines = append(lines, "Inline-графика недоступна в этом терминале.", "Enter  открыть системным приложением")
+		lines = append(lines, "Встроенный показ недоступен.", "Enter  открыть системным приложением")
 	}
 	if m.attachmentWarning != "" {
 		lines = append(lines, "", SanitizeTerminalText(m.attachmentWarning))

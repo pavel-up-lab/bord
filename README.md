@@ -362,7 +362,7 @@ bord --server https://board.example.org
 --server URL       адрес backend; иначе BORD_SERVER, затем сохранённое значение
 --config PATH      путь к локальному state.json
 --theme NAME|PATH  встроенная тема, имя или путь к MC skin .ini
---inline MODE      auto, kitty, w3m, ansi или off
+--inline MODE      auto, kitty, sixel, ansi, w3m или off
 --timeout DURATION HTTP timeout, по умолчанию 15s
 --version          версия клиента
 ```
@@ -384,15 +384,16 @@ $env:BORD_SERVER = "https://board.example.org"
 незащищённое облако: потеря файла означает потерю возможности удалить свои
 публикации, утечка — передачу этой возможности другому лицу.
 
-`--inline=auto` использует прямой Kitty image viewer в автоматически
-распознанных Kitty, iTerm2 и WezTerm и возвращается в TUI по `Enter`,
-`--inline=kitty` принудительно выбирает Kitty protocol, `--inline=w3m` запускает
-установленный `w3m`, `--inline=ansi` рисует изображение цветными текстовыми
-ячейками прямо в Bord, а `--inline=off` оставляет текстовую карточку и внешний opener. Для внешнего открытия используются
-`xdg-open`, `open` или Windows file association без запуска shell. iTerm2
-поддерживает Kitty graphics protocol напрямую; WezTerm также распознаётся
-автоматически. Для других совместимых терминалов протокол можно включить через
-`--inline kitty`. В Windows Terminal используйте `--inline ansi`.
+`--inline=auto` проверяет возможности терминала и выбирает встроенный renderer в
+порядке Kitty placeholders → Sixel → ANSI. Изображение остаётся частью экрана
+вложения: `Esc` возвращает к посту, а `Enter` явно открывает проверенный файл
+системным приложением. `--inline=kitty` и `--inline=sixel` запрашивают конкретный
+протокол, но безопасно переходят на ANSI, если терминал его не подтвердил.
+`--inline=ansi` всегда использует цветные half-block ячейки. `w3m` запускается
+только по явной команде `O`, а `off` оставляет только явное внешнее открытие.
+Системный opener использует `xdg-open`, `open` или Windows file association без
+shell. Kitty, актуальные iTerm2 и WezTerm поддерживают Kitty placeholders;
+Windows Terminal использует Sixel.
 
 ## Ретро landing
 
@@ -443,8 +444,8 @@ idempotency key и не создаёт дубликат.
 ### Общие команды
 
 - `t` / `F2` — выпадающий список встроенных и найденных MC-тем;
-- `s` / `F6` — меню настроек; пункт «Изображения» открывает выбор нативного,
-  `w3m` или ANSI-просмотра;
+- `s` / `F6` — меню настроек; пункт «Изображения» открывает отдельные варианты
+  Auto, Kitty, Sixel, ANSI, `w3m` и System;
 - `?` / `F1` — справка;
 - `q`, `Ctrl+C` или `F10` — выход;
 - колесо мыши — прокрутка панели под указателем;

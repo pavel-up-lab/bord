@@ -7,6 +7,7 @@ type InlineMode = terminalui.InlineMode
 const (
 	InlineAuto  = terminalui.InlineAuto
 	InlineKitty = terminalui.InlineKitty
+	InlineSixel = terminalui.InlineSixel
 	InlineW3M   = terminalui.InlineW3M
 	InlineANSI  = terminalui.InlineANSI
 	InlineOff   = terminalui.InlineOff
