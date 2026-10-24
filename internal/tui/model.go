@@ -129,6 +129,8 @@ type Model struct {
 	terminalControlGeneration                            uint64
 	attachmentCache                                      *client.Cache
 	openExternal                                         func(context.Context, string) error
+	postPreview                                          postImagePreview
+	postPreviewRequest                                   uint64
 	report                                               *reportForm
 	notice                                               string
 }
@@ -194,6 +196,21 @@ type attachmentOpenedMsg struct{ err error }
 type attachmentInlineClosedMsg struct{ err error }
 type clearClipboardOSCMsg struct{}
 type clearTerminalControlMsg struct{ generation uint64 }
+
+type postImagePreview struct {
+	postID, attachmentID, path, warning string
+	inline, original                    []byte
+	lines                               []string
+	loading                             bool
+	err                                 error
+}
+
+type postPreviewLoadedMsg struct {
+	request                             uint64
+	postID, attachmentID, path, warning string
+	inline, original                    []byte
+	err                                 error
+}
 
 func NewModel(ctx context.Context, api Service) Model {
 	if ctx == nil {
@@ -280,6 +297,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.configureEditorWidth()
 		m.editor.SetHeight(max(1, msg.Height-10))
 		m.resizeReportEditor()
+		m.renderPostPreview()
 		return m, m.renderAttachmentFrame()
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -323,8 +341,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.catalogBoard = msg.board
 			m.nextThreadCursor = msg.page.NextCursor
-			cmd := m.watchEvents()
-			return m, cmd
+			return m, m.watchEvents()
 		}
 	case postsMsg:
 		if msg.id != m.requestID {
@@ -342,6 +359,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.nextPostCursor = msg.page.NextCursor
 			cmd := m.watchEvents()
+			if m.screen == PostScreen {
+				return m, tea.Batch(cmd, m.loadPostPreview())
+			}
 			return m, cmd
 		}
 		m.postAdvance = 0
@@ -429,6 +449,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == m.terminalControlGeneration {
 			m.terminalControl = ""
 		}
+	case postPreviewLoadedMsg:
+		if msg.request != m.postPreviewRequest {
+			return m, nil
+		}
+		post, ok := m.currentPost()
+		if !ok || post.Id != msg.postID || post.Attachment == nil || post.Attachment.Id != msg.attachmentID {
+			return m, nil
+		}
+		m.postPreview = postImagePreview{
+			postID: msg.postID, attachmentID: msg.attachmentID, path: msg.path, warning: msg.warning,
+			inline: msg.inline, original: msg.original, err: msg.err,
+		}
+		m.renderPostPreview()
 	}
 	return m, nil
 }
@@ -555,6 +588,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case matches(key, m.keys.Back):
 		if m.screen == PostScreen {
 			m.screen, m.postScroll = ThreadScreen, 0
+			m.clearPostPreview()
 		} else if m.screen == AttachmentScreen {
 			m.screen = m.previous
 			return m, m.clearAttachmentViewer()
@@ -653,16 +687,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.screen == ThreadScreen || m.screen == PostScreen {
-			post, ok := m.currentPost()
-			if !ok || post.Attachment == nil {
-				m.err = errors.New("у поста нет вложения")
-				return m, nil
-			}
-			m.previous, m.screen = m.screen, AttachmentScreen
-			cleanup := m.clearAttachmentViewer()
-			m.attachmentID = post.Attachment.Id
-			m.loading, m.err = true, nil
-			return m, tea.Batch(cleanup, m.loadAttachment(*post.Attachment))
+			return m.openCurrentAttachment()
 		}
 	case matches(key, m.keys.Search):
 		m.searching, m.searchQuery, m.err = true, "", nil
@@ -715,6 +740,7 @@ func (m Model) openSelection() (tea.Model, tea.Cmd) {
 	}
 	if m.screen == ThreadScreen && len(m.posts) > 0 {
 		m.screen, m.postScroll = PostScreen, 0
+		return m, m.loadPostPreview()
 	}
 	return m, nil
 }
@@ -768,7 +794,7 @@ func (m *Model) moveViewedPost(delta int) tea.Cmd {
 	m.contentIndex = clamp(m.contentIndex+delta, 0, len(m.posts)-1)
 	m.contentScroll = ensureVisible(m.contentScroll, m.contentIndex, m.visibleRows())
 	m.postScroll = 0
-	return nil
+	return m.loadPostPreview()
 }
 
 func (m *Model) nextRequest() (uint64, context.Context, context.CancelFunc) {
@@ -921,6 +947,80 @@ func (m Model) loadAttachment(meta generated.Attachment) tea.Cmd {
 		}
 		return attachmentLoadedMsg{id: id, path: prepared.Path, data: prepared.Inline, original: prepared.Original, warning: prepared.Warning}
 	}
+}
+
+func (m *Model) loadPostPreview() tea.Cmd {
+	post, ok := m.currentPost()
+	if !ok || post.Attachment == nil || post.State != generated.Visible || m.imageMode == InlineOff || m.imageMode == InlineW3M {
+		m.clearPostPreview()
+		return nil
+	}
+	meta := *post.Attachment
+	if m.postPreview.postID == post.Id && m.postPreview.attachmentID == meta.Id {
+		m.renderPostPreview()
+		if m.postPreview.loading || len(m.postPreview.original) > 0 {
+			return nil
+		}
+	}
+	m.postPreviewRequest++
+	request := m.postPreviewRequest
+	m.postPreview = postImagePreview{postID: post.Id, attachmentID: meta.Id, loading: true}
+	ctx := m.ctx
+	cache, renderer, api := m.attachmentCache, m.attachmentRenderer, m.api
+	return func() tea.Msg {
+		body, responseType, err := api.Attachment(ctx, meta.Id)
+		if err != nil {
+			return postPreviewLoadedMsg{request: request, postID: post.Id, attachmentID: meta.Id, err: err}
+		}
+		prepared, err := terminalui.VerifyAndCacheImage(cache, renderer, terminalui.ImageMetadata{
+			ID: meta.Id, SHA256: meta.Sha256, MediaType: string(meta.MediaType), Size: meta.Size,
+		}, body, responseType)
+		return postPreviewLoadedMsg{
+			request: request, postID: post.Id, attachmentID: meta.Id, path: prepared.Path,
+			warning: prepared.Warning, inline: prepared.Inline, original: prepared.Original, err: err,
+		}
+	}
+}
+
+func (m *Model) clearPostPreview() {
+	m.postPreviewRequest++
+	m.postPreview = postImagePreview{}
+}
+
+func (m *Model) renderPostPreview() {
+	m.postPreview.lines = nil
+	if len(m.postPreview.original) == 0 {
+		return
+	}
+	columns := minInt(30, max(1, m.width-8))
+	rows := minInt(6, max(2, (m.height-8)/3))
+	lines, err := terminalui.RenderANSIImage(m.postPreview.original, columns, rows, color.RGBA{})
+	if err != nil {
+		m.postPreview.err = err
+		return
+	}
+	m.postPreview.lines = lines
+}
+
+func (m Model) openCurrentAttachment() (tea.Model, tea.Cmd) {
+	post, ok := m.currentPost()
+	if !ok || post.Attachment == nil {
+		m.err = errors.New("у поста нет вложения")
+		return m, nil
+	}
+	m.previous, m.screen = m.screen, AttachmentScreen
+	cleanup := m.clearAttachmentViewer()
+	m.attachmentID = post.Attachment.Id
+	if m.postPreview.postID == post.Id && m.postPreview.attachmentID == post.Attachment.Id && len(m.postPreview.original) > 0 {
+		m.loading, m.err = false, nil
+		m.attachmentData = append([]byte(nil), m.postPreview.inline...)
+		m.attachmentImage = append([]byte(nil), m.postPreview.original...)
+		m.attachmentFile = m.postPreview.path
+		m.attachmentWarning = m.postPreview.warning
+		return m, tea.Batch(cleanup, m.renderAttachmentFrame())
+	}
+	m.loading, m.err = true, nil
+	return m, tea.Batch(cleanup, m.loadAttachment(*post.Attachment))
 }
 
 func (m Model) openAttachment() tea.Cmd {
@@ -1401,6 +1501,10 @@ func (m Model) postDetailLines() []string {
 		lines = append(lines, "Ответ на >>"+SanitizeTerminalText(*post.ReplyToId))
 	}
 	lines = append(lines, "")
+	if post.Attachment != nil {
+		lines = append(lines, m.postPreviewBlock(post)...)
+		lines = append(lines, "")
+	}
 	body := "[" + SanitizeTerminalText(string(post.State)) + "]"
 	if post.State == generated.Visible && post.Body != nil {
 		body = sanitizeMultilineTerminalText(*post.Body)
@@ -1411,16 +1515,48 @@ func (m Model) postDetailLines() []string {
 	wrapWidth := max(1, m.width-5)
 	wrapped := ansi.Hardwrap(ansi.Wordwrap(body, wrapWidth, " "), wrapWidth, true)
 	lines = append(lines, strings.Split(wrapped, "\n")...)
-	if post.Attachment != nil {
-		lines = append(lines, "", "Вложение: "+SanitizeTerminalText(post.Attachment.Id))
-	}
 	return lines
+}
+
+func (m Model) postPreviewBlock(post generated.Post) []string {
+	if post.Attachment == nil {
+		return nil
+	}
+	id := SanitizeTerminalText(post.Attachment.Id)
+	lines := []string{"┌─ ПРЕВЬЮ ИЗОБРАЖЕНИЯ • клик или O — открыть"}
+	if m.imageMode == InlineOff || m.imageMode == InlineW3M {
+		lines = append(lines, "│  Превью отключено выбранным режимом")
+	} else if m.postPreview.postID != post.Id || m.postPreview.attachmentID != post.Attachment.Id || m.postPreview.loading {
+		lines = append(lines, "│  Загрузка превью…")
+	} else if len(m.postPreview.lines) > 0 {
+		for _, line := range m.postPreview.lines {
+			lines = append(lines, "│ "+line)
+		}
+	} else {
+		message := "Превью недоступно"
+		if m.postPreview.err != nil {
+			message += "; O — повторить"
+		}
+		lines = append(lines, "│  "+message)
+	}
+	return append(lines, "└─ "+id)
+}
+
+func (m Model) postPreviewLineRange(post generated.Post) (start, end int, ok bool) {
+	if post.Attachment == nil {
+		return 0, 0, false
+	}
+	start = 2 // metadata and the blank line before the preview
+	if post.ReplyToId != nil {
+		start++
+	}
+	return start, start + len(m.postPreviewBlock(post)), true
 }
 
 func (m Model) postDetailRows() []displayRow {
 	lines := m.postDetailLines()
 	start := clamp(m.postScroll, 0, max(0, len(lines)-1))
-	return []displayRow{{Lines: lines[start:]}}
+	return []displayRow{{Lines: lines[start:], TrustedANSI: true}}
 }
 
 func (m Model) statusLine(t theme, width int) string {

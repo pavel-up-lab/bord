@@ -79,7 +79,13 @@ func (m *Model) setImageMode(mode InlineMode) tea.Cmd {
 	changed := m.imageMode != mode
 	m.imageMode = mode
 	m.attachmentRenderer.Mode = mode
-	if !changed || m.screen != AttachmentScreen {
+	if !changed {
+		return nil
+	}
+	if m.screen == PostScreen {
+		return m.loadPostPreview()
+	}
+	if m.screen != AttachmentScreen {
 		return nil
 	}
 	backend := terminalui.SelectImageBackend(mode, m.attachmentRenderer.Capability).Backend

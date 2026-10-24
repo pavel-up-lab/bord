@@ -180,6 +180,9 @@ func (m Model) panelAt(x, y int) (Focus, bool) {
 	if y < 1 || y >= 1+workspaceHeight {
 		return m.focus, false
 	}
+	if m.screen == PostScreen || m.screen == AttachmentScreen || m.screen == HelpScreen || m.screen == ComposerScreen {
+		return FocusContent, true
+	}
 	if m.isNarrow() {
 		return m.focus, true
 	}
@@ -218,6 +221,15 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.screen == PostScreen {
+		if !m.insideFullPanelCell(x) {
+			return m, nil
+		}
+		post, exists := m.currentPost()
+		start, end, hasPreview := m.postPreviewLineRange(post)
+		logicalY := m.postScroll + localY
+		if exists && hasPreview && logicalY >= start && logicalY < end {
+			return m.openCurrentAttachment()
+		}
 		return m, nil
 	}
 	if localY/2 >= m.visibleRows() || !m.insidePanelCell(panel, x) {
@@ -247,8 +259,13 @@ func (m Model) clickWorkspace(x, y int) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == ThreadScreen {
 		m.screen, m.postScroll = PostScreen, 0
+		return m, m.loadPostPreview()
 	}
 	return m, nil
+}
+
+func (m Model) insideFullPanelCell(x int) bool {
+	return x > 0 && x < m.width-1
 }
 
 func (m Model) clicksReplyTarget(x int, post generated.Post, index int) bool {

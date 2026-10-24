@@ -35,19 +35,20 @@ import (
 )
 
 type fakeService struct {
-	boards         []generated.Board
-	threads        generated.ThreadPage
-	posts          generated.PostPage
-	createErr      error
-	keys           []string
-	deleted        []string
-	subscribeEvent bool
-	attachmentBody []byte
-	attachmentType string
-	attachmentErr  error
-	reportCalls    int
-	reportPostID   string
-	reportRequest  generated.CreateReport
+	boards          []generated.Board
+	threads         generated.ThreadPage
+	posts           generated.PostPage
+	createErr       error
+	keys            []string
+	deleted         []string
+	subscribeEvent  bool
+	attachmentBody  []byte
+	attachmentType  string
+	attachmentErr   error
+	attachmentCalls int
+	reportCalls     int
+	reportPostID    string
+	reportRequest   generated.CreateReport
 }
 
 func (f *fakeService) Boards(context.Context) ([]generated.Board, error) { return f.boards, nil }
@@ -73,6 +74,7 @@ func (f *fakeService) UploadAttachment(context.Context, string, io.Reader) (gene
 	return generated.Attachment{Id: "attachment_1"}, nil
 }
 func (f *fakeService) Attachment(context.Context, string) ([]byte, string, error) {
+	f.attachmentCalls++
 	return f.attachmentBody, f.attachmentType, f.attachmentErr
 }
 func (f *fakeService) Report(_ context.Context, postID string, request generated.CreateReport) error {
@@ -1520,10 +1522,90 @@ func TestAttachmentViewerVerifiesRendersAndOpens(t *testing.T) {
 	if m.err != nil || opened != m.attachmentFile {
 		t.Fatalf("opened=%q file=%q err=%v", opened, m.attachmentFile, m.err)
 	}
+	firstFrame := m.attachmentFrame[0]
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
 	if m.screen != PostScreen || m.attachmentFile != "" || len(m.attachmentData) != 0 || cmd == nil || !strings.Contains(m.View(), "a=d,d=I") {
 		t.Fatalf("attachment back did not restore post and cleanup: screen=%v file=%q cmd=%v", m.screen, m.attachmentFile, cmd)
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(Model)
+	if m.screen != AttachmentScreen || !m.loading || cmd == nil {
+		t.Fatalf("second attachment open did not start: screen=%v loading=%v cmd=%v", m.screen, m.loading, cmd)
+	}
+	updated, inlineCmd = m.Update(cmd())
+	m = updated.(Model)
+	if inlineCmd == nil || len(m.attachmentFrame) == 0 || m.attachmentFrame[0] == firstFrame || !strings.Contains(m.View(), "a=T") {
+		t.Fatalf("second Kitty placement missing: cmd=%v frame=%q view=%q", inlineCmd, m.attachmentFrame, m.View())
+	}
+}
+
+func TestPostImagePreviewAppearsBeforeBodyAndClickOpensViewer(t *testing.T) {
+	var encoded bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	img.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	body := encoded.Bytes()
+	sum := sha256.Sum256(body)
+	meta := generated.Attachment{
+		Id: "attachment_1", MediaType: generated.AttachmentMediaType("image/png"),
+		Size: int64(len(body)), Sha256: hex.EncodeToString(sum[:]), Width: 4, Height: 3,
+	}
+	text := "Текст должен быть ниже превью"
+	service := &fakeService{attachmentBody: body, attachmentType: "image/png"}
+	m := NewModel(context.Background(), service).WithAttachmentEnvironment(InlineAuto, client.NewCache(t.TempDir()), staticCapability(true), terminalui.NewImageSession(io.Discard))
+	m.width, m.height, m.loading = 80, 24, false
+	m.screen, m.previous, m.activeThread = PostScreen, ThreadScreen, "thread_1"
+	m.posts = []generated.Post{{Id: "post_1", State: generated.Visible, Body: &text, Attachment: &meta}}
+
+	cmd := m.loadPostPreview()
+	if cmd == nil || !m.postPreview.loading {
+		t.Fatal("preview load did not start")
+	}
+	updated, _ := m.Update(cmd())
+	m = updated.(Model)
+	lines := m.postDetailLines()
+	previewIndex, bodyIndex := -1, -1
+	for index, line := range lines {
+		if strings.Contains(line, "ПРЕВЬЮ ИЗОБРАЖЕНИЯ") {
+			previewIndex = index
+		}
+		if strings.Contains(line, text) {
+			bodyIndex = index
+		}
+	}
+	if previewIndex < 0 || bodyIndex <= previewIndex || len(m.postPreview.lines) == 0 {
+		t.Fatalf("preview=%d body=%d rendered=%d lines=%q", previewIndex, bodyIndex, len(m.postPreview.lines), lines)
+	}
+
+	start, _, ok := m.postPreviewLineRange(m.posts[0])
+	if !ok {
+		t.Fatal("preview hit range missing")
+	}
+	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 3 + start, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = updated.(Model)
+	if m.screen != AttachmentScreen || m.loading || len(m.attachmentImage) == 0 {
+		t.Fatalf("preview click did not open cached attachment: screen=%v loading=%v image=%d", m.screen, m.loading, len(m.attachmentImage))
+	}
+	firstFrame := m.attachmentFrame[0]
+	updated, cleanup := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if cleanup == nil {
+		t.Fatal("first Kitty placement was not cleaned up")
+	}
+	updated, _ = m.Update(cleanup())
+	m = updated.(Model)
+	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 3 + start, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = updated.(Model)
+	if m.screen != AttachmentScreen || len(m.attachmentFrame) == 0 || m.attachmentFrame[0] == firstFrame || !strings.Contains(m.View(), "a=T") {
+		t.Fatalf("second preview open did not create a fresh Kitty placement: screen=%v frame=%q", m.screen, m.attachmentFrame)
+	}
+	if service.attachmentCalls != 1 {
+		t.Fatalf("attachment fetched %d times; preview should be reused", service.attachmentCalls)
 	}
 }
 
