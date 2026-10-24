@@ -1566,7 +1566,12 @@ func TestPostImagePreviewAppearsBeforeBodyAndClickOpensViewer(t *testing.T) {
 	if cmd == nil || !m.postPreview.loading {
 		t.Fatal("preview load did not start")
 	}
-	updated, _ := m.Update(cmd())
+	updated, previewControl := m.Update(cmd())
+	m = updated.(Model)
+	if previewControl == nil || m.postPreview.native != terminalui.NativeKitty || !strings.Contains(m.View(), "a=T") || !strings.Contains(m.View(), "\U0010eeee") {
+		t.Fatalf("native Kitty preview missing: native=%v cmd=%v view=%q", m.postPreview.native, previewControl, m.View())
+	}
+	updated, _ = m.Update(previewControl())
 	m = updated.(Model)
 	lines := m.postDetailLines()
 	previewIndex, bodyIndex := -1, -1

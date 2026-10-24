@@ -201,6 +201,7 @@ type postImagePreview struct {
 	postID, attachmentID, path, warning string
 	inline, original                    []byte
 	lines                               []string
+	native                              terminalui.NativeProtocol
 	loading                             bool
 	err                                 error
 }
@@ -297,8 +298,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.configureEditorWidth()
 		m.editor.SetHeight(max(1, msg.Height-10))
 		m.resizeReportEditor()
-		m.renderPostPreview()
-		return m, m.renderAttachmentFrame()
+		previewCmd := m.renderPostPreview()
+		return m, tea.Batch(previewCmd, m.renderAttachmentFrame())
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 	case tea.MouseMsg:
@@ -461,7 +462,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			postID: msg.postID, attachmentID: msg.attachmentID, path: msg.path, warning: msg.warning,
 			inline: msg.inline, original: msg.original, err: msg.err,
 		}
-		m.renderPostPreview()
+		if m.screen == PostScreen {
+			return m, m.renderPostPreview()
+		}
 	}
 	return m, nil
 }
@@ -588,10 +591,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case matches(key, m.keys.Back):
 		if m.screen == PostScreen {
 			m.screen, m.postScroll = ThreadScreen, 0
-			m.clearPostPreview()
+			return m, m.clearPostPreview()
 		} else if m.screen == AttachmentScreen {
 			m.screen = m.previous
-			return m, m.clearAttachmentViewer()
+			cleanup := m.clearAttachmentViewer()
+			if m.screen == PostScreen {
+				return m, tea.Batch(cleanup, m.renderPostPreview())
+			}
+			return m, cleanup
 		} else if m.screen == ThreadScreen {
 			m.screen, m.activeThread, m.posts = CatalogScreen, "", nil
 			return m, m.loadThreads(false)
@@ -952,22 +959,21 @@ func (m Model) loadAttachment(meta generated.Attachment) tea.Cmd {
 func (m *Model) loadPostPreview() tea.Cmd {
 	post, ok := m.currentPost()
 	if !ok || post.Attachment == nil || post.State != generated.Visible || m.imageMode == InlineOff || m.imageMode == InlineW3M {
-		m.clearPostPreview()
-		return nil
+		return m.clearPostPreview()
 	}
 	meta := *post.Attachment
 	if m.postPreview.postID == post.Id && m.postPreview.attachmentID == meta.Id {
-		m.renderPostPreview()
 		if m.postPreview.loading || len(m.postPreview.original) > 0 {
-			return nil
+			return m.renderPostPreview()
 		}
 	}
+	cleanup := m.clearPostPreview()
 	m.postPreviewRequest++
 	request := m.postPreviewRequest
 	m.postPreview = postImagePreview{postID: post.Id, attachmentID: meta.Id, loading: true}
 	ctx := m.ctx
 	cache, renderer, api := m.attachmentCache, m.attachmentRenderer, m.api
-	return func() tea.Msg {
+	load := func() tea.Msg {
 		body, responseType, err := api.Attachment(ctx, meta.Id)
 		if err != nil {
 			return postPreviewLoadedMsg{request: request, postID: post.Id, attachmentID: meta.Id, err: err}
@@ -980,26 +986,53 @@ func (m *Model) loadPostPreview() tea.Cmd {
 			warning: prepared.Warning, inline: prepared.Inline, original: prepared.Original, err: err,
 		}
 	}
+	return tea.Batch(cleanup, load)
 }
 
-func (m *Model) clearPostPreview() {
+func (m *Model) clearPostPreview() tea.Cmd {
+	cleanup := ""
+	if m.postPreview.native != terminalui.NativeNone && m.imageSession != nil {
+		cleanup = m.imageSession.Clear()
+	}
 	m.postPreviewRequest++
 	m.postPreview = postImagePreview{}
+	return m.queueTerminalControl(cleanup)
 }
 
-func (m *Model) renderPostPreview() {
+func (m *Model) renderPostPreview() tea.Cmd {
+	wasNative := m.postPreview.native
 	m.postPreview.lines = nil
+	m.postPreview.native = terminalui.NativeNone
 	if len(m.postPreview.original) == 0 {
-		return
+		return nil
 	}
 	columns := minInt(30, max(1, m.width-8))
 	rows := minInt(6, max(2, (m.height-8)/3))
+	selection := terminalui.SelectImageBackend(m.imageMode, m.attachmentRenderer.Capability)
+	cleanup := ""
+	if selection.Backend == terminalui.BackendKitty && m.imageSession != nil && len(m.postPreview.inline) > 0 {
+		handle := m.imageSession.Activate(terminalui.NativeKitty, "preview:"+m.postPreview.attachmentID, columns, rows)
+		frame, err := terminalui.RenderKittyFrame(m.postPreview.inline, handle.ID, columns, rows)
+		if err == nil {
+			m.postPreview.lines = frame.Lines
+			m.postPreview.native = terminalui.NativeKitty
+			if handle.Changed {
+				return m.queueTerminalControl(handle.Cleanup + frame.Control)
+			}
+			return nil
+		}
+		cleanup = m.imageSession.Clear()
+	}
+	if cleanup == "" && wasNative != terminalui.NativeNone && m.imageSession != nil {
+		cleanup = m.imageSession.Clear()
+	}
 	lines, err := terminalui.RenderANSIImage(m.postPreview.original, columns, rows, color.RGBA{})
 	if err != nil {
 		m.postPreview.err = err
-		return
+		return m.queueTerminalControl(cleanup)
 	}
 	m.postPreview.lines = lines
+	return m.queueTerminalControl(cleanup)
 }
 
 func (m Model) openCurrentAttachment() (tea.Model, tea.Cmd) {
@@ -1127,7 +1160,7 @@ func (m *Model) queueTerminalControl(control string) tea.Cmd {
 	if control == "" {
 		return nil
 	}
-	m.terminalControl = control
+	m.terminalControl += control
 	m.terminalControlGeneration++
 	return m.terminalControlCmd()
 }
@@ -1137,7 +1170,9 @@ func (m Model) terminalControlCmd() tea.Cmd {
 		return nil
 	}
 	generation := m.terminalControlGeneration
-	return func() tea.Msg { return clearTerminalControlMsg{generation: generation} }
+	return tea.Tick(16*time.Millisecond, func(time.Time) tea.Msg {
+		return clearTerminalControlMsg{generation: generation}
+	})
 }
 
 func (m *Model) watchEvents() tea.Cmd {
