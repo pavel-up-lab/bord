@@ -59,6 +59,7 @@ func (*mediaFake) Upload(context.Context, string, io.Reader) (Attachment, error)
 type adminFake struct {
 	credential, requestID string
 	boardErr              error
+	role                  security.Role
 }
 
 type extendedAbuseFake struct {
@@ -80,7 +81,11 @@ func (a *extendedAbuseFake) CheckSession(_ context.Context, operation, _, sessio
 
 func (a *adminFake) Authenticate(_ context.Context, credential, requestID string) (AdminPrincipal, error) {
 	a.credential, a.requestID = credential, requestID
-	return AdminPrincipal{ID: "test-admin", Role: security.RoleAdministrator, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	role := a.role
+	if !role.Valid() {
+		role = security.RoleAdministrator
+	}
+	return AdminPrincipal{ID: "test-admin", Role: role, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 func (*adminFake) ListReports(context.Context, string, int) (Page[AdminReport], error) {
 	return Page[AdminReport]{Items: []AdminReport{}}, nil
@@ -435,5 +440,31 @@ func TestHealthStaysUpWhenReadinessFails(t *testing.T) {
 	router.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if health.Code != http.StatusOK || ready.Code != http.StatusServiceUnavailable {
 		t.Fatalf("health=%d readiness=%d", health.Code, ready.Code)
+	}
+}
+
+func TestAdminSystemStorageReportsConfiguredFilesystemToAdministrators(t *testing.T) {
+	admin := &adminFake{}
+	requestedPath := ""
+	router := NewManagementRouter(Config{
+		Admin: admin, DiskPath: "/srv/bord/data",
+		DiskUsage: func(path string) (DiskSpace, error) {
+			requestedPath = path
+			return DiskSpace{TotalBytes: 40 << 30, AvailableBytes: 12 << 30}, nil
+		},
+	})
+	request := httptest.NewRequest(http.MethodGet, "/admin/v1/system/storage", nil)
+	request.Header.Set("Authorization", "Bearer credential-value")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || requestedPath != "/srv/bord/data" || !strings.Contains(response.Body.String(), `"available_bytes":12884901888`) || strings.Contains(response.Body.String(), "/srv/bord/data") {
+		t.Fatalf("status=%d path=%q body=%s", response.Code, requestedPath, response.Body.String())
+	}
+
+	admin.role = security.RoleModerator
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("moderator storage status=%d body=%s", response.Code, response.Body.String())
 	}
 }

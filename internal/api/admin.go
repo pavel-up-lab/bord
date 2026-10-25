@@ -76,6 +76,28 @@ func (h *Handler) adminGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": principal.ID, "role": role, "expires_at": principal.ExpiresAt})
 }
 
+func (h *Handler) adminGetSystemStorage(w http.ResponseWriter, r *http.Request) {
+	principal, ok := AdminPrincipalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, domain.NewError(domain.CodeUnauthorized, "", nil))
+		return
+	}
+	if !principal.Role.Allows(security.RoleAdministrator) {
+		writeError(w, r, domain.NewError(domain.CodeForbidden, "", nil))
+		return
+	}
+	if h.config.DiskUsage == nil || h.config.DiskPath == "" {
+		writeError(w, r, unavailable())
+		return
+	}
+	space, err := h.config.DiskUsage(h.config.DiskPath)
+	if err != nil || space.TotalBytes < 0 || space.AvailableBytes < 0 || space.AvailableBytes > space.TotalBytes {
+		writeError(w, r, unavailable())
+		return
+	}
+	writeJSON(w, http.StatusOK, space)
+}
+
 func (h *Handler) adminListBoards(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	if state == "" {

@@ -78,6 +78,11 @@ type Page[T any] struct {
 	NextCursor string
 }
 
+type DiskSpace struct {
+	TotalBytes     int64 `json:"total_bytes"`
+	AvailableBytes int64 `json:"available_bytes"`
+}
+
 // PublicService is the HTTP adapter boundary implemented by board use cases.
 type PublicService interface {
 	ListBoards(context.Context) ([]Board, error)

@@ -25,6 +25,8 @@ type Config struct {
 	MaxMediaBytes   int64
 	RequestTimeout  time.Duration
 	HeartbeatPeriod time.Duration
+	DiskPath        string
+	DiskUsage       func(string) (DiskSpace, error)
 }
 
 type Handler struct{ config Config }
@@ -64,6 +66,7 @@ func NewRouter(config Config) http.Handler {
 	if config.Admin != nil {
 		mux.Handle("GET /admin/v1/reports", h.admin(http.HandlerFunc(h.adminListReports)))
 		mux.Handle("GET /admin/v1/session", h.admin(http.HandlerFunc(h.adminGetSession)))
+		mux.Handle("GET /admin/v1/system/storage", h.admin(http.HandlerFunc(h.adminGetSystemStorage)))
 		mux.Handle("GET /admin/v1/boards", h.admin(http.HandlerFunc(h.adminListBoards)))
 		mux.Handle("POST /admin/v1/boards", h.admin(http.HandlerFunc(h.adminCreateBoard)))
 		mux.Handle("POST /admin/v1/boards/{board_id}/archive", h.admin(http.HandlerFunc(h.adminArchiveBoard)))
