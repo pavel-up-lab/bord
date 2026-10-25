@@ -63,7 +63,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	capabilities, imageSession := prepareTerminal(ctx, stdout)
 	defer imageSession.Close() //nolint:errcheck -- terminal cleanup is best-effort on every exit path
-	runtime, err := clientapp.Bootstrap(ctx, clientapp.Options{Server: publicServer, StatePath: *statePath, Inline: *inline, Theme: *themeFlag, Timeout: *timeout, Capabilities: capabilities, ImageSession: imageSession})
+	runtime, err := clientapp.Bootstrap(ctx, clientapp.Options{Server: publicServer, StatePath: *statePath, Inline: *inline, Theme: *themeFlag, Version: version, Timeout: *timeout, Capabilities: capabilities, ImageSession: imageSession})
 	if err != nil {
 		return err
 	}

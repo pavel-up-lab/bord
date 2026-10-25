@@ -13,7 +13,7 @@ import (
 type Outbox struct{ db *sql.DB }
 
 func (o *Outbox) Pending(ctx context.Context, after domain.EventID, limit int) ([]api.Event, error) {
-	rows, err := o.db.QueryContext(ctx, `SELECT id,schema_version,event_type,coalesce(board_id,0),coalesce(thread_id,0),coalesce(post_id,0) FROM event_outbox WHERE id>? AND published_at IS NULL ORDER BY id LIMIT ?`, after, limit)
+	rows, err := o.db.QueryContext(ctx, `SELECT e.id,e.schema_version,e.event_type,coalesce(e.board_id,0),coalesce(e.thread_id,0),coalesce(e.post_id,0),coalesce(p.reply_to_id,0) FROM event_outbox e LEFT JOIN posts p ON p.id=e.post_id WHERE e.id>? AND e.published_at IS NULL ORDER BY e.id LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -21,8 +21,8 @@ func (o *Outbox) Pending(ctx context.Context, after domain.EventID, limit int) (
 	out := []api.Event{}
 	for rows.Next() {
 		var e api.Event
-		var board, thread, post int64
-		if err := rows.Scan(&e.ID, &e.Version, &e.Type, &board, &thread, &post); err != nil {
+		var board, thread, post, replyTo int64
+		if err := rows.Scan(&e.ID, &e.Version, &e.Type, &board, &thread, &post, &replyTo); err != nil {
 			return nil, err
 		}
 		if board != 0 {
@@ -33,6 +33,9 @@ func (o *Outbox) Pending(ctx context.Context, after domain.EventID, limit int) (
 		}
 		if post != 0 {
 			e.PostID = fmtID(post)
+		}
+		if replyTo != 0 {
+			e.ReplyToID = fmtID(replyTo)
 		}
 		out = append(out, e)
 	}

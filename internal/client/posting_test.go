@@ -134,6 +134,43 @@ func TestPostingAPIDeletesOnlyWithStoredAnonymousCapability(t *testing.T) {
 	}
 }
 
+func TestPostingAPIPersistsMentionsWithoutExposingDeleteSecret(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "state.json"))
+	state, err := NewState("https://board.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.DeleteSecrets["post_0001"] = "secret-value"
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	posting, err := NewPostingAPI(&API{}, store, &state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !posting.OwnsPost("post_0001") || posting.OwnsPost("post_other") {
+		t.Fatal("local ownership lookup failed")
+	}
+	mention := Mention{ThreadID: "thread_1", PostID: "post_0002", ReplyToID: "post_0001"}
+	if err := posting.RememberMention(mention); err != nil {
+		t.Fatal(err)
+	}
+	if err := posting.SetMentionsCollapsed(true); err != nil {
+		t.Fatal(err)
+	}
+	mentions, collapsed := posting.InitialMentions()
+	if len(mentions) != 1 || !collapsed {
+		t.Fatalf("mentions=%+v collapsed=%v", mentions, collapsed)
+	}
+	if err := posting.DismissMention("post_0002"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil || len(loaded.Mentions) != 0 || !loaded.MentionsCollapsed {
+		t.Fatalf("loaded=%+v err=%v", loaded.Mentions, err)
+	}
+}
+
 func mapCreateThread(body string) generated.CreateThread {
 	return generated.CreateThread{Body: &body}
 }

@@ -98,6 +98,73 @@ func (p *PostingAPI) DeleteOwnPost(ctx context.Context, postID string) error {
 	return nil
 }
 
+func (p *PostingAPI) OwnsPost(postID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.state.DeleteSecrets[postID] != ""
+}
+
+func (p *PostingAPI) InitialMentions() ([]Mention, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]Mention(nil), p.state.Mentions...), p.state.MentionsCollapsed
+}
+
+func (p *PostingAPI) RememberMention(mention Mention) error {
+	if !cacheID.MatchString(mention.ThreadID) || !cacheID.MatchString(mention.PostID) || !cacheID.MatchString(mention.ReplyToID) {
+		return errors.New("invalid mention metadata")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, existing := range p.state.Mentions {
+		if existing.PostID == mention.PostID {
+			return nil
+		}
+	}
+	candidate := cloneState(*p.state)
+	candidate.Mentions = append(candidate.Mentions, mention)
+	if len(candidate.Mentions) > 50 {
+		candidate.Mentions = append([]Mention(nil), candidate.Mentions[len(candidate.Mentions)-50:]...)
+	}
+	if err := p.store.Save(candidate); err != nil {
+		return err
+	}
+	*p.state = candidate
+	return nil
+}
+
+func (p *PostingAPI) DismissMention(postID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	candidate := cloneState(*p.state)
+	candidate.Mentions = candidate.Mentions[:0]
+	for _, mention := range p.state.Mentions {
+		if mention.PostID != postID {
+			candidate.Mentions = append(candidate.Mentions, mention)
+		}
+	}
+	if err := p.store.Save(candidate); err != nil {
+		return err
+	}
+	*p.state = candidate
+	return nil
+}
+
+func (p *PostingAPI) SetMentionsCollapsed(collapsed bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.state.MentionsCollapsed == collapsed {
+		return nil
+	}
+	candidate := cloneState(*p.state)
+	candidate.MentionsCollapsed = collapsed
+	if err := p.store.Save(candidate); err != nil {
+		return err
+	}
+	*p.state = candidate
+	return nil
+}
+
 func (p *PostingAPI) ensureState() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -180,6 +247,7 @@ func pendingCreateKey(kind, target, key string) string {
 func cloneState(state State) State {
 	state.DeleteSecrets = cloneStrings(state.DeleteSecrets)
 	state.PendingDeleteSecrets = cloneStrings(state.PendingDeleteSecrets)
+	state.Mentions = append([]Mention(nil), state.Mentions...)
 	return state
 }
 

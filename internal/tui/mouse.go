@@ -28,6 +28,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.report != nil {
 		return m.updateReportMouse(msg)
 	}
+	if updated, cmd, handled := m.updateMentionsMouse(msg); handled {
+		return updated, cmd
+	}
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 		if zone == terminalui.MouseTopBar {
 			return m.activateTop(msg.X)

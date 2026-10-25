@@ -432,6 +432,20 @@ func TestSSERejectsInvalidBoardScope(t *testing.T) {
 	}
 }
 
+func TestSSEAcceptsGlobalScopeAndRejectsMixedScopes(t *testing.T) {
+	router := NewRouter(Config{Events: unavailableEventStream{}})
+	global := httptest.NewRecorder()
+	router.ServeHTTP(global, httptest.NewRequest(http.MethodGet, "/api/v1/events?global=true", nil))
+	if global.Code != http.StatusServiceUnavailable {
+		t.Fatalf("global status=%d body=%s", global.Code, global.Body.String())
+	}
+	mixed := httptest.NewRecorder()
+	router.ServeHTTP(mixed, httptest.NewRequest(http.MethodGet, "/api/v1/events?global=true&board=test", nil))
+	if mixed.Code != http.StatusBadRequest {
+		t.Fatalf("mixed status=%d body=%s", mixed.Code, mixed.Body.String())
+	}
+}
+
 func TestHealthStaysUpWhenReadinessFails(t *testing.T) {
 	router := NewRouter(Config{Readiness: []ReadinessProbe{ReadinessProbeFunc(func(context.Context) error { return errors.New("database down") })}})
 	health := httptest.NewRecorder()

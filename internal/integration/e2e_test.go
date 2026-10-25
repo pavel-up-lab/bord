@@ -245,15 +245,27 @@ func TestProductionRuntimeE2E(t *testing.T) {
 	eventLines := make(chan string, 1)
 	go func() {
 		scanner := bufio.NewScanner(stream.Body)
+		createdEvent := false
 		for scanner.Scan() {
-			if strings.Contains(scanner.Text(), "event: post.created") {
-				eventLines <- scanner.Text()
-				return
+			line := scanner.Text()
+			if strings.Contains(line, "event: post.created") {
+				createdEvent = true
+				continue
+			}
+			if createdEvent && strings.HasPrefix(line, "data: ") {
+				createdEvent = false
+				if strings.Contains(line, `"post_id":"`+replied.PostID+`"`) {
+					eventLines <- line
+					return
+				}
 			}
 		}
 	}()
 	select {
-	case <-eventLines:
+	case line := <-eventLines:
+		if !strings.Contains(line, `"post_id":"`+replied.PostID+`"`) || !strings.Contains(line, `"reply_to_id":"`+created.PostID+`"`) {
+			t.Fatalf("SSE reply metadata missing: %s", line)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("SSE did not deliver committed reply")
 	}

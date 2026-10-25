@@ -30,6 +30,15 @@ type State struct {
 	// idempotent create has an unknown outcome. Keys contain only operation
 	// metadata and idempotency keys; values are covered by State's redaction.
 	PendingDeleteSecrets map[string]string `json:"pending_delete_secrets,omitempty"`
+	Mentions             []Mention         `json:"mentions,omitempty"`
+	MentionsCollapsed    bool              `json:"mentions_collapsed,omitempty"`
+}
+
+type Mention struct {
+	BoardID   string `json:"board_id,omitempty"`
+	ThreadID  string `json:"thread_id"`
+	PostID    string `json:"post_id"`
+	ReplyToID string `json:"reply_to_id"`
 }
 
 func (State) String() string       { return "<redacted client state>" }
@@ -100,6 +109,9 @@ func (s *Store) Load() (State, error) {
 	}
 	if state.PendingDeleteSecrets == nil {
 		state.PendingDeleteSecrets = map[string]string{}
+	}
+	if len(state.Mentions) > 50 {
+		state.Mentions = append([]Mention(nil), state.Mentions[len(state.Mentions)-50:]...)
 	}
 	return state, nil
 }

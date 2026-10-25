@@ -129,6 +129,9 @@ func (s *subscriber) Close() {
 }
 
 func matches(event api.Event, board, thread string) bool {
+	if board == "" && thread == "" {
+		return true
+	}
 	if board != "" {
 		return event.BoardID == board
 	}

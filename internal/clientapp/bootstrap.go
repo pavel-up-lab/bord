@@ -14,12 +14,12 @@ import (
 )
 
 type Options struct {
-	Server, StatePath, Inline, Theme string
-	Timeout                          time.Duration
-	HTTPClient                       *http.Client
-	Themes                           terminalui.ThemeCatalog
-	Capabilities                     terminalui.Capabilities
-	ImageSession                     *terminalui.ImageSession
+	Server, StatePath, Inline, Theme, Version string
+	Timeout                                   time.Duration
+	HTTPClient                                *http.Client
+	Themes                                    terminalui.ThemeCatalog
+	Capabilities                              terminalui.Capabilities
+	ImageSession                              *terminalui.ImageSession
 }
 
 type Runtime struct {
@@ -93,7 +93,7 @@ func Bootstrap(ctx context.Context, options Options) (*Runtime, error) {
 		return nil, err
 	}
 	model := tui.NewModel(ctx, posting).WithLastBoard(state.LastBoard).WithThemes(themes, theme).
-		WithAttachmentEnvironment(tui.InlineMode(state.InlineMode), cache, options.Capabilities, options.ImageSession)
+		WithAttachmentEnvironment(tui.InlineMode(state.InlineMode), cache, options.Capabilities, options.ImageSession).WithVersion(options.Version)
 	return &Runtime{Model: model, State: state, Store: store, storedTheme: storedTheme}, nil
 }
 

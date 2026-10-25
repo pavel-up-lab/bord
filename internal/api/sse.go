@@ -22,7 +22,18 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	board, thread := r.URL.Query().Get("board"), r.URL.Query().Get("thread")
-	if (board == "") == (thread == "") {
+	global := r.URL.Query().Get("global") == "true"
+	scopes := 0
+	if board != "" {
+		scopes++
+	}
+	if thread != "" {
+		scopes++
+	}
+	if global {
+		scopes++
+	}
+	if scopes != 1 {
 		writeError(w, r, validation("board", errors.New("select exactly one stream scope")))
 		return
 	}

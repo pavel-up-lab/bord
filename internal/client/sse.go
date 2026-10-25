@@ -17,12 +17,16 @@ import (
 )
 
 type Event struct {
-	ID   string
-	Type string
-	Data json.RawMessage
+	ID                                   string
+	Type                                 string
+	BoardID, ThreadID, PostID, ReplyToID string
+	Data                                 json.RawMessage
 }
 
-type StreamScope struct{ Board, Thread string }
+type StreamScope struct {
+	Board, Thread string
+	Global        bool
+}
 
 type StreamCallbacks struct {
 	Event     func(Event)
@@ -49,8 +53,18 @@ func DefaultBackoff() Backoff {
 
 // Subscribe reconnects until ctx is cancelled, resuming from the most recently processed ID.
 func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks StreamCallbacks, backoff Backoff) error {
-	if scope.Board != "" && scope.Thread != "" {
-		return errors.New("SSE scope must select either a board or a thread")
+	scopes := 0
+	if scope.Board != "" {
+		scopes++
+	}
+	if scope.Thread != "" {
+		scopes++
+	}
+	if scope.Global {
+		scopes++
+	}
+	if scopes > 1 {
+		return errors.New("SSE scope must select at most one scope")
 	}
 	if backoff.Min <= 0 {
 		backoff = DefaultBackoff()
@@ -67,6 +81,10 @@ func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks Stream
 		}
 		if scope.Thread != "" {
 			params.Thread = &scope.Thread
+		}
+		if scope.Global {
+			global := true
+			params.Global = &global
 		}
 		if lastID != "" {
 			params.LastEventID = &lastID
@@ -85,6 +103,16 @@ func (c *API) Subscribe(ctx context.Context, scope StreamScope, callbacks Stream
 		if err == nil {
 			seen, parseErr := parseSSE(ctx, resp.Body, func(event Event) {
 				lastID = event.ID
+				var envelope struct {
+					BoardID   string `json:"board_id"`
+					ThreadID  string `json:"thread_id"`
+					PostID    string `json:"post_id"`
+					ReplyToID string `json:"reply_to_id"`
+				}
+				if json.Unmarshal(event.Data, &envelope) == nil {
+					event.BoardID, event.ThreadID = envelope.BoardID, envelope.ThreadID
+					event.PostID, event.ReplyToID = envelope.PostID, envelope.ReplyToID
+				}
 				switch event.Type {
 				case "stream.reset":
 					// A reset means the server cannot resume this history. Never send

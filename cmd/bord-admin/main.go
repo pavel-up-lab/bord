@@ -139,7 +139,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	defer imageSession.Close() //nolint:errcheck -- terminal cleanup is best-effort on every exit path
 	viewer := admintui.TerminalImageViewer{Cache: cache, Renderer: terminalui.KittyRenderer{Capability: capabilities, Mode: terminalui.InlineMode(state.InlineMode)}, Session: imageSession, Sixel: &terminalui.SixelRenderer{}, OpenExternal: client.OpenExternal}
 	adminModel := admintui.NewModel(ctx, api).WithThemes(themes, themeName).WithScreen(state.View).WithSession(session).WithImageViewer(viewer)
-	publicRuntime, err := clientapp.Bootstrap(ctx, clientapp.Options{Server: state.Server, Inline: state.InlineMode, Theme: state.Theme, Timeout: *timeout, Themes: themes, Capabilities: capabilities, ImageSession: imageSession})
+	publicRuntime, err := clientapp.Bootstrap(ctx, clientapp.Options{Server: state.Server, Inline: state.InlineMode, Theme: state.Theme, Version: version, Timeout: *timeout, Themes: themes, Capabilities: capabilities, ImageSession: imageSession})
 	if err != nil {
 		return err
 	}

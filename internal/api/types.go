@@ -223,12 +223,13 @@ type ReadinessProbeFunc func(context.Context) error
 func (f ReadinessProbeFunc) Ready(ctx context.Context) error { return f(ctx) }
 
 type Event struct {
-	ID       domain.EventID `json:"id"`
-	Version  int            `json:"version"`
-	Type     string         `json:"type"`
-	BoardID  string         `json:"board_id,omitempty"`
-	ThreadID string         `json:"thread_id,omitempty"`
-	PostID   string         `json:"post_id,omitempty"`
+	ID        domain.EventID `json:"id"`
+	Version   int            `json:"version"`
+	Type      string         `json:"type"`
+	BoardID   string         `json:"board_id,omitempty"`
+	ThreadID  string         `json:"thread_id,omitempty"`
+	PostID    string         `json:"post_id,omitempty"`
+	ReplyToID string         `json:"reply_to_id,omitempty"`
 }
 
 type Subscription interface {

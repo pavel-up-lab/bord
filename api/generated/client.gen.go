@@ -547,6 +547,7 @@ type CreateThreadParams struct {
 type StreamEventsParams struct {
 	Board       *string   `form:"board,omitempty" json:"board,omitempty"`
 	Thread      *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
+	Global      *bool     `form:"global,omitempty" json:"global,omitempty"`
 	LastEventID *string   `json:"Last-Event-ID,omitempty"`
 }
 
@@ -2462,6 +2463,22 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 		if params.Thread != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "thread", runtime.ParamLocationQuery, *params.Thread); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Global != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "global", runtime.ParamLocationQuery, *params.Global); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

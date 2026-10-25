@@ -63,6 +63,15 @@ type Service interface {
 	Subscribe(context.Context, client.StreamScope, client.StreamCallbacks, client.Backoff) error
 }
 
+type mentionService interface {
+	Subscribe(context.Context, client.StreamScope, client.StreamCallbacks, client.Backoff) error
+	OwnsPost(string) bool
+	InitialMentions() ([]client.Mention, bool)
+	RememberMention(client.Mention) error
+	DismissMention(string) error
+	SetMentionsCollapsed(bool) error
+}
+
 type KeyMap struct {
 	Up, Down, PageUp, PageDown, Switch, Open, Back, Refresh, Search, NewThread, Reply, ReplyPost, DeletePost, Report, Attachment, PickAttachment, Help, Theme, Settings, Quit, Send, Cancel string
 }
@@ -133,6 +142,10 @@ type Model struct {
 	postPreviewRequest                                   uint64
 	report                                               *reportForm
 	notice                                               string
+	version                                              string
+	mentions                                             []client.Mention
+	mentionsCollapsed                                    bool
+	pendingMentionPost                                   string
 }
 
 type Draft struct {
@@ -196,6 +209,11 @@ type attachmentOpenedMsg struct{ err error }
 type attachmentInlineClosedMsg struct{ err error }
 type clearClipboardOSCMsg struct{}
 type clearTerminalControlMsg struct{ generation uint64 }
+type mentionMsg struct {
+	mention client.Mention
+	err     error
+}
+type mentionRetryMsg struct{}
 
 type postImagePreview struct {
 	postID, attachmentID, path, warning string
@@ -223,7 +241,16 @@ func NewModel(ctx context.Context, api Service) Model {
 	editor.CharLimit = 10000
 	editor.SetWidth(60)
 	editor.SetHeight(8)
-	return Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), imageMode: InlineAuto, replyPostAnchor: -1, sixelRenderer: &terminalui.SixelRenderer{}}
+	m := Model{ctx: ctx, cancel: cancel, api: api, keys: DefaultKeyMap(), screen: BoardsScreen, focus: FocusBoards, editor: editor, requestID: 1, loading: true, theme: ThemeClassic, themes: DiscoverThemes(), imageMode: InlineAuto, replyPostAnchor: -1, sixelRenderer: &terminalui.SixelRenderer{}}
+	if mentions, ok := api.(mentionService); ok {
+		m.mentions, m.mentionsCollapsed = mentions.InitialMentions()
+	}
+	return m
+}
+
+func (m Model) WithVersion(version string) Model {
+	m.version = SanitizeTerminalText(version)
+	return m
 }
 
 // WithAttachmentViewer wires verified downloads to Kitty inline graphics and
@@ -289,7 +316,12 @@ func (m Model) WithLastBoard(slug string) Model {
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return m.loadBoards() }
+func (m Model) Init() tea.Cmd {
+	if _, ok := m.api.(mentionService); ok {
+		return tea.Batch(m.loadBoards(), m.watchMentions())
+	}
+	return m.loadBoards()
+}
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
@@ -359,6 +391,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.postScroll, m.postAdvance = 0, 0
 			}
 			m.nextPostCursor = msg.page.NextCursor
+			if m.pendingMentionPost != "" {
+				if index := indexPost(m.posts, m.pendingMentionPost); index >= 0 {
+					m.contentIndex = index
+					m.contentScroll = ensureVisible(m.contentScroll, index, m.visibleRows())
+					m.screen, m.postScroll = PostScreen, 0
+					m.pendingMentionPost = ""
+					return m, m.loadPostPreview()
+				}
+				if m.nextPostCursor != nil {
+					return m, m.loadPosts(true)
+				}
+				m.pendingMentionPost = ""
+				m.notice = "Упоминание больше недоступно"
+			}
 			cmd := m.watchEvents()
 			if m.screen == PostScreen {
 				return m, tea.Batch(cmd, m.loadPostPreview())
@@ -450,6 +496,20 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == m.terminalControlGeneration {
 			m.terminalControl = ""
 		}
+	case mentionMsg:
+		if msg.err == nil && msg.mention.PostID != "" {
+			if source, ok := m.api.(mentionService); ok {
+				if err := source.RememberMention(msg.mention); err == nil {
+					m.addMention(msg.mention)
+				}
+			}
+		}
+		if msg.err != nil {
+			return m, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return mentionRetryMsg{} })
+		}
+		return m, m.watchMentions()
+	case mentionRetryMsg:
+		return m, m.watchMentions()
 	case postPreviewLoadedMsg:
 		if msg.request != m.postPreviewRequest {
 			return m, nil
@@ -1234,6 +1294,9 @@ func (m Model) View() string {
 	if m.report != nil {
 		lines = m.overlayReport(lines, colors)
 	}
+	if m.themePicker.IsOpen() == false && !m.settingsOpen && m.imageSettings == nil && m.report == nil {
+		lines = m.overlayMentions(lines, colors)
+	}
 	if m.clipboardOSC != "" && len(lines) > 0 {
 		lines[0] = m.clipboardOSC + lines[0]
 	}
@@ -1595,7 +1658,15 @@ func (m Model) postDetailRows() []displayRow {
 }
 
 func (m Model) statusLine(t theme, width int) string {
-	return paint(t.Background, t.Foreground, m.statusText(), width)
+	left := m.statusText()
+	if m.version == "" {
+		return paint(t.Background, t.Foreground, left, width)
+	}
+	right := " " + m.version + " "
+	leftWidth := max(0, width-textWidth(right))
+	left = ansi.Truncate(left, leftWidth, "…")
+	line := left + strings.Repeat(" ", max(0, leftWidth-textWidth(left))) + right
+	return paint(t.Background, t.Foreground, line, width)
 }
 
 func (m Model) commandBar(t theme, width int) string {

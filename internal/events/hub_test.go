@@ -62,6 +62,25 @@ func TestHubRejectsSubscribersAtResourceLimit(t *testing.T) {
 	}
 }
 
+func TestGlobalSubscriptionReceivesEventsAcrossBoards(t *testing.T) {
+	hub := NewHub(8, 4)
+	defer hub.Close()
+	_, _, subscription := hub.Subscribe("", "", 0)
+	defer subscription.Close()
+	hub.Publish(api.Event{ID: 1, BoardID: "one", ThreadID: "thread_1", Type: "post.created"})
+	hub.Publish(api.Event{ID: 2, BoardID: "two", ThreadID: "thread_2", Type: "post.created"})
+	for want := domain.EventID(1); want <= 2; want++ {
+		select {
+		case event := <-subscription.Events():
+			if event.ID != want {
+				t.Fatalf("event=%+v want=%d", event, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("global event %d missing", want)
+		}
+	}
+}
+
 type outboxFake struct {
 	events   []api.Event
 	marked   []domain.EventID

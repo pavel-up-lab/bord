@@ -240,3 +240,25 @@ func TestSubscribeRejectsInvalidScopeAndContentType(t *testing.T) {
 		t.Fatalf("content type error = %v", err)
 	}
 }
+
+func TestSubscribeGlobalDecodesMentionMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("global") != "true" {
+			t.Errorf("query=%q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "id: 9\nevent: post.created\ndata: {\"board_id\":\"board_1\",\"thread_id\":\"thread_1\",\"post_id\":\"post_2\",\"reply_to_id\":\"post_1\"}\n\n")
+	}))
+	defer server.Close()
+	api, _ := New(server.URL, server.Client(), time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got Event
+	err := api.Subscribe(ctx, StreamScope{Global: true}, StreamCallbacks{Event: func(event Event) {
+		got = event
+		cancel()
+	}}, Backoff{Min: time.Millisecond, Max: time.Millisecond})
+	if !errors.Is(err, context.Canceled) || got.ThreadID != "thread_1" || got.PostID != "post_2" || got.ReplyToID != "post_1" {
+		t.Fatalf("event=%+v err=%v", got, err)
+	}
+}
