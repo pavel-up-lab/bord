@@ -3,5 +3,5 @@
 window.BORD_LANDING_CONFIG = Object.freeze({
   boardURL: "",
   downloadBaseURL: "",
-  version: "v0.7.0-dev.072e4a5",
+  version: "v0.7.0-dev.feee14b",
 });
