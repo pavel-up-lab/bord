@@ -239,13 +239,13 @@ func TestAdministratorBoardScreenFiltersPaginationAndMouse(t *testing.T) {
 	}
 	m = updated.(Model)
 	m.loading = false
-	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 3, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 4, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if got := updated.(Model).boardIndex; got != 0 {
 		t.Fatalf("wide board mouse index=%d", got)
 	}
 	m = updated.(Model)
 	m.width = 50
-	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 4, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	updated, _ = m.Update(tea.MouseMsg{X: 5, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if got := updated.(Model).boardIndex; got != 1 {
 		t.Fatalf("narrow board mouse index=%d", got)
 	}
@@ -511,14 +511,39 @@ func TestAdminLayoutGolden(t *testing.T) {
 
 func TestStorageCapacityStatusAndRefresh(t *testing.T) {
 	m := loadedModel(t)
-	status := m.statusLine()
-	if !strings.Contains(status, "диск:12.0 GiB свободно из 40.0 GiB") {
-		t.Fatalf("status=%q", status)
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "VPS STORAGE  •  12.0 GiB свободно из 40.0 GiB") {
+		t.Fatalf("view=%q", view)
 	}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyF5})
 	m = updated.(Model)
 	if cmd == nil || !m.storageRefreshPending {
 		t.Fatalf("storage refresh was not scheduled: pending=%v cmd=%v", m.storageRefreshPending, cmd)
+	}
+}
+
+func TestStorageBarRemainsVisibleForNarrowLoadingErrorAndStatus(t *testing.T) {
+	m := loadedModel(t)
+	m.width, m.height = 60, 12
+	states := []func(*Model){
+		func(model *Model) { model.loading = true },
+		func(model *Model) { model.loading = false; model.err = errors.New("temporary") },
+		func(model *Model) { model.err = nil; model.status = "готово" },
+	}
+	for index, setState := range states {
+		setState(&m)
+		view := ansi.Strip(m.View())
+		if !strings.Contains(view, "VPS STORAGE") || !strings.Contains(view, "12.0 GiB свободно из 40.0 GiB") {
+			t.Fatalf("state %d hid storage bar: %q", index, view)
+		}
+	}
+	m.storageLoading, m.status = true, ""
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "VPS STORAGE  •  загрузка…") {
+		t.Fatalf("storage loading missing: %q", view)
+	}
+	m.storageLoading, m.storageErr = false, errors.New("storage unavailable")
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "VPS STORAGE  •  недоступен") {
+		t.Fatalf("storage error missing: %q", view)
 	}
 }
 

@@ -36,11 +36,18 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.storageBarVisible() && msg.Y == 1 {
+		return m, nil
+	}
 	if m.modal != nil && m.modal.kind == modalCreateBoard && zone == terminalui.MouseWorkspace && msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		offset := 0
+		if m.storageBarVisible() {
+			offset = 1
+		}
 		switch {
-		case msg.Y <= 4:
+		case msg.Y <= 4+offset:
 			m.focusBoardModalField(0)
-		case msg.Y <= 6:
+		case msg.Y <= 6+offset:
 			m.focusBoardModalField(1)
 		default:
 			m.focusBoardModalField(2)
@@ -171,7 +178,11 @@ func (m Model) activateCommand(x int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) activateWorkspace(x, y int) (tea.Model, tea.Cmd) {
-	row := y - 3 // top bar + panel border + shared hint row
+	offset := 3 // top bar + panel border + shared hint row
+	if m.storageBarVisible() {
+		offset++
+	}
+	row := y - offset
 	if row < 0 {
 		return m, nil
 	}

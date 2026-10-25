@@ -13,7 +13,15 @@ func (m Model) View() string {
 	width, height := max(1, m.width), max(1, m.height)
 	theme := m.themes.Palette(m.theme)
 	lines := []string{m.topBar(theme, width)}
-	workspaceHeight := max(0, height-3)
+	storageVisible := m.storageBarVisible()
+	if storageVisible {
+		lines = append(lines, m.storageBar(theme, width))
+	}
+	reservedRows := 3
+	if storageVisible {
+		reservedRows++
+	}
+	workspaceHeight := max(0, height-reservedRows)
 	if workspaceHeight > 0 {
 		lines = append(lines, m.workspace(theme, width, workspaceHeight)...)
 	}
@@ -33,6 +41,10 @@ func (m Model) View() string {
 		lines[0] = m.terminalControl + lines[0]
 	}
 	return strings.Join(lines[:height], "\n")
+}
+
+func (m Model) storageBarVisible() bool {
+	return string(m.session.Role) == "administrator" && m.height > 1
 }
 
 func (m Model) topBar(theme terminalui.Theme, width int) string {
@@ -290,11 +302,11 @@ func (m Model) statusLine() string {
 	if m.status != "" {
 		return " " + terminalui.SanitizeTerminalText(m.status)
 	}
-	line := fmt.Sprintf(" %s • роль:%s • тема:%s", m.screenTitle(), terminalui.SanitizeTerminalText(string(m.session.Role)), m.theme)
-	if string(m.session.Role) == "administrator" {
-		line += " • диск:" + m.storageStatus()
-	}
-	return line
+	return fmt.Sprintf(" %s • роль:%s • тема:%s", m.screenTitle(), terminalui.SanitizeTerminalText(string(m.session.Role)), m.theme)
+}
+
+func (m Model) storageBar(theme terminalui.Theme, width int) string {
+	return terminalui.Paint(theme.SelectionBackground, theme.Selection, " VPS STORAGE  •  "+m.storageStatus(), width)
 }
 
 func (m Model) storageStatus() string {
