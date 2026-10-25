@@ -22,6 +22,8 @@ func TestClientCoversManagementOperations(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /admin/v1/session":
 			fmt.Fprint(w, `{"id":"root","role":"administrator","expires_at":"2027-01-01T00:00:00Z"}`)
+		case "GET /admin/v1/system/storage":
+			fmt.Fprint(w, `{"total_bytes":42949672960,"available_bytes":12884901888}`)
 		case "GET /admin/v1/reports":
 			fmt.Fprint(w, `{"reports":[{"id":"00000001","post_id":"00000002","reason":"spam","created_at":"2026-01-01T00:00:00Z"}],"next_cursor":"cursor-value-0001"}`)
 		case "GET /admin/v1/boards":
@@ -73,6 +75,10 @@ func TestClientCoversManagementOperations(t *testing.T) {
 	session, err := client.Session(ctx)
 	if err != nil || session.Id != "root" {
 		t.Fatalf("session=%#v err=%v", session, err)
+	}
+	storage, err := client.Storage(ctx)
+	if err != nil || storage.TotalBytes != 40<<30 || storage.AvailableBytes != 12<<30 {
+		t.Fatalf("storage=%#v err=%v", storage, err)
 	}
 	reports, err := client.Reports(ctx, nil, 25)
 	if err != nil || len(reports.Items) != 1 || reports.NextCursor == nil {

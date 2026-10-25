@@ -255,6 +255,12 @@ type AdminSession struct {
 	Role      AdminRole `json:"role"`
 }
 
+// AdminSystemStorage defines model for AdminSystemStorage.
+type AdminSystemStorage struct {
+	AvailableBytes int64 `json:"available_bytes"`
+	TotalBytes     int64 `json:"total_bytes"`
+}
+
 // AdminThreadSummary defines model for AdminThreadSummary.
 type AdminThreadSummary struct {
 	Closed bool     `json:"closed"`
@@ -731,6 +737,9 @@ type ClientInterface interface {
 	// AdminGetSession request
 	AdminGetSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AdminGetSystemStorage request
+	AdminGetSystemStorage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AdminCloseThreadWithBody request with any body
 	AdminCloseThreadWithBody(ctx context.Context, threadId ThreadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1055,6 +1064,18 @@ func (c *Client) AdminListReports(ctx context.Context, params *AdminListReportsP
 
 func (c *Client) AdminGetSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminGetSessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AdminGetSystemStorage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminGetSystemStorageRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2104,6 +2125,33 @@ func NewAdminGetSessionRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewAdminGetSystemStorageRequest generates requests for AdminGetSystemStorage
+func NewAdminGetSystemStorageRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/v1/system/storage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAdminCloseThreadRequest calls the generic AdminCloseThread builder with application/json body
 func NewAdminCloseThreadRequest(server string, threadId ThreadID, body AdminCloseThreadJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2911,6 +2959,9 @@ type ClientWithResponsesInterface interface {
 	// AdminGetSessionWithResponse request
 	AdminGetSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminGetSessionResponse, error)
 
+	// AdminGetSystemStorageWithResponse request
+	AdminGetSystemStorageWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminGetSystemStorageResponse, error)
+
 	// AdminCloseThreadWithBodyWithResponse request with any body
 	AdminCloseThreadWithBodyWithResponse(ctx context.Context, threadId ThreadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCloseThreadResponse, error)
 
@@ -3311,6 +3362,29 @@ func (r AdminGetSessionResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AdminGetSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AdminGetSystemStorageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AdminSystemStorage
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminGetSystemStorageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminGetSystemStorageResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3861,6 +3935,15 @@ func (c *ClientWithResponses) AdminGetSessionWithResponse(ctx context.Context, r
 		return nil, err
 	}
 	return ParseAdminGetSessionResponse(rsp)
+}
+
+// AdminGetSystemStorageWithResponse request returning *AdminGetSystemStorageResponse
+func (c *ClientWithResponses) AdminGetSystemStorageWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminGetSystemStorageResponse, error) {
+	rsp, err := c.AdminGetSystemStorage(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminGetSystemStorageResponse(rsp)
 }
 
 // AdminCloseThreadWithBodyWithResponse request with arbitrary body returning *AdminCloseThreadResponse
@@ -4509,6 +4592,39 @@ func ParseAdminGetSessionResponse(rsp *http.Response) (*AdminGetSessionResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest AdminSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminGetSystemStorageResponse parses an HTTP response from a AdminGetSystemStorageWithResponse call
+func ParseAdminGetSystemStorageResponse(rsp *http.Response) (*AdminGetSystemStorageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminGetSystemStorageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminSystemStorage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

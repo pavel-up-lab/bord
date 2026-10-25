@@ -33,6 +33,7 @@ const (
 
 type Service interface {
 	Session(context.Context) (adminclient.Session, error)
+	Storage(context.Context) (adminclient.SystemStorage, error)
 	Reports(context.Context, *string, int) (adminclient.Page[adminclient.Report], error)
 	PostContext(context.Context, string, *string, int) (adminclient.PostContext, error)
 	Attachment(context.Context, string) ([]byte, string, error)
@@ -74,6 +75,7 @@ type Model struct {
 	bans                                                                []adminclient.BanRecord
 	audit                                                               []adminclient.AuditEntry
 	boards                                                              []adminclient.Board
+	storage                                                             adminclient.SystemStorage
 	reportIndex, postIndex, banIndex, auditIndex, boardIndex            int
 	listScroll, contextScroll                                           int
 	reportsCursor, contextCursor, bansCursor, auditCursor, boardsCursor *string
@@ -84,6 +86,9 @@ type Model struct {
 	loading                   bool
 	err                       error
 	status                    string
+	storageLoading            bool
+	storageRefreshPending     bool
+	storageErr                error
 	modal                     *modal
 	revealedIP                string
 	attachmentID              string
@@ -98,6 +103,10 @@ type Model struct {
 type sessionMsg struct {
 	id    uint64
 	value adminclient.Session
+	err   error
+}
+type storageMsg struct {
+	value adminclient.SystemStorage
 	err   error
 }
 type reportsMsg struct {
@@ -190,22 +199,28 @@ func (m Model) RefreshTerminalImage() (Model, tea.Cmd) {
 	return m, m.renderAttachment()
 }
 
-func (m Model) WithSession(session adminclient.Session) Model { m.session = session; return m }
+func (m Model) WithSession(session adminclient.Session) Model {
+	m.session = session
+	m.storageRefreshPending = string(session.Role) == "administrator"
+	return m
+}
 
 func (m Model) Init() tea.Cmd {
 	if m.session.Id == "" {
 		return m.sessionCommand(m.requestID, m.ctx)
 	}
+	var cmd tea.Cmd
 	switch m.screen {
 	case BansScreen:
-		return m.bansCommand(m.requestID, m.ctx, nil, false)
+		cmd = m.bansCommand(m.requestID, m.ctx, nil, false)
 	case AuditScreen:
-		return m.auditCommand(m.requestID, m.ctx, nil, false)
+		cmd = m.auditCommand(m.requestID, m.ctx, nil, false)
 	case BoardsScreen:
-		return m.boardsCommand(m.requestID, m.ctx, nil, false)
+		cmd = m.boardsCommand(m.requestID, m.ctx, nil, false)
 	default:
-		return m.reportsCommand(m.requestID, m.ctx, nil, false)
+		cmd = m.reportsCommand(m.requestID, m.ctx, nil, false)
 	}
+	return cmd
 }
 
 func (m Model) Close() {
@@ -273,7 +288,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.session = msg.value
+		m.storageRefreshPending = string(m.session.Role) == "administrator"
 		return m.startScreenLoad(false)
+	case storageMsg:
+		m.storageLoading, m.storageErr = false, msg.err
+		if msg.err == nil {
+			m.storage = msg.value
+		}
+		m.storageRefreshPending = false
+		return m, nil
 	case reportsMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -289,7 +312,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startContextLoad(false)
 		}
 		m.context = adminclient.PostContext{}
-		return m, nil
+		return m, m.maybeStorageCommand()
 	case contextMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -304,7 +327,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.context = msg.value
 		m.contextCursor = msg.value.NextCursor
 		m.postIndex = clamp(m.postIndex, 0, max(0, len(m.context.Posts)-1))
-		return m, nil
+		return m, m.maybeStorageCommand()
 	case bansMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -315,7 +338,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.bansCursor = msg.page.NextCursor
 			m.banIndex = clamp(m.banIndex, 0, max(0, len(m.bans)-1))
 		}
-		return m, nil
+		return m, m.maybeStorageCommand()
 	case auditMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -326,7 +349,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.auditCursor = msg.page.NextCursor
 			m.auditIndex = clamp(m.auditIndex, 0, max(0, len(m.audit)-1))
 		}
-		return m, nil
+		return m, m.maybeStorageCommand()
 	case boardsMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -337,7 +360,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.boardsCursor = msg.page.NextCursor
 			m.boardIndex = clamp(m.boardIndex, 0, max(0, len(m.boards)-1))
 		}
-		return m, nil
+		return m, m.maybeStorageCommand()
 	case mutationMsg:
 		if msg.id != m.requestID {
 			return m, nil
@@ -500,6 +523,16 @@ func (m Model) startContextLoad(appendPage bool) (tea.Model, tea.Cmd) {
 func (m Model) sessionCommand(id uint64, ctx context.Context) tea.Cmd {
 	return func() tea.Msg { value, err := m.service.Session(ctx); return sessionMsg{id, value, err} }
 }
+func (m Model) storageCommand(ctx context.Context) tea.Cmd {
+	return func() tea.Msg { value, err := m.service.Storage(ctx); return storageMsg{value, err} }
+}
+func (m *Model) maybeStorageCommand() tea.Cmd {
+	if !m.storageRefreshPending || string(m.session.Role) != "administrator" {
+		return nil
+	}
+	m.storageLoading = true
+	return m.storageCommand(m.ctx)
+}
 func (m Model) reportsCommand(id uint64, ctx context.Context, cursor *string, appendPage bool) tea.Cmd {
 	return func() tea.Msg {
 		page, err := m.service.Reports(ctx, cursor, 50)
@@ -619,6 +652,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "r", "f5":
+		m.storageRefreshPending = string(m.session.Role) == "administrator"
 		return m.startScreenLoad(false)
 	case "up", "k":
 		m.moveSelection(-1)

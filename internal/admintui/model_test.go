@@ -20,6 +20,7 @@ import (
 
 type serviceFake struct {
 	session           adminclient.Session
+	storage           adminclient.SystemStorage
 	reports           adminclient.Page[adminclient.Report]
 	context           adminclient.PostContext
 	bans              adminclient.Page[adminclient.BanRecord]
@@ -35,6 +36,9 @@ type serviceFake struct {
 }
 
 func (s *serviceFake) Session(context.Context) (adminclient.Session, error) { return s.session, s.err }
+func (s *serviceFake) Storage(context.Context) (adminclient.SystemStorage, error) {
+	return s.storage, s.err
+}
 func (s *serviceFake) Reports(context.Context, *string, int) (adminclient.Page[adminclient.Report], error) {
 	return s.reports, s.err
 }
@@ -87,6 +91,7 @@ func fixtureService() *serviceFake {
 	filename := "safe.png"
 	return &serviceFake{
 		session: adminclient.Session{Id: "root", Role: "administrator", ExpiresAt: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)},
+		storage: adminclient.SystemStorage{TotalBytes: 40 << 30, AvailableBytes: 12 << 30},
 		reports: adminclient.Page[adminclient.Report]{Items: []adminclient.Report{{Id: "00000001", PostId: "00000002", Reason: "spam", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}},
 		context: adminclient.PostContext{Board: generated.AdminBoardSummary{Id: "00000001", Slug: "general", Title: "General"}, Thread: generated.AdminThreadSummary{Id: "00000001"}, TargetPostId: "00000002", Posts: []generated.Post{{Id: "00000002", ThreadId: "00000001", AuthorId: "author", State: "hidden", Body: &body, Attachment: &generated.Attachment{Id: "attach_1", MediaType: "image/png", Filename: &filename, Sha256: strings.Repeat("a", 64), Size: 5, Width: 1, Height: 1}, CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}}},
 		bans:    adminclient.Page[adminclient.BanRecord]{Items: []adminclient.BanRecord{{Id: "00000009", SubjectType: "lookup", Subject: "fingerprint:abcdef", Operation: "create_post", Reason: "spam", State: "active", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), ExpiresAt: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}}},
@@ -110,8 +115,13 @@ func loadedModel(t *testing.T) Model {
 	if cmd == nil {
 		t.Fatal("context command missing")
 	}
-	updated, _ = model.Update(cmd())
-	return updated.(Model)
+	updated, cmd = model.Update(cmd())
+	model = updated.(Model)
+	if cmd != nil {
+		updated, _ = model.Update(cmd())
+		model = updated.(Model)
+	}
+	return model
 }
 
 func TestReducerIgnoresStaleResponsesAndKeepsErrors(t *testing.T) {
@@ -496,6 +506,19 @@ func TestAdminLayoutGolden(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStorageCapacityStatusAndRefresh(t *testing.T) {
+	m := loadedModel(t)
+	status := m.statusLine()
+	if !strings.Contains(status, "диск:12.0 GiB свободно из 40.0 GiB") {
+		t.Fatalf("status=%q", status)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyF5})
+	m = updated.(Model)
+	if cmd == nil || !m.storageRefreshPending {
+		t.Fatalf("storage refresh was not scheduled: pending=%v cmd=%v", m.storageRefreshPending, cmd)
 	}
 }
 

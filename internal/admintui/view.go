@@ -290,7 +290,41 @@ func (m Model) statusLine() string {
 	if m.status != "" {
 		return " " + terminalui.SanitizeTerminalText(m.status)
 	}
-	return fmt.Sprintf(" %s • роль:%s • тема:%s", m.screenTitle(), terminalui.SanitizeTerminalText(string(m.session.Role)), m.theme)
+	line := fmt.Sprintf(" %s • роль:%s • тема:%s", m.screenTitle(), terminalui.SanitizeTerminalText(string(m.session.Role)), m.theme)
+	if string(m.session.Role) == "administrator" {
+		line += " • диск:" + m.storageStatus()
+	}
+	return line
+}
+
+func (m Model) storageStatus() string {
+	if m.storageLoading || m.storage.TotalBytes == 0 && m.storageErr == nil {
+		return "загрузка…"
+	}
+	if m.storageErr != nil {
+		return "недоступен"
+	}
+	return fmt.Sprintf("%s свободно из %s", formatBytes(m.storage.AvailableBytes), formatBytes(m.storage.TotalBytes))
+}
+
+func formatBytes(value int64) string {
+	if value < 1024 {
+		return fmt.Sprintf("%d B", value)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	scaled := float64(value)
+	unit := "B"
+	for _, candidate := range units {
+		scaled /= 1024
+		unit = candidate
+		if scaled < 1024 {
+			break
+		}
+	}
+	if scaled >= 100 {
+		return fmt.Sprintf("%.0f %s", scaled, unit)
+	}
+	return fmt.Sprintf("%.1f %s", scaled, unit)
 }
 
 func (m Model) commandLabels() []string {

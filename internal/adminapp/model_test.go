@@ -23,6 +23,9 @@ type adminService struct{}
 func (adminService) Session(context.Context) (adminclient.Session, error) {
 	return adminclient.Session{}, nil
 }
+func (adminService) Storage(context.Context) (adminclient.SystemStorage, error) {
+	return adminclient.SystemStorage{}, nil
+}
 func (adminService) Reports(context.Context, *string, int) (adminclient.Page[adminclient.Report], error) {
 	return adminclient.Page[adminclient.Report]{}, nil
 }

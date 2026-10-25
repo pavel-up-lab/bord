@@ -21,6 +21,7 @@ import (
 	"bord/internal/media"
 	"bord/internal/operations/command"
 	"bord/internal/platform/config"
+	"bord/internal/platform/diskusage"
 	"bord/internal/platform/logging"
 	"bord/internal/server"
 	"bord/internal/storage/sqlite"
@@ -117,6 +118,11 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Readiness:      []api.ReadinessProbe{lifecycle, api.ReadinessProbeFunc(runtime.Ready)},
 		TrustedProxies: trusted,
 		MaxBodyBytes:   cfg.HTTP.MaxBodyBytes,
+		DiskPath:       cfg.Storage.Blobs,
+		DiskUsage: func(path string) (api.DiskSpace, error) {
+			space, err := diskusage.Usage(path)
+			return api.DiskSpace{TotalBytes: space.TotalBytes, AvailableBytes: space.AvailableBytes}, err
+		},
 	}
 	public := api.NewPublicRouter(apiConfig)
 	managementAddress := os.Getenv("BORD_MANAGEMENT_ADDRESS")

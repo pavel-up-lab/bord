@@ -149,6 +149,14 @@ paths:
       responses:
         '200': {description: Current administrative identity, content: {application/json: {schema: {$ref: '#/components/schemas/AdminSession'}}}}
         default: {$ref: '#/components/responses/Error'}
+  /admin/v1/system/storage:
+    get:
+      operationId: adminGetSystemStorage
+      tags: [admin]
+      security: [{adminBearer: []}]
+      responses:
+        '200': {description: Filesystem capacity available to Bord storage, content: {application/json: {schema: {$ref: '#/components/schemas/AdminSystemStorage'}}}}
+        default: {$ref: '#/components/responses/Error'}
   /admin/v1/boards:
     get:
       operationId: adminListBoards
@@ -319,6 +327,7 @@ components:
     Report: {type: object, additionalProperties: false, required: [id, post_id, reason, created_at], properties: {id: {$ref: '#/components/schemas/ResourceID'}, post_id: {$ref: '#/components/schemas/PostID'}, reason: {type: string}, created_at: {$ref: '#/components/schemas/Timestamp'}}}
     AdminRole: {type: string, enum: [reports, moderator, administrator]}
     AdminSession: {type: object, additionalProperties: false, required: [id, role, expires_at], properties: {id: {type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9_-]+$'}, role: {$ref: '#/components/schemas/AdminRole'}, expires_at: {$ref: '#/components/schemas/Timestamp'}}}
+    AdminSystemStorage: {type: object, additionalProperties: false, required: [total_bytes, available_bytes], properties: {total_bytes: {type: integer, format: int64, minimum: 0}, available_bytes: {type: integer, format: int64, minimum: 0}}}
     AdminBoard: {type: object, additionalProperties: false, required: [id, slug, title, state, thread_count, post_count], properties: {id: {$ref: '#/components/schemas/ResourceID'}, slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}, title: {type: string, minLength: 1, maxLength: 100}, state: {type: string, enum: [active, archived]}, thread_count: {type: integer, format: int64, minimum: 0}, post_count: {type: integer, format: int64, minimum: 0}}}
     AdminBoardPage: {type: object, additionalProperties: false, required: [boards], properties: {boards: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/AdminBoard'}}, next_cursor: {$ref: '#/components/schemas/Cursor'}}}
     AdminCreateBoard: {type: object, additionalProperties: false, required: [slug, title, reason], properties: {slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$'}, title: {type: string, minLength: 1, maxLength: 100}, reason: {type: string, minLength: 3, maxLength: 500}}}

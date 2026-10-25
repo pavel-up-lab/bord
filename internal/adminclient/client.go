@@ -24,6 +24,7 @@ type Ban = generated.Ban
 type BanRecord = generated.AdminBan
 type AuditEntry = generated.AdminAuditEntry
 type Board = generated.AdminBoard
+type SystemStorage = generated.AdminSystemStorage
 
 type CreateBoardRequest struct {
 	Slug   string
@@ -105,6 +106,14 @@ func (c *Client) Session(ctx context.Context) (Session, error) {
 	defer cancel()
 	response, err := c.raw.AdminGetSession(ctx)
 	var result Session
+	return result, c.decode(response, err, http.StatusOK, &result)
+}
+
+func (c *Client) Storage(ctx context.Context) (SystemStorage, error) {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
+	response, err := c.raw.AdminGetSystemStorage(ctx)
+	var result SystemStorage
 	return result, c.decode(response, err, http.StatusOK, &result)
 }
 
